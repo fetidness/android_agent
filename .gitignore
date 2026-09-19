@@ -1,0 +1,47 @@
+# ---- build artifacts (mari, regenerabile) ----
+workspace/build/
+workspace/poc/
+workspace/app/pydist/
+
+# ---- tarballs / binare mari ----
+*.tar
+*.tar.gz
+*.tgz
+*.deb
+*.xwd
+*.apk
+*.so
+*.a
+
+# ---- screenshot-uri de test ----
+workspace/*.png
+workspace/shot*.xwd
+workspace/smoke/
+
+# ---- scripturi de test temporare ----
+workspace/t[0-9].py
+workspace/tb*.py
+workspace/test_*.py
+
+# ---- loguri si fisiere temporare ----
+workspace/logs/
+workspace/*.txt
+workspace/*.log
+__pycache__/
+*.pyc
+.gradle/
+build/
+local.properties
+
+# ---- context/arhive (volatile) ----
+workspace/context.json
+workspace/archive/
+
+# ---- stdlib CPython din assets (regenerabil din sursa PSF) ----
+workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/
+workspace/app/net.sys32.agent/app/src/main/assets/python/libdynload/
+
+# ---- gradle wrapper jar + binare wrapper ----
+workspace/app/net.sys32.agent/gradle/wrapper/gradle-wrapper.jar
+workspace/app/net.sys32.agent/gradlew
+workspace/app/net.sys32.agent/gradlew.bat
