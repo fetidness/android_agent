@@ -142,3 +142,5 @@ TRAP: `grep -r pattern dir` without `-a` skips binary files silently -> misleadi
 TRAP: nvidia-smi without root returns 'No devices were found' on locked GPUs -> misleading empty result -> verify with ls /dev/nvidia* or run under sudo
 
 DEAD: web_search in this env returns empty for generic open-source queries -> tool result not a signal of absence -> verify important facts via direct fetch or repo URL before concluding
+
+P: ffmpeg -y -i input -vf "drawtext=textfile=FILE:..." needs textfile path readable at runtime -> inline text with shell-quoted special chars breaks -> use a textfile with plain ASCII, verify with ffprobe

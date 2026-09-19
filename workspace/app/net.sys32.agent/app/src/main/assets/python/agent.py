@@ -1146,7 +1146,7 @@ def do_learn(trigger="/learn"):
     elif _nless:
         print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), all <=150 chars, no forbidden content."+N)
     save_ctx()
-    if m and m.get("content"): print("\n"+C+"AGENT >"+N+"\n"+render(m["content"].strip()))
+    if m and m.get("content"): print("\n"+C+"AGENT >"+N+"\n\n"+render(m["content"].strip()))
     print(G+"   [/learn] the new memory loads into the system prompt at the NEXT startup."+N)
     print(_task_foot("/learn")); flush_task_tokens(); return
 
@@ -1303,7 +1303,7 @@ while 1:
                 o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
                 M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
         else:
-            print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
+            print("\n"+C+"AGENT >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
             print(_task_foot())
             auto_learn_check(TASK["steps"], TASK["err"])
             flush_task_tokens()
