@@ -547,8 +547,9 @@ def _task_foot(stare="done"):
     LIVE.update(phase="idle",desc="",col=None,n=0)
     ph=TASK["think"]+TASK["tool"]
     other=max(0.0,tot-ph)   # time NOT covered by any _spin: HTTP request, parsing, compact_history/save_ctx, rounding
-    b=G+"  ·  "+str(TASK["steps"])+(" step" if TASK["steps"]==1 else " steps")+"  ·  total "+C+_dur(tot)+N+G+" = thinking "+_dur(TASK["think"])+" + tool "+_dur(TASK["tool"])+" + other "+_dur(other)+N
-    b+=G+"  ·  tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" = "+_K(TASK["tok_in"]+TASK["tok_out"])+" this task"+N
+    # Footer MINIMAL: doar "TASK #N done" + steps + total. Tokenii se afiseaza
+    # separat, in blocul de la flush_task_tokens (tok / session tok).
+    b=G+"  ·  "+str(TASK["steps"])+(" step" if TASK["steps"]==1 else " steps")+"  ·  total "+C+_dur(tot)+N
     return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+N+b
 
 def _live(i):
@@ -1159,8 +1160,7 @@ def auto_learn_check(task_steps, had_error):
     if not AUTOLEARN["on"]:
         return
     if task_steps < AUTOLEARN["min_steps"] and not had_error:
-        print(G+"   [auto-learn] task too small ("+str(task_steps)+" steps, no error) - skipped."+N)
-        return
+        return   # task prea mic: iesim silentios (fara mesaj in output)
     # DECIZIE: un singur mesaj scurt, fara tools
     try:
         _probe = ask([{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])

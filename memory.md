@@ -130,3 +130,5 @@ TRAP: macOS `/usr/bin/time -l` output goes to stderr and its first line is colum
 DEAD: `lsblk` without sudo on some systems shows empty/wrong mount info -> non-root restricted device enumeration -> use `lsblk -f` with sudo or check /proc/mounts as root for accurate results.
 
 P: zip -sf file.zip lists filenames without extracting -> use to inspect archive contents -> avoids unzip side effects; verify member names before extraction.
+
+TRAP: recovery/flash tools (fastboot, ODIN, mtkclient) print empty/no-device output when run without root or udev rules present -> looks like "no hardware" -> verify with lsusb/dmesg and sudo, not tool output alone
