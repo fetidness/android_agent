@@ -91,19 +91,17 @@ class MainActivity : AppCompatActivity() {
         // si NU il mai las resetat automat de re-layout-uri (care emit scroll evenimente
         // cand continutul creste). Resetarea se face DOAR cand userul ajunge efectiv la
         // fundul absolut (dist<=2) sau cand apasa butonul ⇩.
-        scroll.setOnTouchListener { _, ev ->
-            if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
-                userScrolledUp = true
-            }
-            false
-        }
+        // Distingem DIRECTIA derularii facuta de user (nu de cod):
+        //  - urca (scrollY scade)      -> opresc auto-follow-ul
+        //  - coboara si ajunge aproape de fund (dist<=24) -> REACTIVEZ auto-follow-ul
+        // Astfel: daca derulezi jos la capat, urmarirea automata revine; daca urci, rămâi sus.
         scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
             val child = scroll.getChildAt(0)
             val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
-            // daca miscarea nu e programatica si a urcat, e clar intentia userului
-            if (!programmaticScroll && scrollY < oldScrollY) userScrolledUp = true
-            // reactivare DOAR la fundul absolut (2px) - nu la "aproape de fund"
-            if (dist <= 2) userScrolledUp = false
+            if (!programmaticScroll) {
+                if (scrollY < oldScrollY) userScrolledUp = true          // a urcat cu degetul
+                else if (scrollY > oldScrollY && dist <= 24) userScrolledUp = false  // a coborat la fund
+            }
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
@@ -205,7 +203,7 @@ class MainActivity : AppCompatActivity() {
             if (userScrolledUp) return@post
             val child = scroll.getChildAt(0) ?: return@post
             val dist = child.bottom - scroll.height - scroll.scrollY
-            if (dist <= 2) {   // suntem chiar la fund -> urmarim fluxul
+            if (dist <= 24) {   // suntem aproape de fund -> urmarim fluxul
                 programmaticScroll = true
                 scroll.fullScroll(ScrollView.FOCUS_DOWN)
                 scroll.postDelayed({ programmaticScroll = false }, 60)
