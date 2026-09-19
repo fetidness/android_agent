@@ -114,3 +114,5 @@ DEAD: assuming a post-install hook ran apt/system libs cleanly -> tasks succeedi
 OK: git stash push -m msg creates stash but stash pop after branch switch can conflict -> verify with git stash list before pop and prefer git stash apply to keep recovery option.
 
 P: /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0")' silently no-ops under headless SSH -> GTK apps fail without DISPLAY -> verify with xvfb-run or check $DISPLAY before GUI commands
+
+TRAP: `ps` alone in a container shows only that process -> hides sibling/parent procs -> use `ps -ef` or read /proc to see all container processes.

@@ -38,6 +38,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scroll: ScrollView
     private lateinit var root: LinearLayout
     private lateinit var btnDown: Button
+    private lateinit var btnStop: Button
+    @Volatile private var generating = false
     private var bridge: AndroidBridge? = null
     private var pyProc: Process? = null
     private var pyIn: OutputStreamWriter? = null
@@ -85,15 +87,23 @@ class MainActivity : AppCompatActivity() {
         // (adica vezi mai sus in conversatie) opresc auto-follow-ul; cand ajungi la capatul
         // de jos il re-activez. Asta functioneaza indiferent daca scroll-ul l-a facut
         // degetul userului sau codul, si nu poate fi blocat de un copil care consuma touch-ul.
+        // Orice atingere a listei = userul vrea control. Marchez imediat "scrolled up"
+        // si NU il mai las resetat automat de re-layout-uri (care emit scroll evenimente
+        // cand continutul creste). Resetarea se face DOAR cand userul ajunge efectiv la
+        // fundul absolut (dist<=2) sau cand apasa butonul ⇩.
+        scroll.setOnTouchListener { _, ev ->
+            if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
+                userScrolledUp = true
+            }
+            false
+        }
         scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
             val child = scroll.getChildAt(0)
             val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
-            if (!programmaticScroll) {
-                // scroll facut de user: daca a urcat, opresc auto-follow-ul STRICT
-                if (scrollY < oldScrollY) userScrolledUp = true
-                // re-activez auto-follow DOAR daca userul a ajuns singur la capatul de jos
-                if (dist <= 8) userScrolledUp = false
-            }
+            // daca miscarea nu e programatica si a urcat, e clar intentia userului
+            if (!programmaticScroll && scrollY < oldScrollY) userScrolledUp = true
+            // reactivare DOAR la fundul absolut (2px) - nu la "aproape de fund"
+            if (dist <= 2) userScrolledUp = false
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
@@ -146,6 +156,19 @@ class MainActivity : AppCompatActivity() {
         lp.gravity = Gravity.END or Gravity.BOTTOM
         lp.setMargins(0, 0, 28, 180)
         frame.addView(btnDown, lp)
+
+        btnStop = Button(this).apply {
+            text = "■"
+            textSize = 16f
+            setTextColor(Color.parseColor("#0D1117"))
+            setBackgroundColor(Color.parseColor("#E06C75"))   // rosu
+            visibility = View.GONE
+            setOnClickListener { stopGenerating() }
+        }
+        val lps = FrameLayout.LayoutParams(-2, -2)
+        lps.gravity = Gravity.END or Gravity.BOTTOM
+        lps.setMargins(0, 0, 28, 320)   // mai sus decat butonul ⇩
+        frame.addView(btnStop, lps)
         setContentView(frame)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
@@ -170,16 +193,40 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
-        // Auto-follow DOAR daca userul nu a derulat manual in sus (userScrolledUp == false).
-        // Verificam intentia la MOMENTUL EXECUTIEI, nu la programare: daca intre timp userul
-        // a derulat, post-ul nu mai face nimic. Asa textul nou creste sub pozitia userului.
+        // butonul STOP: il arat cat timp agentul genereaza, il ascund cand taskul s-a terminat
+        if (btnStop.visibility == View.VISIBLE && (s.contains("TASK #") && (s.contains("done") || s.contains("interrupted")))) {
+            btnStop.visibility = View.GONE
+        }
+        // Auto-follow DOAR daca userul nu a derulat manual in sus. Verific flagul la
+        // MOMENTUL EXECUTIEI post-ului: daca intre timp userul a derulat, nu facem nimic,
+        // deci textul nou creste SUB pozitia lui fara sa-l miste.
         if (userScrolledUp) return
         scroll.post {
             if (userScrolledUp) return@post
-            programmaticScroll = true
-            scroll.fullScroll(ScrollView.FOCUS_DOWN)
-            scroll.postDelayed({ programmaticScroll = false }, 60)
+            val child = scroll.getChildAt(0) ?: return@post
+            val dist = child.bottom - scroll.height - scroll.scrollY
+            if (dist <= 2) {   // suntem chiar la fund -> urmarim fluxul
+                programmaticScroll = true
+                scroll.fullScroll(ScrollView.FOCUS_DOWN)
+                scroll.postDelayed({ programmaticScroll = false }, 60)
+            }
         }
+    }
+
+    // Opreste generarea curenta: trimite SIGINT procesului Python. Agentul prinde
+    // KeyboardInterrupt, abandoneaza taskul elegant (pastreaza istoricul) si reia bucla.
+    private fun stopGenerating() {
+        val p = pyProc ?: return
+        try {
+            // java.lang.Process nu expune pid() pe Android -> il luam prin reflexie
+            val pid = p.javaClass.getDeclaredMethod("pid").invoke(p) as Int
+            // SIGINT = 2. trimis corect prin android.os.Process (Process.destroy ar da SIGTERM)
+            android.os.Process.sendSignal(pid, 2)
+            appendAnsi("\u001B[38;5;208m[stop] am trimis intreruperea...\u001B[0m\n")
+        } catch (e: Exception) {
+            appendAnsi("[stop eroare: $e]\n")
+        }
+        btnStop.visibility = View.GONE
     }
 
     private fun requestAllPermissions() {
@@ -329,6 +376,7 @@ class MainActivity : AppCompatActivity() {
         if (t.isEmpty()) return
         input.setText("")
         appendAnsi("\u001B[38;5;245m" + t + "\u001B[0m\n")
+        btnStop.visibility = View.VISIBLE
         try { pyIn?.write(t + "\n"); pyIn?.flush() } catch (e: Exception) {
             appendAnsi("[scriere esuata: $e]\n")
         }
