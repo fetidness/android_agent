@@ -734,6 +734,7 @@ UPROMPT="  "
 V=E+"[38;5;245m";R=E+"[38;5;179m";N=E+"[0m";C=E+"[38;5;109m";OF=E+"[38;5;180m"
 SB=E+"[38;5;180m";ST=E+"[38;5;114m";SD=E+"[38;5;243m";BAR=E+"[38;5;240m"
 RY=E+"[38;5;139m";GY=E+"[38;5;109m";MOV=E+"[38;5;139m"
+RED=E+"[38;5;203m"
 TC=E+"[38;5;216m";TCB=E+"[38;5;180;48;5;236m"   # TC=calling a tool (warm amber), TCB=its banner on a dark strip: differs from the step line (grey/teal)   # SOFT: RY=sageata thinking, GY=tool (teal), MOV=cutia THINKING (violet moale), toate fara bold
 T=[{"type":"function","function":{"name":"python","description":"Run Python 3 code on this Linux machine, returns stdout/stderr. Use stdlib only. BEST for: structured parsing (JSON/INI/KeyValues), logic, aggregations in memory, complex data structures, anything needing decisions. SLOW for multi-million-line streams; for those use `bash` or the `smart` router.","parameters":{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}}},
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
@@ -1146,7 +1147,7 @@ def do_learn(trigger="/learn"):
     elif _nless:
         print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), all <=150 chars, no forbidden content."+N)
     save_ctx()
-    if m and m.get("content"): print("\n"+MOV+"AGENT"+C+" >"+N+"\n\n"+render(m["content"].strip()))
+    if m and m.get("content"): print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render(m["content"].strip()))
     print(G+"   [/learn] the new memory loads into the system prompt at the NEXT startup."+N)
     print(_task_foot("/learn")); flush_task_tokens(); return
 
@@ -1303,7 +1304,7 @@ while 1:
                 o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
                 M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
         else:
-            print("\n"+MOV+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
+            print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
             print(_task_foot())
             auto_learn_check(TASK["steps"], TASK["err"])
             flush_task_tokens()
