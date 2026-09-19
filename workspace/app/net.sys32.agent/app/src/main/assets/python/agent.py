@@ -1225,8 +1225,16 @@ def auto_learn_check(task_steps, had_error):
 
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
-print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: "+", ".join(t["function"]["name"] for t in T)+" | "+os.getcwd()+N)
-print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
+# --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
+WIDTH=46   # latimea aproximativa a terminalului pe telefon (caractere)
+def _ctr(txt, visible):
+    pad = max(0, (WIDTH - visible)//2)
+    return " "*pad + txt
+_title = "\u26a1 AGENT DeepSeek"
+_tvis = len(_title) - 1   # emoji-ul ⚡ ocupa 2 celule, scadem 1
+print("")
+print(RED + _ctr(_title, _tvis) + N)
+print(G + _ctr("Type /help for all commands", 26) + N + "\n")
 while 1:
     try: q=input(U+UPROMPT+IN).strip()
     except (EOFError,KeyboardInterrupt): print(N);break

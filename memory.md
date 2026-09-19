@@ -146,3 +146,5 @@ DEAD: web_search in this env returns empty for generic open-source queries -> to
 P: ffmpeg -y -i input -vf "drawtext=textfile=FILE:..." needs textfile path readable at runtime -> inline text with shell-quoted special chars breaks -> use a textfile with plain ASCII, verify with ffprobe
 
 TRAP: `ip route get` without root can return an empty/misleading route -> agent infers wrong interface/gateway -> verify with `ip -br addr` and read /proc/net/route or run with sudo.
+
+OK: /opt/homebrew/bin/ffmpeg exists on macOS ARM -> system ffmpeg absent or wrong -> call the absolute Homebrew path for reliable encodes
