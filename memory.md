@@ -124,3 +124,5 @@ TRAP: docker ps with no -a shows only running containers -> a stopped service co
 DEAD: `find / -name '*.cfg'` style broad filesystem scans timeout/return empty under sandboxed roots -> miss real configs -> scope search to known dirs (/etc, ~/.config, ./) or use fd with depth limit.
 
 OK: `find / -name "*.conf" 2>/dev/null | head` returns empty even when files exist if pipes close early via SIGPIPE; use `-print -quit` or drop `head` -> misleading empty result -> verify with `find ... | wc -l`.
+
+TRAP: macOS `/usr/bin/time -l` output goes to stderr and its first line is column-formatted; piping `time` alone (`time cmd`) is a bash keyword so flags differ -> capture with `{ /usr/bin/time -l cmd ; } 2>file` rather than `time -l`.
