@@ -118,3 +118,5 @@ P: /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0")' silently no-
 TRAP: `ps` alone in a container shows only that process -> hides sibling/parent procs -> use `ps -ef` or read /proc to see all container processes.
 
 DEAD: Python `date -d`-free shell arithmetic on YYYYMMDD via `expr` fails on leading-zero octals (e.g. 08) -> expr treats 08 as invalid octal -> use `date -d "$d" +%s` or strip leading zeros with `10#$var` in bash arithmetic.
+
+TRAP: docker ps with no -a shows only running containers -> a stopped service container looks absent -> use `docker ps -a` before concluding a container doesn't exist

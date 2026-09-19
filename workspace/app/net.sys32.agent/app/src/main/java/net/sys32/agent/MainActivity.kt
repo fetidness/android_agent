@@ -95,13 +95,40 @@ class MainActivity : AppCompatActivity() {
         //  - urca (scrollY scade)      -> opresc auto-follow-ul
         //  - coboara si ajunge aproape de fund (dist<=24) -> REACTIVEZ auto-follow-ul
         // Astfel: daca derulezi jos la capat, urmarirea automata revine; daca urci, rămâi sus.
+        // CHEIA: decidem intentia userului NU din evenimente de scroll (care vin si
+        // cand creste continutul generat!), ci din GESTUL lui. La ACTION_DOWN retinem
+        // y-ul degetului; la ACTION_UP comparam pozitia finala cu cea initiala si, daca
+        // userul a tras in sus, marcăm controlul manual. Creșterea continutului NU poate
+        // declanșa asta, pentru ca nu exista gest.
+        var touchStartY = 0f
+        var touchStartScrollY = 0
+        scroll.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    touchStartY = ev.rawY
+                    touchStartScrollY = scroll.scrollY
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    val movedUp = (ev.rawY - touchStartY) > 24          // degetul a urcat
+                    val finalScrollY = scroll.scrollY
+                    // NU mai cerem si finalScrollY < touchStartScrollY: cat timp userul trage
+                    // in sus, textul generat creste continutul si impinge scrollY inainte, deci
+                    // finalScrollY poate fi mai MARE desi intentia userului a fost clar spre sus.
+                    if (movedUp) {
+                        userScrolledUp = true
+                    } else {
+                        // nu a urcat (sau a coborat): daca a ajuns aproape de fund, reia urmarirea
+                        val child = scroll.getChildAt(0)
+                        val dist = if (child != null) child.bottom - scroll.height - finalScrollY else Int.MAX_VALUE
+                        if (dist <= 24) userScrolledUp = false
+                    }
+                }
+            }
+            false
+        }
         scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
             val child = scroll.getChildAt(0)
             val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
-            if (!programmaticScroll) {
-                if (scrollY < oldScrollY) userScrolledUp = true          // a urcat cu degetul
-                else if (scrollY > oldScrollY && dist <= 24) userScrolledUp = false  // a coborat la fund
-            }
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
