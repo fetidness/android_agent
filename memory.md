@@ -140,3 +140,5 @@ OK: tasks with explicit "verify before claiming done" phrasing (e.g. "confirm th
 TRAP: `grep -r pattern dir` without `-a` skips binary files silently -> misleading empty result -> add `-a` or use `rg -uuu` to search binaries too.
 
 TRAP: nvidia-smi without root returns 'No devices were found' on locked GPUs -> misleading empty result -> verify with ls /dev/nvidia* or run under sudo
+
+DEAD: web_search in this env returns empty for generic open-source queries -> tool result not a signal of absence -> verify important facts via direct fetch or repo URL before concluding

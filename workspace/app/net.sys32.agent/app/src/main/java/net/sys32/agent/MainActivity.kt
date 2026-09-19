@@ -464,10 +464,10 @@ class MainActivity : AppCompatActivity() {
         val t = input.text.toString().replace("\r", "").replace("\n", " ").trim()
         if (t.isEmpty()) return
         input.setText("")
-        appendAnsi("\u001B[38;5;245m" + t + "\u001B[0m\n")
+        // NU afisam ecou aici: agentul afiseaza el linia "You > <mesaj>" in _task_head.
         btnStop.visibility = View.VISIBLE
         try { pyIn?.write(t + "\n"); pyIn?.flush() } catch (e: Exception) {
-            appendAnsi("[scriere esuata: $e]\n")
+            appendAnsi("[write failed: $e]\n")
         }
     }
 
