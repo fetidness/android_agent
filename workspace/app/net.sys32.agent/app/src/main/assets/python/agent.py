@@ -1226,9 +1226,8 @@ def auto_learn_check(task_steps, had_error):
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
 # --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
-WIDTH=46   # latimea aproximativa a terminalului pe telefon (caractere)
 def _ctr(txt, visible):
-    pad = max(0, (WIDTH - visible)//2)
+    pad = max(0, (CS() - visible)//2)
     return " "*pad + txt
 _title = "\u26a1 AGENT DeepSeek"
 _tvis = len(_title) - 1   # emoji-ul ⚡ ocupa 2 celule, scadem 1

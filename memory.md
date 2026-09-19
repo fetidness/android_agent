@@ -148,3 +148,5 @@ P: ffmpeg -y -i input -vf "drawtext=textfile=FILE:..." needs textfile path reada
 TRAP: `ip route get` without root can return an empty/misleading route -> agent infers wrong interface/gateway -> verify with `ip -br addr` and read /proc/net/route or run with sudo.
 
 OK: /opt/homebrew/bin/ffmpeg exists on macOS ARM -> system ffmpeg absent or wrong -> call the absolute Homebrew path for reliable encodes
+
+TRAP: piped `head`/`tail` on streaming commands hides exit code and truncates output -> use explicit flags not pipes -> verify with echo $?
