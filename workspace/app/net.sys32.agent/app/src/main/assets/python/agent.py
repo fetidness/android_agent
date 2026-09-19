@@ -530,7 +530,7 @@ def brief(code):
     return _op_of(code).rstrip(".").strip()   # FULL text: no truncation, the whole description is shown
 def _task_head(q=""):
     """Opens a task: the timer starts HERE and does not stop until the final answer.
-    No labels are prepared here: each one is produced from the code of that very step (see brief)."""
+    Prints the operator line "You > <message>", one blank line, then the TASK box."""
     TASK.update(t0=time.time(),steps=0,think=0.0,tool=0.0,chars=0,tok_in=0,tok_out=0,n=TASK["n"]+1,err=False)
     LIVE.update(phase="think",desc="",col=None,n=0,t=time.time())
     t=" TASK #"+str(TASK["n"])+" "
@@ -539,7 +539,8 @@ def _task_head(q=""):
     box=[BAR+"╭"+"─"*w+"╮"+N,
          BAR+"│"+N+ST+t+N+" "*pad+BAR+"│"+N,
          BAR+"╰"+"─"*w+"╯"+N]
-    return "\n"+"\n".join(box)+"\n\n"+N   # box, then exactly 2 blank lines before the first step
+    who = (U+" You > "+N+ST+q) if q else ""
+    return who+"\n\n"+"\n".join(box)+"\n\n"+N   # message, blank line, box, then blank line
 def _task_foot(stare="done"):
     """Closes the task: stops the timer and breaks down the total (thinking vs. tool) + the steps + the TOKENS
     consumed by this task, taken from the server usage accumulated in TASK since _task_head()."""
@@ -729,6 +730,7 @@ HCLR=("\x1b[38;5;109m","\x1b[38;5;110m","\x1b[38;5;144m","\x1b[38;5;146m","\x1b[
  "\x1b[38;5;179m","\x1b[38;5;186m","\x1b[38;5;173m","\x1b[38;5;138m","\x1b[38;5;147m")
 # --- step labels: generated LIVE from the task text, one colour per term ---
 U=E+"[38;5;110m";IN=E+"[38;5;150m";G=E+"[38;5;146m";FR=E+"[38;5;108m";Y=E+"[38;5;223;48;5;238m"
+UPROMPT="  "
 V=E+"[38;5;245m";R=E+"[38;5;179m";N=E+"[0m";C=E+"[38;5;109m";OF=E+"[38;5;180m"
 SB=E+"[38;5;180m";ST=E+"[38;5;114m";SD=E+"[38;5;243m";BAR=E+"[38;5;240m"
 RY=E+"[38;5;139m";GY=E+"[38;5;109m";MOV=E+"[38;5;139m"
@@ -1225,7 +1227,7 @@ refresh()   # the memory enters the system prompt ONCE, here; from now on the pr
 print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: "+", ".join(t["function"]["name"] for t in T)+" | "+os.getcwd()+N)
 print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
 while 1:
-    try: q=input(U+" TU > "+IN).strip()
+    try: q=input(U+UPROMPT+IN).strip()
     except (EOFError,KeyboardInterrupt): print(N);break
     if q=="": continue          # blank line (extra newline from the UI) = no-op, do NOT quit the agent
     if q in ("/exit","/quit"): break

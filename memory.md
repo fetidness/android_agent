@@ -138,3 +138,5 @@ TRAP: `adb shell pm list packages` without `-3`/`-s`/`-d` flag -> returns full s
 OK: tasks with explicit "verify before claiming done" phrasing (e.g. "confirm the file exists") require running the actual verification command and pasting real output, not asserting success -> skipped verification causes false completion claims -> always execute the check command and include its ra
 
 TRAP: `grep -r pattern dir` without `-a` skips binary files silently -> misleading empty result -> add `-a` or use `rg -uuu` to search binaries too.
+
+TRAP: nvidia-smi without root returns 'No devices were found' on locked GPUs -> misleading empty result -> verify with ls /dev/nvidia* or run under sudo

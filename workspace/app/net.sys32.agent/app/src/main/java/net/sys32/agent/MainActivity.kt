@@ -115,7 +115,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(16, 12, 12, 12)
         }
         input = EditText(this).apply {
-            hint = "scrie agentului..."
+            hint = "message the agent..."
             setHintTextColor(Color.parseColor("#5C6370"))
             setTextColor(Color.parseColor("#E6E6E6"))
             textSize = 13f
@@ -220,11 +220,11 @@ class MainActivity : AppCompatActivity() {
         // requestAllPermissions) s-a închis si activitatea e iar in fata.
         // Altfel dialogul de runtime e acoperit de Settings si se pierde.
         requestAllPermissions()
-        try { extractAssets() } catch (e: Exception) { appendAnsi("\n[extract eroare] $e\n") }
+        try { extractAssets() } catch (e: Exception) { appendAnsi("\n[extract error] $e\n") }
         try {
             bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
             bridge!!.start()
-        } catch (e: Exception) { appendAnsi("\n[bridge eroare] $e\n") }
+        } catch (e: Exception) { appendAnsi("\n[bridge error] $e\n") }
         startPython()
     }
 
@@ -271,7 +271,7 @@ class MainActivity : AppCompatActivity() {
             android.os.Process.sendSignal(pid, 2)
             appendAnsi("\u001B[38;5;208m[stop] intrerupere trimisa (SIGINT)...\u001B[0m\n")
         } catch (e: Throwable) {
-            appendAnsi("[stop eroare: $e]\n")
+            appendAnsi("[stop error: $e]\n")
         }
         btnStop.visibility = View.GONE
     }
@@ -367,7 +367,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v19")
+        val stamp = File(filesDir, ".assets_v20")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
