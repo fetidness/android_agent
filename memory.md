@@ -170,3 +170,5 @@ DEAD: native `stat -c %Y` on BusyBox/Alpine returns error -> use `stat -c %Y` on
 TRAP: `du` / `find -size` in a sandbox without -r or via wrong mount shows empty/zero -> misread as "no data" -> verify with `ls -la`/`df -h` and check the real path/mount first.
 
 P: GNU tar incremental archives with listed-incremental require a snapshot file regenerated each run; reusing an existing snapshot yields empty/unchanged results -> always regenerate or use a fresh snapshot path per backup.
+
+OK: /usr/bin/time -v gives Max RSS and page faults, but /usr/bin/time without -v prints only elapsed time -> easy to conclude low memory wrongly -> always pass -v to check memory.
