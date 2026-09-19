@@ -152,3 +152,7 @@ OK: /opt/homebrew/bin/ffmpeg exists on macOS ARM -> system ffmpeg absent or wron
 TRAP: piped `head`/`tail` on streaming commands hides exit code and truncates output -> use explicit flags not pipes -> verify with echo $?
 
 TRAP: `git status` on a fresh repo shows clean even with untracked files if a global gitignore or core.excludesfile covers them -> misleading clean tree -> verify with `git status --ignored` and `git ls-files --others --exclude-standard`.
+
+P: /home/ubuntu/Desktop/task/readable_ascii_art (or similar absolute artifact path) is the canonical readable output -> always reassemble and cat the final file after producing it -> verify bytes/path before reporting done.
+
+TRAP: vcgencmd/raspi GPIO reads and most /sys/class/gpio ops return empty or misleading values without root or correct pinmux -> agent may conclude hardware absent/failing -> run as root and confirm pin function before trusting reads.

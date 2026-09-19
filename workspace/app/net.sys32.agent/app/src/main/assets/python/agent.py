@@ -225,8 +225,16 @@ def render(t):
         else:
             out.append(_chunk(_compact(p)))
     return re.sub(r"^\n+","",re.sub(r"\n(?:\n)+$","\n","".join(out)))
-WORK=os.path.join(os.path.dirname(os.path.abspath(__file__)),"workspace")
-os.makedirs(WORK,exist_ok=True)
+_DEFWORK=os.path.join(os.path.dirname(os.path.abspath(__file__)),"workspace")
+# Folderul de lucru poate fi mutat intr-un loc VIZIBIL (ex. /sdcard/agent), ca operatorul
+# sa ajunga la fisierele agentului direct din file manager, fara adb. Il setam din aplicatie
+# prin AGENT_WORK; daca nu e setat sau nu e scriibil, rămâne in sandbox (fallback sigur).
+WORK=os.environ.get("AGENT_WORK","").strip() or _DEFWORK
+try:
+    os.makedirs(WORK,exist_ok=True)
+    _t=os.path.join(WORK,".wtest"); open(_t,"w").write("x"); os.remove(_t)
+except Exception:
+    WORK=_DEFWORK; os.makedirs(WORK,exist_ok=True)
 CTXNAME="context.json"       # conversation history: lives permanently in the working folder (workspace)
 # NU se sterge workspace-ul la startup: proiectele trebuie sa supravietuiasca sesiunilor.
 # Se curata doar gunoiul evident (fisiere temporare recunoscute), niciodata folderele de proiect.
@@ -239,7 +247,10 @@ for f in os.listdir(WORK):
         except Exception: pass
 os.chdir(WORK)              # everything the agent does (files, projects) lives here, persistently
 K=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"key.txt")).read().strip()
-MEM=os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md")
+MEM=os.path.join(WORK,"memory.md")   # memoria sta in workspace (vizibila din file manager)
+if not os.path.exists(MEM) and os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md")):
+    try: open(MEM,"w",encoding="utf-8").write(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md"),encoding="utf-8").read())
+    except Exception: pass
 def mem(txt=None):
     if txt is None:
         try: return open(MEM,encoding="utf-8").read().strip()
