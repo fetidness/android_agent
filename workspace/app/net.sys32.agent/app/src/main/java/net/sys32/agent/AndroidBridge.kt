@@ -12,6 +12,10 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.location.Location
 import android.location.LocationManager
+import android.location.LocationListener
+import android.os.Bundle
+import android.os.CancellationSignal
+import java.util.function.Consumer
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
@@ -199,7 +203,42 @@ class AndroidBridge(
                 ok(JSONObject().put("sensor", name).put("values", vals)
                     .put("unit", sensorUnit(name)).put("seconds", secs))
             }
-            else -> err("sensors: action must be list|read")
+            "stream" -> {
+                // Stream continuu: colecteaza N esantioane de la unul/mai multi senzori intr-o fereastra de timp.
+                val names = if (p.has("name")) listOf(p.optString("name"))
+                            else p.optJSONArray("names")?.let { a -> (0 until a.length()).map { a.getString(it) } }
+                            ?: listOf("accelerometer")
+                val secs = p.optDouble("seconds", 3.0)
+                val maxSamples = p.optInt("max", 100)
+                val data = JSONObject()
+                val listeners = ArrayList<SensorEventListener>()
+                for (nm in names) {
+                    val type = sensorTypes[nm] ?: return err("unknown sensor: $nm (try: ${sensorTypes.keys.joinToString(", ")})")
+                    val s = sm.getDefaultSensor(type) ?: continue
+                    val samples = JSONArray()
+                    val lis = object : SensorEventListener {
+                        override fun onSensorChanged(e: SensorEvent) {
+                            if (samples.length() >= maxSamples) return
+                            val row = JSONArray()
+                            row.put(e.timestamp)
+                            e.values.forEach { row.put(it.toDouble()) }
+                            samples.put(row)
+                        }
+                        override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+                    }
+                    sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_GAME)
+                    listeners.add(lis)
+                    data.put(nm, JSONObject().put("unit", sensorUnit(nm)).put("samples", samples))
+                }
+                if (listeners.isEmpty()) return err("none of the requested sensors are present: ${names.joinToString(", ")}")
+                Thread.sleep((secs * 1000).toLong())
+                for ((i, lis) in listeners.withIndex()) {
+                    try { sm.unregisterListener(lis) } catch (_: Exception) {}
+                }
+                ok(JSONObject().put("seconds", secs).put("kind", "stream").put("data", data)
+                    .put("counts", JSONObject().apply { for (nm in names) data.optJSONObject(nm)?.let { put(nm, it.optJSONArray("samples")?.length() ?: 0) } }))
+            }
+            else -> err("sensors: action must be list|read|stream")
         }
     }
 
@@ -257,12 +296,65 @@ class AndroidBridge(
                     .put("accuracy", l.accuracy.toDouble()).put("provider", l.provider)
                     .put("time", l.time).put("altitude", l.altitude))
             }
+            "fresh" -> {
+                // Fix CU ADEVARAT NOU: cere update-uri de la provider si asteapta primul onLocationChanged.
+                // getCurrentLocation/fused pot returna instant un fix din cache; asta NU face asta.
+                val prov = p.optString("provider", "gps")
+                val secs = p.optDouble("seconds", 30.0)
+                val latch = CountDownLatch(1)
+                var got: Location? = null
+                val lis = object : LocationListener {
+                    override fun onLocationChanged(l: Location) { if (got == null) { got = l; latch.countDown() } }
+                    override fun onProviderEnabled(p: String) {}
+                    override fun onProviderDisabled(p: String) {}
+                    override fun onStatusChanged(p: String?, status: Int, extras: Bundle?) {}
+                }
+                try {
+                    lm.requestLocationUpdates(prov, 0L, 0f, lis, android.os.Looper.getMainLooper())
+                } catch (e: SecurityException) {
+                    return err("permission denied for location: $e")
+                } catch (e: Exception) {
+                    return err("requestLocationUpdates failed: $e")
+                }
+                latch.await((secs * 1000).toLong(), TimeUnit.MILLISECONDS)
+                try { lm.removeUpdates(lis) } catch (_: Exception) {}
+                val l = got ?: return err("no NEW fix from $prov within ${secs}s (move to open sky; provider may be disabled)")
+                val ageMs = System.currentTimeMillis() - l.time
+                ok(JSONObject().put("lat", l.latitude).put("lon", l.longitude)
+                    .put("accuracy", l.accuracy.toDouble()).put("provider", l.provider)
+                    .put("time", l.time).put("age_ms", ageMs).put("age_s", ageMs / 1000.0)
+                    .put("altitude", l.altitude).put("fresh", true).put("forced", true))
+            }
             "providers" -> {
                 val arr = JSONArray()
                 for (prov in lm.getProviders(true)) arr.put(prov)
                 ok(arr)
             }
-            else -> err("location: action must be last|providers")
+            "current" -> {
+                // Forteaza un fix PROASPAT (nu cache). Alege providerul si asteapta un callback real.
+                val prov = p.optString("provider", "fused")
+                val secs = p.optDouble("seconds", 15.0)
+                val cs = CancellationSignal()
+                val latch = CountDownLatch(1)
+                var got: Location? = null
+                val consumer = Consumer<Location> { loc -> got = loc; latch.countDown() }
+                try {
+                    lm.getCurrentLocation(prov, cs, ctx.mainExecutor, consumer)
+                } catch (e: SecurityException) {
+                    return err("permission denied for location: $e")
+                } catch (e: Exception) {
+                    return err("getCurrentLocation failed: $e")
+                }
+                latch.await((secs * 1000).toLong(), TimeUnit.MILLISECONDS)
+                try { cs.cancel() } catch (_: Exception) {}
+                val l = got ?: return err("no fresh fix within ${secs}s (provider=$prov; move to open sky, GPS may be off or indoor)")
+                val ageMs = System.currentTimeMillis() - l.time
+                ok(JSONObject().put("lat", l.latitude).put("lon", l.longitude)
+                    .put("accuracy", l.accuracy.toDouble()).put("provider", l.provider)
+                    .put("time", l.time).put("age_ms", ageMs).put("age_s", ageMs / 1000.0)
+                    .put("altitude", l.altitude).put("fresh", true))
+            }
+            else -> err("location: action must be last|fresh|current|providers")
         }
     }
 

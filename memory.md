@@ -74,3 +74,23 @@ OK: In bash, `set -e` + command substitution in conditionals can mask failures -
 - OK: assets-uri in app se re-extragg odata cu stamp cache (`.assets_vN` in MainActivity extractAssets) -> la orice schimbare de assets INCREMENTEAZA versiunea, altfel ramane copia veche
 - OK: emulator popup stylus/handwriting acopera butonul trimite -> `adb shell settings put secure stylus_handwriting_enabled 0` (si stylus_first_detection_done 1)
 - PREVENT: in app Android inlocuieste tool bash cu `sh -c` (Android n-are bash) si citeste CA din /apex/com.android.conscrypt/cacerts — ambele deja patched in agent.py
+
+TRAP: A bare `du -sh` under a directory the user doesn't own can return empty/permission-denied without sudo -> agent may wrongly conclude zero size -> prefix with sudo or verify via stat/ls on specific paths.
+
+TRAP: checking only /mnt/c/Program Files/... without Drive letter variants -> wrong path yields empty result -> verify Windows paths under all mount roots (c, d) before concluding absent
+
+## 2026-09-19 - android phone real + git (session: /home/gab/Desktop/agent/workspace)
+- OK: instalez app pe telefon real via USB -> `adb -s <SERIAL> install -r app-debug.apk` (APK debug are deja arm64+x86_64, ~4.7s install) -> `adb devices -l` da serialul, `getprop ro.product.cpu.abilist` confirma arm64-v8a
+- TRAP: `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow` NU deschide ecranul de permisiuni -> pe Samsung Settings$AppManageExternalStorageActivity ramane in front si `am start` doar aduce task-ul lui in fata -> acorda permisiunile de baza cu `pm grant` si accepta dialogurile UI
+- OK: acceptare automata a dialogurilor de permisiuni Android -> bucla: `uiautomator dump /sdcard/ui.xml` + `cat /sdcard/ui.xml` -> regex pe text+bounds -> centru buton -> `input tap X Y`; butoane Samsung: 'While using the app', 'Allow'
+- TRAP: variabile shell `A='adb -s X'; $A shell ...` intr-un bash -lc non-interactiv nu produc output -> scrie comanda adb completa de fiecare data sau ruleaz-o din python subprocess
+- TRAP: `adb shell <cmd>` cu pipe/grep complex intoarce INTERMITENT output gol (nu eroare, exit 0) -> foloseste python subprocess cu capture_output pentru orice adb cu pipe
+- OK: verificare ca app-ul ruleaza pe device: `dumpsys window | grep mCurrentFocus` -> `Window{... net.sys32.agent/net.sys32.agent.MainActivity}`; proces via `ps -A | grep sys32`
+- OK: task Settings din recents NU se sterge cu `am task remove` (unknown command) -> `input keyevent KEYCODE_HOME` sau `am force-stop com.android.settings` apoi `monkey -p <pkg> -c android.intent.category.LAUNCHER 1`
+- OK: git repo in /home/gab/Desktop/agent cu .gitignore care taie build/poc/pydist, assets/python/Lib, libdynload, *.apk/*.so/*.tar/*.deb, *.png/*.xwd, logs/, context.json, archive/ -> 776 fisiere -> 52, repo 31MB
+- TRAP: `git add -A` adauga fisiere INAINTE ca regula din .gitignore sa existe in index -> raman staged si ignore-ul nu le scoate -> fix: dupa orice schimbare de .gitignore ruleaza `git rm -r --cached . && git add .`
+- TRAP: linii de negare `!path` la finalul .gitignore re-includ ce tocmai ai exclus -> scoate-le daca vrei sa excludi ferm un director
+
+OK: Shell commands that fail silently without stderr (e.g. unzip -l on missing file into pipe) -> can yield empty output mistaken for success -> verify exit code or test file existence explicitly
+
+OK: bare `timeout` cmd with no DURATION prints usage/errors -> can look like failure -> always pass duration first, e.g. `timeout 30 <cmd>

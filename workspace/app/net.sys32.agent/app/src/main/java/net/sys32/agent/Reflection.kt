@@ -170,7 +170,11 @@ class Reflection(private val ctx: Context) {
                 "info" -> doInfo(req)
                 "services" -> doServices()
                 "free" -> { val id = req.optString("id"); objects.remove(id); ok(JSONObject().put("freed", id)) }
-                "objs" -> ok(JSONArray(objects.keys.toList()))
+                "objs" -> {
+                    val a = JSONArray()
+                    for ((k, v) in objects) a.put(JSONObject().put("id", k).put("class", v?.javaClass?.name ?: "null"))
+                    ok(a)
+                }
                 else -> err("unknown op: $op")
             }
         } catch (e: java.lang.reflect.InvocationTargetException) {
@@ -185,6 +189,8 @@ class Reflection(private val ctx: Context) {
         val method = req.optString("method")
         val argsJson = req.optJSONArray("args") ?: JSONArray()
         val isStatic = req.optBoolean("static", false)
+        if (target.startsWith("obj:") && objects[target.removePrefix("obj:")] == null && objects[target] == null)
+            return err("unknown obj target: $target (existing ids: ${objects.keys.joinToString(", ")}) -- objects returned by a previous call get an id automatically; use it as obj:<id>")
         val targetObj: Any? = resolve(target)
         val cls: Class<*> = when {
             isStatic -> resolveClass(target.removePrefix("class:"))
@@ -202,10 +208,10 @@ class Reflection(private val ctx: Context) {
         }
         val m = findMethod(cls, method, args)
             ?: return err("method not found: ${cls.name}.$method/" + args.size +
-                    " (call op=info on the class to list methods)")
+                    " (hint: use op=info on ${cls.name} to list methods; methods like getSystemService/registerListener live on Context or a service -> use target ctx or svc:NAME)")
         m.isAccessible = true
         val out = m.invoke(receiver, *args)
-        return ok(wrapReturn(out, req.optString("as"), req.optBoolean("keep", false)))
+        return ok(wrapReturn(out, req.optString("as"), req.optBoolean("keep", true)))
     }
 
     private fun resolveArg(kind: String, value: Any?): Any? = when (kind) {
@@ -221,7 +227,7 @@ class Reflection(private val ctx: Context) {
         val cls = resolveClass(name)
         val args = Array(argsJson.length()) { i -> argsJson.get(i) }
         val ctor = cls.constructors.firstOrNull { it.parameterCount == args.size }
-            ?: return err("no constructor with ${args.size} args for $name")
+            ?: return err("no constructor with ${args.size} args for $name (hint: many Android classes have no public constructor; obtain them via ctx.getSystemService(\"name\"), a static factory, or a service target like svc:NAME)")
         ctor.isAccessible = true
         val o = ctor.newInstance(*args)
         val id = req.optString("id", "o${nextId++}")
@@ -232,9 +238,10 @@ class Reflection(private val ctx: Context) {
     private fun doGet(req: JSONObject): JSONObject {
         val targetObj = resolve(req.optString("target"))
         val field = req.optString("field")
+        if (field.isBlank()) return err("field name required (set \"field\": \"<name>\")")
         val f = findField(targetObj, field) ?: return err("field not found: $field")
         f.isAccessible = true
-        return ok(wrapReturn(f.get(targetObj), req.optString("as"), req.optBoolean("keep", false)))
+        return ok(wrapReturn(f.get(targetObj), req.optString("as"), req.optBoolean("keep", true)))
     }
 
     private fun doSet(req: JSONObject): JSONObject {
