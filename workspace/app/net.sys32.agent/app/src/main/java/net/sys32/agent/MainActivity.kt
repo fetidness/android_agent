@@ -285,7 +285,10 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            // ACCESS_BACKGROUND_LOCATION NU se cere aici: pe Android 11+ cererea
+            // ei impreuna cu permisiunile foreground face sistemul sa respinga
+            // dialogul instant (se inchide in ~0.3s, fara sa apara). O cerem
+            // separat, dupa ce FINE e acordata (vezi onRequestPermissionsResult).
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.WRITE_CONTACTS,
             Manifest.permission.GET_ACCOUNTS,
@@ -344,7 +347,20 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 1) {
-            // dupa ce userul a raspuns la dialogurile runtime, cerem All-Files
+            // dupa ce userul a raspuns: cerem BACKGROUND location (doar daca FINE
+            // a fost acordata si nu e deja) - separat, cum cere Android 11+
+            val fineOk = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val bgOk = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (fineOk && !bgOk && Build.VERSION.SDK_INT >= 29) {
+                root.postDelayed({
+                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2)
+                }, 400)
+                return
+            }
+            root.postDelayed({ requestAllFilesAccess() }, 500)
+        }
+        if (requestCode == 2) {
+            // dupa raspunsul la BACKGROUND, cerem All-Files
             root.postDelayed({ requestAllFilesAccess() }, 500)
         }
     }

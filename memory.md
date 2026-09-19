@@ -136,3 +136,5 @@ TRAP: recovery/flash tools (fastboot, ODIN, mtkclient) print empty/no-device out
 TRAP: `adb shell pm list packages` without `-3`/`-s`/`-d` flag -> returns full system+user list, misleading if you only need user apps -> use `pm list packages -3` (third-party) or `-s` (system).
 
 OK: tasks with explicit "verify before claiming done" phrasing (e.g. "confirm the file exists") require running the actual verification command and pasting real output, not asserting success -> skipped verification causes false completion claims -> always execute the check command and include its ra
+
+TRAP: `grep -r pattern dir` without `-a` skips binary files silently -> misleading empty result -> add `-a` or use `rg -uuu` to search binaries too.
