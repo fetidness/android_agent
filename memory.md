@@ -110,3 +110,5 @@ P: /home/oai/share is world-readable/writable scratch for user-visible artifacts
 OK: pip install on macOS system python fails with "externally-managed-environment" -> PEP 668 blocks -> use a venv (python3 -m venv .venv && source .venv/bin/activate) or pipx, never sudo pip.
 
 DEAD: assuming a post-install hook ran apt/system libs cleanly -> tasks succeeding despite missing runtime deps unless you grep exit logs for warnings -> verify each setup step's output, not just overall exit code
+
+OK: git stash push -m msg creates stash but stash pop after branch switch can conflict -> verify with git stash list before pop and prefer git stash apply to keep recovery option.

@@ -80,23 +80,18 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        // Detectam ATINGEREA reala a userului: oricand degetul atinge lista, opresc auto-follow-ul
-        // IMEDIAT. asa, daca userul da scroll sus in timp ce agentul genereaza, ramane sus
-        // (scroll-ul programatic nu mai poate "fura" decizia).
-        scroll.setOnTouchListener { _, ev ->
-            if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
-                autoScroll = false
-                programmaticScroll = false
-                btnDown.visibility = View.VISIBLE
+        // Detectam DIRECTIA scroll-ului, fara niciun flag fragil: cand scrollY SCADE
+        // (adica vezi mai sus in conversatie) opresc auto-follow-ul; cand ajungi la capatul
+        // de jos il re-activez. Asta functioneaza indiferent daca scroll-ul l-a facut
+        // degetul userului sau codul, si nu poate fi blocat de un copil care consuma touch-ul.
+        scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+            val child = scroll.getChildAt(0)
+            val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
+            if (!programmaticScroll) {
+                // scroll facut de user: daca a urcat, opresc auto-follow-ul pe loc
+                if (scrollY < oldScrollY) autoScroll = false
+                if (dist <= 24) autoScroll = true
             }
-            false
-        }
-        scroll.viewTreeObserver.addOnScrollChangedListener {
-            val child = scroll.getChildAt(0) ?: return@addOnScrollChangedListener
-            val dist = child.bottom - scroll.height - scroll.scrollY
-            // daca nu e scroll programatic, respectam pozitia reala a userului
-            if (!programmaticScroll) autoScroll = dist <= 24
-            // butonul "jos" apare cand nu suntem la capatul de jos
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
@@ -137,10 +132,10 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 autoScroll = true
                 btnDown.visibility = View.GONE
-                programmaticScroll = true
                 scroll.post {
+                    programmaticScroll = true
                     scroll.fullScroll(ScrollView.FOCUS_DOWN)
-                    scroll.postDelayed({ programmaticScroll = false }, 120)
+                    scroll.postDelayed({ programmaticScroll = false }, 60)
                 }
             }
         }
@@ -172,11 +167,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
+        // auto-follow DOAR daca userul nu a derulat in sus. marcat ca programatic ca
+        // listener-ul de scroll sa nu confunde aceasta miscare cu intentia userului.
         if (autoScroll) {
-            programmaticScroll = true
             scroll.post {
+                programmaticScroll = true
                 scroll.fullScroll(ScrollView.FOCUS_DOWN)
-                scroll.postDelayed({ programmaticScroll = false }, 120)
+                scroll.postDelayed({ programmaticScroll = false }, 60)
             }
         }
     }
