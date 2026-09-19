@@ -158,3 +158,9 @@ P: /home/ubuntu/Desktop/task/readable_ascii_art (or similar absolute artifact pa
 TRAP: vcgencmd/raspi GPIO reads and most /sys/class/gpio ops return empty or misleading values without root or correct pinmux -> agent may conclude hardware absent/failing -> run as root and confirm pin function before trusting reads.
 
 DEAD: `ls` on a directory/file without read permission returns permission denied, not empty - can't distinguish absence from lockdown -> check exit code / test -e before concluding a path doesn't exist.
+
+DEAD: `claude` CLI non-interactive prompt flag `-p` still requires TTY in some hooks -> hangs/empty output when piped -> test with `echo hi | claude -p ...` before relying on it in automation.
+
+P: macOS Intel hosts require arch -x86_64 prefix for brew under Rosetta; verify with brew config showing Rosetta 2 line before trusting Intel formula paths.
+
+TRAP: `git branch -r` shows stale remote-tracking refs after fetch removal -> conclude remote branch gone -> run `git fetch --prune` before trusting remote ref list.

@@ -225,17 +225,26 @@ def render(t):
         else:
             out.append(_chunk(_compact(p)))
     return re.sub(r"^\n+","",re.sub(r"\n(?:\n)+$","\n","".join(out)))
-_DEFWORK=os.path.join(os.path.dirname(os.path.abspath(__file__)),"workspace")
+_SANDBOX=os.path.dirname(os.path.abspath(__file__))
+_DEFHOME=os.path.join(_SANDBOX,"..")          # fallback: langa scriptul agentului (in sandbox)
+_DEFHOME=os.path.abspath(_DEFHOME)
+# Structura ceruta de operator (folder standard, deja indexat de file manager):
+#   HOME/            -> memory.md + context.json
+#   HOME/workspace/  -> TOT ce genereaza agentul (proiecte, fisiere, logs, archive)
+# HOME vine din aplicatie (AGENT_HOME) - ex. /storage/emulated/0/Download/Agent.
+# Daca nu e setat sau nu e scriibil, rămâne in sandbox (fallback sigur, nu se strica niciodata).
+HOME_DIR=os.environ.get("AGENT_HOME","").strip() or _DEFHOME
+def _writable(d):
+    try:
+        os.makedirs(d,exist_ok=True)
+        _t=os.path.join(d,".wtest"); open(_t,"w").write("x"); os.remove(_t); return True
+    except Exception: return False
+if not _writable(HOME_DIR):
+    HOME_DIR=_DEFHOME; _writable(HOME_DIR)
+WORK=os.path.join(HOME_DIR,"workspace")
+os.makedirs(WORK,exist_ok=True)
 # Folderul de lucru poate fi mutat intr-un loc VIZIBIL (ex. /sdcard/agent), ca operatorul
-# sa ajunga la fisierele agentului direct din file manager, fara adb. Il setam din aplicatie
-# prin AGENT_WORK; daca nu e setat sau nu e scriibil, rămâne in sandbox (fallback sigur).
-WORK=os.environ.get("AGENT_WORK","").strip() or _DEFWORK
-try:
-    os.makedirs(WORK,exist_ok=True)
-    _t=os.path.join(WORK,".wtest"); open(_t,"w").write("x"); os.remove(_t)
-except Exception:
-    WORK=_DEFWORK; os.makedirs(WORK,exist_ok=True)
-CTXNAME="context.json"       # conversation history: lives permanently in the working folder (workspace)
+CTXNAME="context.json"       # conversation history: lives permanently in HOME_DIR (next to memory.md)
 # NU se sterge workspace-ul la startup: proiectele trebuie sa supravietuiasca sesiunilor.
 # Se curata doar gunoiul evident (fisiere temporare recunoscute), niciodata folderele de proiect.
 for f in os.listdir(WORK):
@@ -257,7 +266,7 @@ try:
 except Exception: pass
 os.chdir(WORK)              # everything the agent does (files, projects) lives here, persistently
 K=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"key.txt")).read().strip()
-MEM=os.path.join(WORK,"memory.md")   # memoria sta in workspace (vizibila din file manager)
+MEM=os.path.join(HOME_DIR,"memory.md")   # memoria sta in radacina (langa context.json)
 if not os.path.exists(MEM) and os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md")):
     try: open(MEM,"w",encoding="utf-8").write(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md"),encoding="utf-8").read())
     except Exception: pass
@@ -562,7 +571,22 @@ def _task_head(q=""):
          BAR+"╰"+"─"*w+"╯"+N]
     who = (U+" You > "+N+ST+q) if q else ""
     return who+"\n\n"+"\n".join(box)+"\n\n"+N   # message, blank line, box, then blank line
+def media_rescan():
+    """Reindexeaza folderul de lucru in MediaStore, ca fisierele create de agent sa apara
+    IMEDIAT in My Files / file manager (altfel raman invizibile pana la urmatorul scan de sistem).
+    Ruleaza in background, nu blocheaza si nu da eroare daca nu e disponibil."""
+    def _run():
+        try:
+            import subprocess as _sp
+            _sp.run(["content","call","--uri","content://media/","--method","scan_volume","--arg","external"],
+                    stdout=_sp.DEVNULL,stderr=_sp.DEVNULL,timeout=5)
+        except Exception: pass
+    try:
+        import threading as _th
+        _th.Thread(target=_run,daemon=True).start()
+    except Exception: pass
 def _task_foot(stare="done"):
+    media_rescan()   # fisierele noi devin vizibile in file manager
     """Closes the task: stops the timer and breaks down the total (thinking vs. tool) + the steps + the TOKENS
     consumed by this task, taken from the server usage accumulated in TASK since _task_head()."""
     tot=(time.time()-TASK["t0"]) if TASK["t0"] else 0.0
@@ -814,8 +838,21 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
   "FINAL MESSAGE: it is rendered as FULL rich Markdown in a 256-colour terminal, so use it heavily and correctly: headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, ==highlight==, > blockquote, --- rules, numbered and bulleted lists, task lists (- [x]), links [text](url), tables with | pipes |, and fenced code blocks with a language tag. Write the final answer in Romanian, complete and well structured."}]
-CTX=os.path.join(WORK,CTXNAME)   # the history lives in the working folder (workspace), permanently
-LEGACY=os.path.join(os.path.dirname(os.path.abspath(__file__)),"context.json")  # the old location (next to the script)
+CTX=os.path.join(HOME_DIR,CTXNAME)
+# --- migrare: muta context.json/memory.md din locatiile vechi (sandbox sau /sdcard/agent) ---
+def _migrate():
+    import glob as _g
+    old_ws = [_SANDBOX, os.path.join(_SANDBOX,"workspace"),
+              "/storage/emulated/0/agent", "/sdcard/agent"]
+    for _w in old_ws:
+        for _name,_dst in (("context.json",CTX),("memory.md",MEM)):
+            _src=os.path.join(_w,_name)
+            try:
+                if os.path.exists(_src) and not os.path.exists(_dst):
+                    import shutil as _sh; _sh.copy2(_src,_dst)
+            except Exception: pass
+_migrate()   # muta context.json/memory.md din locatiile vechi, o singura data
+LEGACY=os.path.join(os.path.dirname(os.path.abspath(__file__)),"context.json")  # vechea locatie (langa script)
 def _migrate_ctx():
     """If the history still exists next to the script (the old location) and we do not already have one
     in the working folder, move it there. Runs a single time, on the first startup
