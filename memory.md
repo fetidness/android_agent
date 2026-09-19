@@ -132,3 +132,5 @@ DEAD: `lsblk` without sudo on some systems shows empty/wrong mount info -> non-r
 P: zip -sf file.zip lists filenames without extracting -> use to inspect archive contents -> avoids unzip side effects; verify member names before extraction.
 
 TRAP: recovery/flash tools (fastboot, ODIN, mtkclient) print empty/no-device output when run without root or udev rules present -> looks like "no hardware" -> verify with lsusb/dmesg and sudo, not tool output alone
+
+TRAP: `adb shell pm list packages` without `-3`/`-s`/`-d` flag -> returns full system+user list, misleading if you only need user apps -> use `pm list packages -3` (third-party) or `-s` (system).

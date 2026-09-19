@@ -328,7 +328,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v18")
+        val stamp = File(filesDir, ".assets_v19")
+        // memoria pe termen lung a agentului NU face parte din APK: o salvam
+        // inainte de re-extragere si o punem la loc, ca update-urile de app sa
+        // nu stearga ce a invatat agentul de la operator.
+        val memFile = File(dest, "memory.md")
+        val memSaved = if (memFile.exists()) memFile.readText() else null
         if (stamp.exists() && dest.exists()) return
         dest.deleteRecursively()
         fun copyDir(path: String, out: File) {
@@ -342,6 +347,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         copyDir("python", dest)
+        // punem la loc memoria salvata (daca exista); altfel ramane cea din APK
+        if (memSaved != null) memFile.writeText(memSaved)
         stamp.writeText("ok")
     }
 
