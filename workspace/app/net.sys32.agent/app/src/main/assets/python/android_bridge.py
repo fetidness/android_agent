@@ -26,9 +26,10 @@ def _port_file_candidates():
     c.append("/data/data/net.sys32.agent/files/bridge.port")
     return c
 
-def _find_port():
+def _find_port(force=False):
     global _PORT
-    if _PORT: return _PORT
+    if _PORT and not force: return _PORT
+    _PORT = None
     for p in _port_file_candidates():
         try:
             if p and os.path.exists(p):
@@ -66,9 +67,10 @@ def call(tool, action="", **params):
             raise RuntimeError("empty response from bridge")
         return json.loads(buf.decode("utf-8", "replace"))
     except Exception:
-        # reconectare o singura data (daca app-ul s-a repornit)
+        # reconectare o singura data (daca app-ul s-a repornit, portul din fisier e ALTPORT)
         try:
             _BRIDGE = None
+            _find_port(force=True)   # reciteste bridge.port: app-ul poate fi pe alt port acum
             s = _connect()
             req = {"tool": tool, "action": action, "params": params}
             s.sendall((json.dumps(req) + "\n").encode("utf-8"))

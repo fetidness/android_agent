@@ -96,7 +96,11 @@ class AndroidBridge(
     fun stop() {
         running = false
         try { server?.close() } catch (_: Exception) {}
-        socketFile.delete()
+        // sterge toate fisierele de port ca python sa nu citeasca un port mort
+        try { socketFile.delete() } catch (_: Exception) {}
+        try { File(socketFile.parentFile, "bridge.port").delete() } catch (_: Exception) {}
+        try { File(ctx.filesDir, "home/bridge.port").delete() } catch (_: Exception) {}
+        tcpPort = 0
     }
 
     private fun serve(sock: Socket) {

@@ -96,3 +96,5 @@ OK: Shell commands that fail silently without stderr (e.g. unzip -l on missing f
 OK: bare `timeout` cmd with no DURATION prints usage/errors -> can look like failure -> always pass duration first, e.g. `timeout 30 <cmd>
 
 TRAP: bare `ffmpeg`/`ffprobe` on streams returns generic errors without `-v error` context -> agent may misdiagnose codec vs network cause -> always add `-v verbose`/`-v error` and check stderr separately.
+
+OK: no root/params can return empty/misleading command output -> verify commands with required args/root before concluding failure
