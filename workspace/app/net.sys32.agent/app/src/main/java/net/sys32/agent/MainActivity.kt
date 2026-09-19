@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private var pyIn: OutputStreamWriter? = null
     private val pending = StringBuilder()
     private var autoScroll = true
+    private var permRequested = false   // anti-bucla: cerem o singura data automat din onResume
     @Volatile private var followTail = true
     private var programmaticScroll = false
 
@@ -215,6 +216,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         send.setOnClickListener { sendLine() }
+        // cerem permisiunile DUPĂ ce ecranul All-Files (deschis tot din
+        // requestAllPermissions) s-a închis si activitatea e iar in fata.
+        // Altfel dialogul de runtime e acoperit de Settings si se pierde.
         requestAllPermissions()
         try { extractAssets() } catch (e: Exception) { appendAnsi("\n[extract eroare] $e\n") }
         try {
@@ -313,8 +317,19 @@ class MainActivity : AppCompatActivity() {
             perms.add(Manifest.permission.READ_MEDIA_AUDIO)
         }
         val need = perms.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-        if (need.isNotEmpty()) ActivityCompat.requestPermissions(this, need.toTypedArray(), 1)
+        if (need.isNotEmpty()) {
+            // IMPORTANT: cerem intai permisiunile runtime (un dialog cu toate).
+            // Ecranul All-Files (Settings) il deschidem abia dupa, in
+            // onRequestPermissionsResult -> altfel Settings acopera dialogul
+            // de permisiuni si acesta se pierde instantaneu.
+            ActivityCompat.requestPermissions(this, need.toTypedArray(), 1)
+            return
+        }
+        requestAllFilesAccess()
+    }
 
+    /** Deschide ecranul "All files access" (doar daca nu e deja acordat). */
+    private fun requestAllFilesAccess() {
         if (Build.VERSION.SDK_INT >= 30) {
             try {
                 if (!Environment.isExternalStorageManager()) {
@@ -323,6 +338,14 @@ class MainActivity : AppCompatActivity() {
                         android.net.Uri.parse("package:$packageName")))
                 }
             } catch (_: Exception) {}
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1) {
+            // dupa ce userul a raspuns la dialogurile runtime, cerem All-Files
+            root.postDelayed({ requestAllFilesAccess() }, 500)
         }
     }
 

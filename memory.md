@@ -134,3 +134,5 @@ P: zip -sf file.zip lists filenames without extracting -> use to inspect archive
 TRAP: recovery/flash tools (fastboot, ODIN, mtkclient) print empty/no-device output when run without root or udev rules present -> looks like "no hardware" -> verify with lsusb/dmesg and sudo, not tool output alone
 
 TRAP: `adb shell pm list packages` without `-3`/`-s`/`-d` flag -> returns full system+user list, misleading if you only need user apps -> use `pm list packages -3` (third-party) or `-s` (system).
+
+OK: tasks with explicit "verify before claiming done" phrasing (e.g. "confirm the file exists") require running the actual verification command and pasting real output, not asserting success -> skipped verification causes false completion claims -> always execute the check command and include its ra
