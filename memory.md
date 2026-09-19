@@ -98,3 +98,7 @@ OK: bare `timeout` cmd with no DURATION prints usage/errors -> can look like fai
 TRAP: bare `ffmpeg`/`ffprobe` on streams returns generic errors without `-v error` context -> agent may misdiagnose codec vs network cause -> always add `-v verbose`/`-v error` and check stderr separately.
 
 OK: no root/params can return empty/misleading command output -> verify commands with required args/root before concluding failure
+
+TRAP: kill -0 <pid> returns success for zombie/defunct processes -> liveness check can't detect dead-but-unreaped children -> inspect /proc/<pid>/stat state field (Z) or use waitpid instead.
+
+TRAP: tail/grep-less short follow-ups can look empty against large logs -> paged output hides owner line -> always grep exact symbol/path+'\b' and print with line numbers.
