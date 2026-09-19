@@ -172,3 +172,7 @@ TRAP: `du` / `find -size` in a sandbox without -r or via wrong mount shows empty
 P: GNU tar incremental archives with listed-incremental require a snapshot file regenerated each run; reusing an existing snapshot yields empty/unchanged results -> always regenerate or use a fresh snapshot path per backup.
 
 OK: /usr/bin/time -v gives Max RSS and page faults, but /usr/bin/time without -v prints only elapsed time -> easy to conclude low memory wrongly -> always pass -v to check memory.
+
+DEAD: vgmstream/ffmpeg trimming with -ss before -i on some VGM/ADPCM streams yields wrong/empty audio -> seeking happens on demuxer not decoder -> decode full then trim with -ss after -i or re-encode -t.
+
+TRAP: nvidia-smi/lspci show GPU but no driver -> CUDA ops fail silently/absent -> verify with nvcc --version or python -c "import torch;print(torch.cuda.is_available())" before assuming GPU usable.
