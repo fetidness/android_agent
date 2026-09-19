@@ -129,20 +129,25 @@ class MainActivity : AppCompatActivity() {
             textSize = 18f
             setTextColor(Color.parseColor("#61AFEF"))
             setBackgroundColor(Color.TRANSPARENT)
+            minWidth = 0; minimumWidth = 0
+            setPadding(0, 0, 0, 0)
         }
         // butonul STOP sta LANGĂ trimitere, in randul de input, deci e mereu vizibil
         // (nu mai poate ajunge sub tastatura). apare doar cat timp agentul genereaza.
         btnStop = Button(this).apply {
             text = "■"
-            textSize = 15f
+            textSize = 16f
             setTextColor(Color.parseColor("#E06C75"))
             setBackgroundColor(Color.TRANSPARENT)
             visibility = View.GONE
+            minWidth = 0; minimumWidth = 0     // Button are minWidth implicit ~88dp -> il anulam
+            setPadding(dp(14), 0, dp(14), 0)
             setOnClickListener { stopGenerating() }
         }
         row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(btnStop, LinearLayout.LayoutParams(-2, -2))
-        row.addView(send, LinearLayout.LayoutParams(-2, -2))
+        // ■ = latime fixa mica, lipit de →
+        row.addView(btnStop, LinearLayout.LayoutParams(dp(56), -2))
+        row.addView(send, LinearLayout.LayoutParams(dp(56), -2))
         root.addView(row, LinearLayout.LayoutParams(-1, -2))
 
         val frame = FrameLayout(this)
@@ -190,6 +195,8 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { appendAnsi("\n[bridge eroare] $e\n") }
         startPython()
     }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
