@@ -1303,6 +1303,7 @@ while 1:
         print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
         print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
         print(G+"     /ctx                context window + archives/logs on disk"+N)
+        print(G+"     /where             show where everything lives (workspace, memory, context, logs)"+N)
         print(G+"     /compact            compress the context now"+N)
         print(G+"     /verbose            toggle full code/output of each step"+N)
         print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
@@ -1323,6 +1324,23 @@ while 1:
         NOSPIN[0]=(q=="/nospin"); print(G+"   [ui] "+("NOSPIN: no live line at all - the terminal scrollback stays clean (recommended on a phone)" if NOSPIN[0] else "live line back on (spinner + timer rewritten in place)")+N); continue
     if q=="/verbose":
         VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
+    if q=="/where":
+        print(G+"   LOCATIONS"+N)
+        print(G+"     home       "+N+HOME_DIR+N)
+        print(G+"     workspace  "+N+WORK+N+"   (everything I create goes here)"+N)
+        print(G+"     memory     "+N+MEM+N)
+        print(G+"     context    "+N+CTX+N)
+        print(G+"     logs       "+N+LOGDIR+N)
+        print(G+"     archive    "+N+ARCH+N)
+        try:
+            _n=len([f for f in os.listdir(WORK)])
+            print(G+"     files in workspace: "+N+str(_n)+N)
+        except Exception: pass
+        if HOME_DIR==_DEFHOME:
+            print(OF+"     note: running from the app sandbox (external storage not writable) -"+N)
+            print(OF+"           files are NOT visible in a file manager here."+N)
+        continue
+
     if q=="/mem":
         _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
     if q=="/reset":

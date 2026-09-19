@@ -164,3 +164,9 @@ DEAD: `claude` CLI non-interactive prompt flag `-p` still requires TTY in some h
 P: macOS Intel hosts require arch -x86_64 prefix for brew under Rosetta; verify with brew config showing Rosetta 2 line before trusting Intel formula paths.
 
 TRAP: `git branch -r` shows stale remote-tracking refs after fetch removal -> conclude remote branch gone -> run `git fetch --prune` before trusting remote ref list.
+
+DEAD: native `stat -c %Y` on BusyBox/Alpine returns error -> use `stat -c %Y` only after confirming GNU coreutils; portable alt `date -r file +%s` -> verify with `stat --version` first.
+
+TRAP: `du` / `find -size` in a sandbox without -r or via wrong mount shows empty/zero -> misread as "no data" -> verify with `ls -la`/`df -h` and check the real path/mount first.
+
+P: GNU tar incremental archives with listed-incremental require a snapshot file regenerated each run; reusing an existing snapshot yields empty/unchanged results -> always regenerate or use a fresh snapshot path per backup.
