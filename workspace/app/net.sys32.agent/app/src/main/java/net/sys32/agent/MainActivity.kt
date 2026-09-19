@@ -95,9 +95,16 @@ class MainActivity : AppCompatActivity() {
             // miscarea reala a userului (nu cea programatica): daca s-a urcat, nu mai urmarim;
             // daca s-a coborat pana EFECTIV la fund (<=2), reluam urmarirea.
             if (!programmaticScroll) {
-                if (scrollY < oldScrollY) followTail = false
-                else if (scrollY > oldScrollY && dist <= 16) followTail = true
+                if (scrollY < oldScrollY) {
+                    // userul a derulat SUS -> oprim urmarirea
+                    followTail = false
+                } else if (scrollY > oldScrollY && dist <= 24) {
+                    // userul a derulat JOS si a ajuns (aproape) la fund -> reluam
+                    followTail = true
+                }
             }
+            // daca userul a ajuns la fund (prin orice mijloc), urmarirea reia
+            if (!programmaticScroll && dist <= 8) followTail = true
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
@@ -209,12 +216,22 @@ class MainActivity : AppCompatActivity() {
     private fun stopGenerating() {
         val p = pyProc ?: return
         try {
-            // java.lang.Process nu expune pid() pe Android -> il luam prin reflexie
-            val pid = p.javaClass.getDeclaredMethod("pid").invoke(p) as Int
-            // SIGINT = 2. trimis corect prin android.os.Process (Process.destroy ar da SIGTERM)
+            // Pe Android, java.lang.Process e UNIXProcess: nu are metoda pid(),
+            // ci CAMPUL privat "pid". Incercam campul, apoi metoda (compatibilitate).
+            var pid = -1
+            run {
+                try {
+                    val f = p.javaClass.getDeclaredField("pid"); f.isAccessible = true
+                    pid = f.getInt(p)
+                } catch (_: Throwable) {
+                    val mth = p.javaClass.getDeclaredMethod("pid"); mth.isAccessible = true
+                    pid = mth.invoke(p) as Int
+                }
+            }
+            // SIGINT = 2 (Python il prinde ca KeyboardInterrupt); destroy() ar da SIGTERM si ar omori procesul
             android.os.Process.sendSignal(pid, 2)
-            appendAnsi("\u001B[38;5;208m[stop] am trimis intreruperea...\u001B[0m\n")
-        } catch (e: Exception) {
+            appendAnsi("\u001B[38;5;208m[stop] intrerupere trimisa (SIGINT)...\u001B[0m\n")
+        } catch (e: Throwable) {
             appendAnsi("[stop eroare: $e]\n")
         }
         btnStop.visibility = View.GONE

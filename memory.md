@@ -122,3 +122,5 @@ DEAD: Python `date -d`-free shell arithmetic on YYYYMMDD via `expr` fails on lea
 TRAP: docker ps with no -a shows only running containers -> a stopped service container looks absent -> use `docker ps -a` before concluding a container doesn't exist
 
 DEAD: `find / -name '*.cfg'` style broad filesystem scans timeout/return empty under sandboxed roots -> miss real configs -> scope search to known dirs (/etc, ~/.config, ./) or use fd with depth limit.
+
+OK: `find / -name "*.conf" 2>/dev/null | head` returns empty even when files exist if pipes close early via SIGPIPE; use `-print -quit` or drop `head` -> misleading empty result -> verify with `find ... | wc -l`.
