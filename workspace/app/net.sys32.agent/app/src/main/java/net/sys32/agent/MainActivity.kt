@@ -200,7 +200,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v13")
+        val stamp = File(filesDir, ".assets_v14")
         if (stamp.exists() && dest.exists()) return
         dest.deleteRecursively()
         fun copyDir(path: String, out: File) {
@@ -285,7 +285,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendLine() {
-        val t = input.text.toString()
+        // one line only: the text field may contain embedded newlines (IME / Enter),
+        // and an extra blank line would be read by the agent's input() as a separate, empty line.
+        val t = input.text.toString().replace("\r", "").replace("\n", " ").trim()
         if (t.isEmpty()) return
         input.setText("")
         appendAnsi("\u001B[38;5;245m" + t + "\u001B[0m\n")

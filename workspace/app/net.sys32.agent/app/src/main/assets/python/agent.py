@@ -1227,7 +1227,8 @@ print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /comp
 while 1:
     try: q=input(U+" TU > "+IN).strip()
     except (EOFError,KeyboardInterrupt): print(N);break
-    if q in ("/exit","/quit",""): break
+    if q=="": continue          # blank line (extra newline from the UI) = no-op, do NOT quit the agent
+    if q in ("/exit","/quit"): break
     if q in ("/help","/?"):
         _al="ON" if AUTOLEARN["on"] else "OFF"
         print(G+"   COMMANDS"+N)

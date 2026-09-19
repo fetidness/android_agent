@@ -94,3 +94,5 @@ TRAP: checking only /mnt/c/Program Files/... without Drive letter variants -> wr
 OK: Shell commands that fail silently without stderr (e.g. unzip -l on missing file into pipe) -> can yield empty output mistaken for success -> verify exit code or test file existence explicitly
 
 OK: bare `timeout` cmd with no DURATION prints usage/errors -> can look like failure -> always pass duration first, e.g. `timeout 30 <cmd>
+
+TRAP: bare `ffmpeg`/`ffprobe` on streams returns generic errors without `-v error` context -> agent may misdiagnose codec vs network cause -> always add `-v verbose`/`-v error` and check stderr separately.
