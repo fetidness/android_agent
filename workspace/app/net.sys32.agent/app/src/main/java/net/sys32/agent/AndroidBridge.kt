@@ -139,6 +139,16 @@ class AndroidBridge(
             "intent" -> intent(p)
             "settings" -> settings(action, p)
             "tourl" -> toUri(action, p)
+            "system" -> systemInfo(action, p)
+            "storage" -> storageInfo()
+            "processes" -> processes()
+            "network" -> networkInfo()
+            "display" -> displayInfo()
+            "audio" -> audioInfo()
+            "telephony" -> telephonyInfo()
+            "nfc" -> nfcInfo()
+            "usb" -> usbInfo()
+            "appinfo" -> appInfo(p)
             "eval" -> refl.execute(p.optJSONObject("expr") ?: JSONObject())
             "services" -> refl.execute(JSONObject().put("op", "services"))
             "info" -> refl.execute(JSONObject().put("op", "info").put("target", p.optString("target")).put("filter", p.optString("filter")))
@@ -242,7 +252,38 @@ class AndroidBridge(
                 ok(JSONObject().put("seconds", secs).put("kind", "stream").put("data", data)
                     .put("counts", JSONObject().apply { for (nm in names) data.optJSONObject(nm)?.let { put(nm, it.optJSONArray("samples")?.length() ?: 0) } }))
             }
-            else -> err("sensors: action must be list|read|stream")
+            "all" -> {
+                // Citeste TOATE senzorii disponibili intr-un singur apel (o valoare fiecare).
+                val secs = p.optDouble("seconds", 3.0)
+                val all = sm.getSensorList(Sensor.TYPE_ALL)
+                val data = JSONObject()
+                val listeners = ArrayList<Pair<Sensor, SensorEventListener>>()
+                val lastVals = HashMap<Int, FloatArray>()
+                for (s in all) {
+                    try {
+                        val lis = object : SensorEventListener {
+                            override fun onSensorChanged(e: SensorEvent) { lastVals[e.sensor.type] = e.values.copyOf() }
+                            override fun onAccuracyChanged(s: Sensor?, a: Int) {}
+                        }
+                        sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_FASTEST)
+                        listeners.add(s to lis)
+                    } catch (_: Exception) {}
+                }
+                Thread.sleep((secs * 1000).toLong())
+                for ((s, lis) in listeners) { try { sm.unregisterListener(lis) } catch (_: Exception) {} }
+                for (s in all) {
+                    val v = lastVals[s.type]
+                    val o = JSONObject().put("name", s.name).put("type", s.type).put("stringType", s.stringType)
+                        .put("vendor", s.vendor).put("power", s.power.toDouble()).put("maxRange", s.maximumRange.toDouble())
+                    if (v != null) {
+                        val vals = JSONArray(); v.forEach { vals.put(it.toDouble()) }
+                        o.put("values", vals)
+                    } else o.put("values", JSONArray())
+                    data.put(s.stringType, o)
+                }
+                ok(JSONObject().put("seconds", secs).put("count", all.size).put("sensors", data))
+            }
+            else -> err("sensors: action must be list|read|stream|all")
         }
     }
 
@@ -569,6 +610,242 @@ class AndroidBridge(
     }
 
     // ---------------- TO URI (share/open) ----------------
+
+    // ---------------- SYSTEM / INFRA ----------------
+    private fun systemInfo(action: String, p: JSONObject): JSONObject {
+        val rt = Runtime.getRuntime()
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo(); am.getMemoryInfo(mi)
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val o = JSONObject()
+        o.put("model", Build.MODEL).put("manufacturer", Build.MANUFACTURER).put("brand", Build.BRAND)
+        o.put("device", Build.DEVICE).put("product", Build.PRODUCT).put("hardware", Build.HARDWARE)
+        o.put("board", Build.BOARD).put("bootloader", Build.BOOTLOADER).put("fingerprint", Build.FINGERPRINT)
+        o.put("android", Build.VERSION.RELEASE).put("sdk", Build.VERSION.SDK_INT)
+        o.put("security_patch", Build.VERSION.SECURITY_PATCH)
+        o.put("supported_abis", Build.SUPPORTED_ABIS.toList())
+        o.put("cpu_abi", Build.CPU_ABI)
+        o.put("cpu_cores", rt.availableProcessors())
+        o.put("uptime_ms", android.os.SystemClock.elapsedRealtime())
+        o.put("uptime_h", android.os.SystemClock.elapsedRealtime() / 3600000.0)
+        o.put("heap_max_mb", rt.maxMemory() / 1048576)
+        o.put("heap_used_mb", (rt.totalMemory() - rt.freeMemory()) / 1048576)
+        o.put("ram_total_mb", mi.totalMem / 1048576)
+        o.put("ram_avail_mb", mi.availMem / 1048576)
+        o.put("ram_low", mi.lowMemory)
+        o.put("is_rooted", (try { java.io.File("/system/xbin/su").exists() || java.io.File("/system/bin/su").exists() } catch (_: Exception) { false }))
+        o.put("thermal_status", pm.currentThermalStatus)
+        o.put("power_save", pm.isPowerSaveMode)
+        o.put("device_idle", pm.isDeviceIdleMode)
+        o.put("interactive", pm.isInteractive)
+        if (action == "full") {
+            // adauga toate build props utile
+            val props = JSONObject()
+            for (k in listOf("ro.build.version.release","ro.build.version.sdk","ro.build.display.id","ro.build.date",
+                    "ro.product.model","ro.product.brand","ro.product.name","ro.product.device","ro.hardware",
+                    "ro.serialno","ro.boot.serialno","ro.chipname","ro.board.platform","ro.build.characteristics",
+                    "ro.boot.hardware","ro.revision","ro.build.host","ro.build.user","dalvik.vm.heapsize",
+                    "ro.product.cpu.abilist","ro.crypto.state","ro.debuggable","ro.secure","ro.build.type","ro.build.tags")) {
+                try {
+                    val c = Class.forName("android.os.SystemProperties")
+                    val m = c.getMethod("get", String::class.java)
+                    props.put(k, m.invoke(null, k) as String)
+                } catch (_: Exception) {}
+            }
+            o.put("build_props", props)
+        }
+        return ok(o)
+    }
+
+    // ---------------- STORAGE ----------------
+    private fun storageInfo(): JSONObject {
+        val o = JSONObject()
+        try {
+            val stat = android.os.StatFs(Environment.getDataDirectory().path)
+            o.put("data_total_mb", stat.blockCountLong * stat.blockSizeLong / 1048576)
+            o.put("data_free_mb", stat.availableBlocksLong * stat.blockSizeLong / 1048576)
+            o.put("data_used_mb", (stat.blockCountLong - stat.availableBlocksLong) * stat.blockSizeLong / 1048576)
+        } catch (_: Exception) {}
+        try {
+            val ext = Environment.getExternalStorageDirectory()
+            if (ext != null) {
+                val st = android.os.StatFs(ext.path)
+                o.put("external_total_mb", st.blockCountLong * st.blockSizeLong / 1048576)
+                o.put("external_free_mb", st.availableBlocksLong * st.blockSizeLong / 1048576)
+            }
+        } catch (_: Exception) {}
+        val dirs = JSONObject()
+        for ((k, f) in listOf("files" to ctx.filesDir, "cache" to ctx.cacheDir,
+                              "external_files" to ctx.getExternalFilesDir(null),
+                              "code_cache" to ctx.codeCacheDir, "no_backup" to ctx.noBackupFilesDir)) {
+            if (f != null) dirs.put(k, f.absolutePath)
+        }
+        o.put("paths", dirs)
+        return ok(o)
+    }
+
+    // ---------------- PROCESSES ----------------
+    private fun processes(): JSONObject {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val arr = JSONArray()
+        try {
+            for (pi in am.runningAppProcesses ?: emptyList()) {
+                arr.put(JSONObject().put("process", pi.processName).put("pid", pi.pid)
+                    .put("uid", pi.uid).put("importance", pi.importance).put("pkg", pi.pkgList?.toList() ?: emptyList<String>()))
+            }
+        } catch (_: Exception) {}
+        return ok(JSONObject().put("processes", arr))
+    }
+
+    // ---------------- NETWORK ----------------
+    private fun networkInfo(): JSONObject {
+        val o = JSONObject()
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        try {
+            val n = cm.activeNetwork
+            val caps = if (n != null) cm.getNetworkCapabilities(n) else null
+            o.put("active_network", n?.toString() ?: "none")
+            if (caps != null) {
+                o.put("wifi", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
+                o.put("cellular", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR))
+                o.put("ethernet", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET))
+                o.put("vpn", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN))
+                o.put("bluetooth", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_BLUETOOTH))
+                o.put("down_kbps", caps.linkDownstreamBandwidthKbps)
+                o.put("up_kbps", caps.linkUpstreamBandwidthKbps)
+                o.put("metered", !caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+                o.put("internet", caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET))
+            }
+        } catch (_: Exception) {}
+        val wm = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        try {
+            val info = wm.connectionInfo
+            o.put("wifi_ssid", info?.ssid).put("wifi_bssid", info?.bssid)
+            o.put("wifi_link_speed", info?.linkSpeed).put("wifi_rssi", info?.rssi)
+            o.put("wifi_frequency", info?.frequency).put("wifi_ip", info?.ipAddress)
+            o.put("wifi_enabled", wm.isWifiEnabled)
+        } catch (_: Exception) {}
+        return ok(o)
+    }
+
+    // ---------------- DISPLAY ----------------
+    private fun displayInfo(): JSONObject {
+        val o = JSONObject()
+        val dm = ctx.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        try {
+            val disp = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            if (disp != null) {
+                val m = android.util.DisplayMetrics()
+                disp.getMetrics(m)
+                o.put("width_px", m.widthPixels).put("height_px", m.heightPixels)
+                o.put("density", m.density.toDouble()).put("density_dpi", m.densityDpi)
+                o.put("refresh_rate", disp.refreshRate.toDouble())
+                o.put("rotation", disp.rotation)
+                o.put("state", disp.state)
+                o.put("name", disp.name)
+                try {
+                    val modes = disp.supportedModes
+                    val arr = JSONArray()
+                    for (mode in modes) arr.put(JSONObject().put("w", mode.physicalWidth).put("h", mode.physicalHeight).put("rate", mode.refreshRate.toDouble()))
+                    o.put("modes", arr)
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+        val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        o.put("brightness", android.provider.Settings.System.getInt(ctx.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, -1))
+        o.put("brightness_mode", android.provider.Settings.System.getInt(ctx.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE, -1))
+        o.put("screen_timeout_ms", android.provider.Settings.System.getInt(ctx.contentResolver, android.provider.Settings.System.SCREEN_OFF_TIMEOUT, -1))
+        return ok(o)
+    }
+
+    // ---------------- AUDIO ----------------
+    private fun audioInfo(): JSONObject {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val o = JSONObject()
+        for ((name, stream) in listOf("music" to AudioManager.STREAM_MUSIC, "ring" to AudioManager.STREAM_RING,
+                "alarm" to AudioManager.STREAM_ALARM, "notification" to AudioManager.STREAM_NOTIFICATION,
+                "voice_call" to AudioManager.STREAM_VOICE_CALL, "system" to AudioManager.STREAM_SYSTEM)) {
+            o.put(name, JSONObject().put("vol", am.getStreamVolume(stream)).put("max", am.getStreamMaxVolume(stream)).put("min", am.getStreamMinVolume(stream)))
+        }
+        o.put("ringer_mode", am.ringerMode).put("is_music_active", am.isMusicActive)
+        o.put("mode", am.mode).put("speakerphone", am.isSpeakerphoneOn).put("bluetooth_sco", am.isBluetoothScoOn)
+        try {
+            val devs = am.getDevices(AudioManager.GET_DEVICES_ALL)
+            val arr = JSONArray()
+            for (d in devs) arr.put(JSONObject().put("type", d.type).put("name", d.productName?.toString() ?: "").put("is_sink", d.isSink))
+            o.put("devices", arr)
+        } catch (_: Exception) {}
+        return ok(o)
+    }
+
+    // ---------------- TELEPHONY ----------------
+    private fun telephonyInfo(): JSONObject {
+        val o = JSONObject()
+        try {
+            val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            o.put("network_operator", tm.networkOperatorName).put("network_country", tm.networkCountryIso)
+            o.put("sim_operator", tm.simOperatorName).put("sim_country", tm.simCountryIso)
+            o.put("phone_type", tm.phoneType).put("sim_state", tm.simState)
+            o.put("network_type", tm.networkType).put("is_roaming", tm.isNetworkRoaming)
+        } catch (_: Exception) {}
+        return ok(o)
+    }
+
+    // ---------------- NFC ----------------
+    private fun nfcInfo(): JSONObject {
+        val o = JSONObject()
+        try {
+            val nm = ctx.getSystemService(Context.NFC_SERVICE) as android.nfc.NfcManager
+            val a = nm.defaultAdapter
+            o.put("enabled", a?.isEnabled)
+            o.put("adapter", a?.toString() ?: "")
+        } catch (_: Exception) {}
+        return ok(o)
+    }
+
+    // ---------------- USB ----------------
+    private fun usbInfo(): JSONObject {
+        val o = JSONObject()
+        try {
+            val um = ctx.getSystemService(Context.USB_SERVICE) as android.hardware.usb.UsbManager
+            val arr = JSONArray()
+            for ((name, dev) in um.deviceList) {
+                arr.put(JSONObject().put("name", name).put("vendor", dev.vendorId).put("product", dev.productId))
+            }
+            o.put("devices", arr)
+        } catch (_: Exception) {}
+        return ok(o)
+    }
+
+    // ---------------- APPINFO ----------------
+    private fun appInfo(p: JSONObject): JSONObject {
+        val pkg = p.optString("package", ctx.packageName)
+        val o = JSONObject()
+        try {
+            val pm = ctx.packageManager
+            val pi = pm.getPackageInfo(pkg, android.content.pm.PackageManager.GET_PERMISSIONS or android.content.pm.PackageManager.GET_META_DATA)
+            val ai = pi.applicationInfo
+            o.put("package", pkg).put("version_name", pi.versionName).put("version_code", if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong())
+            o.put("installed", pi.firstInstallTime).put("updated", pi.lastUpdateTime)
+            o.put("label", pm.getApplicationLabel(ai!!).toString())
+            o.put("target_sdk", ai.targetSdkVersion).put("min_sdk", ai.minSdkVersion)
+            o.put("source_dir", ai.sourceDir)
+            o.put("data_dir", ai.dataDir)
+            o.put("system_app", (ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0)
+            o.put("enabled", ai.enabled).put("debuggable", (ai.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0)
+            val requested = pi.requestedPermissions ?: emptyArray<String>()
+            val granted = JSONArray(); val denied = JSONArray()
+            for (perm in requested) {
+                if (pm.checkPermission(perm, pkg) == android.content.pm.PackageManager.PERMISSION_GRANTED) granted.put(perm) else denied.put(perm)
+            }
+            o.put("permissions_granted", granted).put("permissions_denied", denied)
+            val sigs = JSONArray()
+            for (si in pi.signatures ?: emptyArray<android.content.pm.Signature>()) sigs.put(si.toCharsString().take(64))
+            o.put("signatures", sigs)
+        } catch (e: Exception) { o.put("error", e.toString()) }
+        return ok(o)
+    }
+
     private fun toUri(action: String, p: JSONObject): JSONObject {
         val path = p.optString("path", "")
         val f = File(path)

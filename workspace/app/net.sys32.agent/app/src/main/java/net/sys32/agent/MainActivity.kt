@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v16")
+        val stamp = File(filesDir, ".assets_v17")
         if (stamp.exists() && dest.exists()) return
         dest.deleteRecursively()
         fun copyDir(path: String, out: File) {
