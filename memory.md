@@ -108,3 +108,5 @@ TRAP: `pip install` in a venv without `--user` can silently no-op if the package
 P: /home/oai/share is world-readable/writable scratch for user-visible artifacts, not root-only -> prefer it for saving outputs so user can inspect -> verify with ls -l.
 
 OK: pip install on macOS system python fails with "externally-managed-environment" -> PEP 668 blocks -> use a venv (python3 -m venv .venv && source .venv/bin/activate) or pipx, never sudo pip.
+
+DEAD: assuming a post-install hook ran apt/system libs cleanly -> tasks succeeding despite missing runtime deps unless you grep exit logs for warnings -> verify each setup step's output, not just overall exit code

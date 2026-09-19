@@ -80,12 +80,24 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        // Detectam ATINGEREA reala a userului: oricand degetul atinge lista, opresc auto-follow-ul
+        // IMEDIAT. asa, daca userul da scroll sus in timp ce agentul genereaza, ramane sus
+        // (scroll-ul programatic nu mai poate "fura" decizia).
+        scroll.setOnTouchListener { _, ev ->
+            if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
+                autoScroll = false
+                programmaticScroll = false
+                btnDown.visibility = View.VISIBLE
+            }
+            false
+        }
         scroll.viewTreeObserver.addOnScrollChangedListener {
-            if (programmaticScroll) return@addOnScrollChangedListener
             val child = scroll.getChildAt(0) ?: return@addOnScrollChangedListener
             val dist = child.bottom - scroll.height - scroll.scrollY
-            autoScroll = dist <= 24
-            btnDown.visibility = if (autoScroll) View.GONE else View.VISIBLE
+            // daca nu e scroll programatic, respectam pozitia reala a userului
+            if (!programmaticScroll) autoScroll = dist <= 24
+            // butonul "jos" apare cand nu suntem la capatul de jos
+            btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
         val row = LinearLayout(this).apply {
