@@ -150,3 +150,5 @@ TRAP: `ip route get` without root can return an empty/misleading route -> agent 
 OK: /opt/homebrew/bin/ffmpeg exists on macOS ARM -> system ffmpeg absent or wrong -> call the absolute Homebrew path for reliable encodes
 
 TRAP: piped `head`/`tail` on streaming commands hides exit code and truncates output -> use explicit flags not pipes -> verify with echo $?
+
+TRAP: `git status` on a fresh repo shows clean even with untracked files if a global gitignore or core.excludesfile covers them -> misleading clean tree -> verify with `git status --ignored` and `git ls-files --others --exclude-standard`.
