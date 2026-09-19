@@ -156,3 +156,5 @@ TRAP: `git status` on a fresh repo shows clean even with untracked files if a gl
 P: /home/ubuntu/Desktop/task/readable_ascii_art (or similar absolute artifact path) is the canonical readable output -> always reassemble and cat the final file after producing it -> verify bytes/path before reporting done.
 
 TRAP: vcgencmd/raspi GPIO reads and most /sys/class/gpio ops return empty or misleading values without root or correct pinmux -> agent may conclude hardware absent/failing -> run as root and confirm pin function before trusting reads.
+
+DEAD: `ls` on a directory/file without read permission returns permission denied, not empty - can't distinguish absence from lockdown -> check exit code / test -e before concluding a path doesn't exist.

@@ -245,6 +245,16 @@ for f in os.listdir(WORK):
         f.endswith(".tmp") or f.endswith(".log.tmp") or f.startswith(".tmp_")):
         try: os.remove(os.path.join(WORK,f))
         except Exception: pass
+# My Files / MTP nu indexeaza un folder nou care nu contine NICIUN fisier media, deci
+# "agent" nu aparea in lista de foldere. Scriem o iconita PNG minuscula: MediaScanner
+# indexeaza directorul si folderul devine vizibil in orice file manager (Samsung/Sony/etc).
+try:
+    _mk=os.path.join(WORK,".agent_folder.png")
+    if not os.path.exists(_mk):
+        import base64 as _b64
+        open(_mk,"wb").write(_b64.b64decode(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+except Exception: pass
 os.chdir(WORK)              # everything the agent does (files, projects) lives here, persistently
 K=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"key.txt")).read().strip()
 MEM=os.path.join(WORK,"memory.md")   # memoria sta in workspace (vizibila din file manager)
