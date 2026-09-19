@@ -43,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private var pyIn: OutputStreamWriter? = null
     private val pending = StringBuilder()
     private var autoScroll = true
+    private var userScrolledUp = false
     private var programmaticScroll = false
 
     private val extraTop: Int get() = (16 * resources.displayMetrics.density).toInt()
@@ -88,9 +89,10 @@ class MainActivity : AppCompatActivity() {
             val child = scroll.getChildAt(0)
             val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
             if (!programmaticScroll) {
-                // scroll facut de user: daca a urcat, opresc auto-follow-ul pe loc
-                if (scrollY < oldScrollY) autoScroll = false
-                if (dist <= 24) autoScroll = true
+                // scroll facut de user: daca a urcat, opresc auto-follow-ul STRICT
+                if (scrollY < oldScrollY) userScrolledUp = true
+                // re-activez auto-follow DOAR daca userul a ajuns singur la capatul de jos
+                if (dist <= 8) userScrolledUp = false
             }
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
@@ -130,6 +132,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#61AFEF"))
             visibility = View.GONE
             setOnClickListener {
+                userScrolledUp = false
                 autoScroll = true
                 btnDown.visibility = View.GONE
                 scroll.post {
@@ -167,14 +170,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
-        // auto-follow DOAR daca userul nu a derulat in sus. marcat ca programatic ca
-        // listener-ul de scroll sa nu confunde aceasta miscare cu intentia userului.
-        if (autoScroll) {
-            scroll.post {
-                programmaticScroll = true
-                scroll.fullScroll(ScrollView.FOCUS_DOWN)
-                scroll.postDelayed({ programmaticScroll = false }, 60)
-            }
+        // Auto-follow DOAR daca userul nu a derulat manual in sus (userScrolledUp == false).
+        // Verificam intentia la MOMENTUL EXECUTIEI, nu la programare: daca intre timp userul
+        // a derulat, post-ul nu mai face nimic. Asa textul nou creste sub pozitia userului.
+        if (userScrolledUp) return
+        scroll.post {
+            if (userScrolledUp) return@post
+            programmaticScroll = true
+            scroll.fullScroll(ScrollView.FOCUS_DOWN)
+            scroll.postDelayed({ programmaticScroll = false }, 60)
         }
     }
 

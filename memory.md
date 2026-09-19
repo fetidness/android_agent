@@ -112,3 +112,5 @@ OK: pip install on macOS system python fails with "externally-managed-environmen
 DEAD: assuming a post-install hook ran apt/system libs cleanly -> tasks succeeding despite missing runtime deps unless you grep exit logs for warnings -> verify each setup step's output, not just overall exit code
 
 OK: git stash push -m msg creates stash but stash pop after branch switch can conflict -> verify with git stash list before pop and prefer git stash apply to keep recovery option.
+
+P: /usr/bin/python3 -c 'import gi; gi.require_version("Gtk","3.0")' silently no-ops under headless SSH -> GTK apps fail without DISPLAY -> verify with xvfb-run or check $DISPLAY before GUI commands
