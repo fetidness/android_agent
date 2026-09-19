@@ -102,3 +102,5 @@ OK: no root/params can return empty/misleading command output -> verify commands
 TRAP: kill -0 <pid> returns success for zombie/defunct processes -> liveness check can't detect dead-but-unreaped children -> inspect /proc/<pid>/stat state field (Z) or use waitpid instead.
 
 TRAP: tail/grep-less short follow-ups can look empty against large logs -> paged output hides owner line -> always grep exact symbol/path+'\b' and print with line numbers.
+
+TRAP: `pip install` in a venv without `--user` can silently no-op if the package is already satisfied system-wide; verify with `python -c "import X; print(X.__file__)"` to confirm it lives in the venv, not the system path.

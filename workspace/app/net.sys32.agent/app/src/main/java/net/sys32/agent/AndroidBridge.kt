@@ -127,7 +127,7 @@ class AndroidBridge(
             "sensors" -> sensors(action, p)
             "camera" -> camera(action, p)
             "location" -> location(action, p)
-            "battery" -> battery()
+            "battery" -> battery(action)
             "clipboard" -> clipboard(action, p)
             "notify" -> notify(p)
             "vibrate" -> vibrate(p)
@@ -363,16 +363,51 @@ class AndroidBridge(
     }
 
     // ---------------- BATTERY ----------------
-    private fun battery(): JSONObject {
+    private fun battery(action: String = "get"): JSONObject {
         val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        // sticky broadcast ACTION_BATTERY_CHANGED = sursa COMPLETA pe care o poate citi un app normal
         val i = ctx.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val status = i?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val plugged = i?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
         val temp = (i?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0
         val volt = i?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
-        return ok(JSONObject().put("level", level).put("charging", status == BatteryManager.BATTERY_STATUS_CHARGING)
-            .put("plugged", plugged != 0).put("temperature_c", temp).put("voltage_mv", volt))
+        val health = i?.getIntExtra(BatteryManager.EXTRA_HEALTH, -1) ?: -1
+        val tech = i?.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)
+        val present = i?.getBooleanExtra(BatteryManager.EXTRA_PRESENT, false) ?: false
+        val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val statusName = when (status) {
+            1 -> "UNKNOWN"; 2 -> "CHARGING"; 3 -> "DISCHARGING"; 4 -> "NOT_CHARGING"; 5 -> "FULL"; else -> "?" }
+        val healthName = when (health) {
+            1 -> "UNKNOWN"; 2 -> "GOOD"; 3 -> "OVERHEAT"; 4 -> "DEAD"; 5 -> "OVER_VOLTAGE";
+            6 -> "UNSPECIFIED_FAILURE"; 7 -> "COLD"; else -> "?" }
+        val plugName = when (plugged) {
+            0 -> "none"; 1 -> "AC"; 2 -> "USB"; 4 -> "WIRELESS"; 8 -> "DOCK"; else -> "?" }
+        val base = JSONObject()
+            .put("level", level).put("charging", status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
+            .put("status", status).put("status_name", statusName)
+            .put("plugged", plugged != 0).put("plug_type", plugName)
+            .put("temperature_c", temp).put("voltage_mv", volt)
+            .put("health", health).put("health_name", healthName)
+            .put("technology", tech ?: "").put("present", present).put("scale", scale)
+        if (action != "full") return ok(base)
+        // varianta COMPLETA: adauga toate proprietatile BatteryManager + campurile extras din sticky
+        val curNow = try { bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) } catch (_: Exception) { Int.MIN_VALUE }
+        val curAvg = try { bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE) } catch (_: Exception) { Int.MIN_VALUE }
+        val chgCounter = try { bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER) } catch (_: Exception) { Long.MIN_VALUE }
+        val energy = try { bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER) } catch (_: Exception) { Int.MIN_VALUE }
+        val timeToFull = try { bm.computeChargeTimeRemaining() } catch (_: Exception) { -1L }
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val capacityPctOfRaw = if (chgCounter > 0 && level > 0) (chgCounter.toDouble() * 100.0 / level) else -1.0
+        return ok(base
+            .put("current_now_uA", curNow).put("current_average_uA", curAvg)
+            .put("charge_counter_uAh", chgCounter).put("energy_counter_nWh", energy)
+            .put("time_to_full_ms", timeToFull)
+            .put("battery_full_estimate_mAh", if (capacityPctOfRaw > 0) (capacityPctOfRaw / 1000.0) else -1.0)
+            .put("power_save_mode", pm.isPowerSaveMode)
+            .put("thermal_status", pm.currentThermalStatus)
+            .put("is_charging", bm.isCharging)
+            .put("note", "health/technology/present/scale come from the ACTION_BATTERY_CHANGED sticky broadcast - readable by any normal app; Samsung SEM_* properties and BATTERY_STATS need root/system perms"))
     }
 
     // ---------------- CLIPBOARD ----------------
