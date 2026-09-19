@@ -131,13 +131,26 @@ class MainActivity : AppCompatActivity() {
                     else { sendLine(); true }   // trimite
                 } else false
             }
-            // fallback pentru tastatura soft (unele IME trimit actiunea, nu KEYCODE_ENTER)
-            setOnEditorActionListener { _, actionId, event ->
+            // fallback pentru tastaturi soft care trimit actiunea IME
+            setOnEditorActionListener { _, actionId, _ ->
                 val isEnter = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND ||
-                              actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
-                              (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN)
+                              actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
                 if (isEnter) { sendLine(); true } else false
             }
+            // Gboard (si alte IME-uri) NU trimit KEYCODE_ENTER: tasta Enter adauga
+            // direct "\n" in text. Deci detectam newline-ul in TextWatcher si trimitem.
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(ed: android.text.Editable) {
+                    if (ed.toString().contains("\n")) {
+                        val cleaned = ed.toString().replace("\n", "")
+                        ed.clear()
+                        ed.append(cleaned)
+                        sendLine()
+                    }
+                }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
         }
         val send = Button(this).apply {
             text = "→"
