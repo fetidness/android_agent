@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
     private var pyIn: OutputStreamWriter? = null
     private val pending = StringBuilder()
     private var autoScroll = true
-    private var userScrolledUp = false
+    @Volatile private var followTail = true
     private var programmaticScroll = false
 
     private val extraTop: Int get() = (16 * resources.displayMetrics.density).toInt()
@@ -73,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         output = TextView(this).apply {
-            setTextIsSelectable(true)
             setPadding(24, 16, 24, 24)
             textSize = 11f
             typeface = mono
@@ -83,52 +82,22 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        // Detectam DIRECTIA scroll-ului, fara niciun flag fragil: cand scrollY SCADE
-        // (adica vezi mai sus in conversatie) opresc auto-follow-ul; cand ajungi la capatul
-        // de jos il re-activez. Asta functioneaza indiferent daca scroll-ul l-a facut
-        // degetul userului sau codul, si nu poate fi blocat de un copil care consuma touch-ul.
-        // Orice atingere a listei = userul vrea control. Marchez imediat "scrolled up"
-        // si NU il mai las resetat automat de re-layout-uri (care emit scroll evenimente
-        // cand continutul creste). Resetarea se face DOAR cand userul ajunge efectiv la
-        // fundul absolut (dist<=2) sau cand apasa butonul ⇩.
-        // Distingem DIRECTIA derularii facuta de user (nu de cod):
-        //  - urca (scrollY scade)      -> opresc auto-follow-ul
-        //  - coboara si ajunge aproape de fund (dist<=24) -> REACTIVEZ auto-follow-ul
-        // Astfel: daca derulezi jos la capat, urmarirea automata revine; daca urci, rămâi sus.
-        // CHEIA: decidem intentia userului NU din evenimente de scroll (care vin si
-        // cand creste continutul generat!), ci din GESTUL lui. La ACTION_DOWN retinem
-        // y-ul degetului; la ACTION_UP comparam pozitia finala cu cea initiala si, daca
-        // userul a tras in sus, marcăm controlul manual. Creșterea continutului NU poate
-        // declanșa asta, pentru ca nu exista gest.
-        var touchStartY = 0f
-        var touchStartScrollY = 0
-        scroll.setOnTouchListener { _, ev ->
-            when (ev.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> {
-                    touchStartY = ev.rawY
-                    touchStartScrollY = scroll.scrollY
-                }
-                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                    val movedUp = (ev.rawY - touchStartY) > 24          // degetul a urcat
-                    val finalScrollY = scroll.scrollY
-                    // NU mai cerem si finalScrollY < touchStartScrollY: cat timp userul trage
-                    // in sus, textul generat creste continutul si impinge scrollY inainte, deci
-                    // finalScrollY poate fi mai MARE desi intentia userului a fost clar spre sus.
-                    if (movedUp) {
-                        userScrolledUp = true
-                    } else {
-                        // nu a urcat (sau a coborat): daca a ajuns aproape de fund, reia urmarirea
-                        val child = scroll.getChildAt(0)
-                        val dist = if (child != null) child.bottom - scroll.height - finalScrollY else Int.MAX_VALUE
-                        if (dist <= 24) userScrolledUp = false
-                    }
-                }
-            }
-            false
-        }
+        // ===== SCROLL =====
+        // Nu mai tin niciun flag de "user a derulat". Sistemul e pur reactiv:
+        // in appendAnsi verific DACA suntem acum la fund; daca da -> urmaresc generarea,
+        // daca nu -> nu misc nimic. Astfel:
+        //   - esti jos la fund        -> auto-scroll (urmareste generarea)
+        //   - ai derulat sus          -> nu esti la fund -> rămâi unde esti
+        //   - revii jos la fund       -> iar la fund -> auto-scroll reia singur
         scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
             val child = scroll.getChildAt(0)
             val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
+            // miscarea reala a userului (nu cea programatica): daca s-a urcat, nu mai urmarim;
+            // daca s-a coborat pana EFECTIV la fund (<=2), reluam urmarirea.
+            if (!programmaticScroll) {
+                if (scrollY < oldScrollY) followTail = false
+                else if (scrollY > oldScrollY && dist <= 16) followTail = true
+            }
             btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
@@ -154,7 +123,18 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#61AFEF"))
             setBackgroundColor(Color.TRANSPARENT)
         }
+        // butonul STOP sta LANGĂ trimitere, in randul de input, deci e mereu vizibil
+        // (nu mai poate ajunge sub tastatura). apare doar cat timp agentul genereaza.
+        btnStop = Button(this).apply {
+            text = "■"
+            textSize = 15f
+            setTextColor(Color.parseColor("#E06C75"))
+            setBackgroundColor(Color.TRANSPARENT)
+            visibility = View.GONE
+            setOnClickListener { stopGenerating() }
+        }
         row.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(btnStop, LinearLayout.LayoutParams(-2, -2))
         row.addView(send, LinearLayout.LayoutParams(-2, -2))
         root.addView(row, LinearLayout.LayoutParams(-1, -2))
 
@@ -167,7 +147,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#61AFEF"))
             visibility = View.GONE
             setOnClickListener {
-                userScrolledUp = false
+                followTail = true
                 autoScroll = true
                 btnDown.visibility = View.GONE
                 scroll.post {
@@ -182,18 +162,6 @@ class MainActivity : AppCompatActivity() {
         lp.setMargins(0, 0, 28, 180)
         frame.addView(btnDown, lp)
 
-        btnStop = Button(this).apply {
-            text = "■"
-            textSize = 16f
-            setTextColor(Color.parseColor("#0D1117"))
-            setBackgroundColor(Color.parseColor("#E06C75"))   // rosu
-            visibility = View.GONE
-            setOnClickListener { stopGenerating() }
-        }
-        val lps = FrameLayout.LayoutParams(-2, -2)
-        lps.gravity = Gravity.END or Gravity.BOTTOM
-        lps.setMargins(0, 0, 28, 320)   // mai sus decat butonul ⇩
-        frame.addView(btnStop, lps)
         setContentView(frame)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
@@ -218,19 +186,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
-        // butonul STOP: il arat cat timp agentul genereaza, il ascund cand taskul s-a terminat
+
+        // butonul STOP: il ascund cand taskul s-a terminat
         if (btnStop.visibility == View.VISIBLE && (s.contains("TASK #") && (s.contains("done") || s.contains("interrupted")))) {
             btnStop.visibility = View.GONE
         }
-        // Auto-follow DOAR daca userul nu a derulat manual in sus. Verific flagul la
-        // MOMENTUL EXECUTIEI post-ului: daca intre timp userul a derulat, nu facem nimic,
-        // deci textul nou creste SUB pozitia lui fara sa-l miste.
-        if (userScrolledUp) return
-        scroll.post {
-            if (userScrolledUp) return@post
-            val child = scroll.getChildAt(0) ?: return@post
-            val dist = child.bottom - scroll.height - scroll.scrollY
-            if (dist <= 24) {   // suntem aproape de fund -> urmarim fluxul
+
+        // urmarim coada DOAR daca userul nu a derulat manual in sus (followTail).
+        // Daca a derulat sus, textul nou creste SUB pozitia lui, fara sa-l miste.
+        if (followTail) {
+            scroll.post {
+                if (!followTail) return@post
                 programmaticScroll = true
                 scroll.fullScroll(ScrollView.FOCUS_DOWN)
                 scroll.postDelayed({ programmaticScroll = false }, 60)

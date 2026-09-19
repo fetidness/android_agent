@@ -120,3 +120,5 @@ TRAP: `ps` alone in a container shows only that process -> hides sibling/parent 
 DEAD: Python `date -d`-free shell arithmetic on YYYYMMDD via `expr` fails on leading-zero octals (e.g. 08) -> expr treats 08 as invalid octal -> use `date -d "$d" +%s` or strip leading zeros with `10#$var` in bash arithmetic.
 
 TRAP: docker ps with no -a shows only running containers -> a stopped service container looks absent -> use `docker ps -a` before concluding a container doesn't exist
+
+DEAD: `find / -name '*.cfg'` style broad filesystem scans timeout/return empty under sandboxed roots -> miss real configs -> scope search to known dirs (/etc, ~/.config, ./) or use fd with depth limit.
