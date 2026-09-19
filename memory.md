@@ -126,3 +126,5 @@ DEAD: `find / -name '*.cfg'` style broad filesystem scans timeout/return empty u
 OK: `find / -name "*.conf" 2>/dev/null | head` returns empty even when files exist if pipes close early via SIGPIPE; use `-print -quit` or drop `head` -> misleading empty result -> verify with `find ... | wc -l`.
 
 TRAP: macOS `/usr/bin/time -l` output goes to stderr and its first line is column-formatted; piping `time` alone (`time cmd`) is a bash keyword so flags differ -> capture with `{ /usr/bin/time -l cmd ; } 2>file` rather than `time -l`.
+
+DEAD: `lsblk` without sudo on some systems shows empty/wrong mount info -> non-root restricted device enumeration -> use `lsblk -f` with sudo or check /proc/mounts as root for accurate results.

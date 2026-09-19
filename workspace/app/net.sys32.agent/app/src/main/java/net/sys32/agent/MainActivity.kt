@@ -123,6 +123,21 @@ class MainActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             maxLines = 5
             setPadding(12, 12, 12, 12)
+            // ENTER trimite taskul; SHIFT+ENTER (sau Enter cu Alt) baga linie noua.
+            setOnKeyListener { _, keyCode, event ->
+                if (keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    val shift = event.isShiftPressed || event.isAltPressed
+                    if (shift) false            // linie noua
+                    else { sendLine(); true }   // trimite
+                } else false
+            }
+            // fallback pentru tastatura soft (unele IME trimit actiunea, nu KEYCODE_ENTER)
+            setOnEditorActionListener { _, actionId, event ->
+                val isEnter = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND ||
+                              actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                              (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN)
+                if (isEnter) { sendLine(); true } else false
+            }
         }
         val send = Button(this).apply {
             text = "→"
