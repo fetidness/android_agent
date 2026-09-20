@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64,datetime,json,os,random,re,shutil,signal,subprocess,sys,tempfile,threading,time,urllib.request
+import base64,datetime,json,os,random,re,shlex,shutil,signal,subprocess,sys,tempfile,threading,time,urllib.request
 
 # --- ANDROID FIX: folosim certificatele CA ale sistemului Android pentru HTTPS ---
 if sys.platform=="android" or os.path.exists("/system/bin/linker64"):
@@ -1025,6 +1025,21 @@ def vision(path,prompt,max_tokens=None):
         return out+"\n[look] "+str(os.path.getsize(p)//1024)+" KB | tok in "+str(u.get("prompt_tokens","?"))+" out "+str(u.get("completion_tokens","?"))+(" (reasoning "+str(u["completion_tokens_details"]["reasoning_tokens"])+")" if u.get("completion_tokens_details") else "")
     except Exception as e:
         return "[look] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]
+def py_capture(argv, timeout=300):
+    """Ruleaza un fisier de script Python (argv = [script, args...]) si intoarce stdout+stderr.
+    Folosit de comanda /run. Ruleaza in WORK, ca scriptul sa vada fisierele din workspace."""
+    o=tempfile.TemporaryFile(dir=WORK)
+    try:
+        p=subprocess.Popen([sys.executable]+list(argv),cwd=WORK,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+        p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(p.pid,signal.SIGKILL)
+        except Exception: pass
+        o.seek(0); return (o.read().decode("utf-8","replace") or "")+"\n[timeout after "+str(timeout)+"s]"
+    except Exception as e:
+        o.seek(0); return (o.read().decode("utf-8","replace") or "")+"\n[run error: "+str(e)+"]"
+    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")[:20000]
+
 def py(c,cwd):
     """Runs the code in its own process group. Ctrl+C kills ONLY this
     tool (SIGKILL on the group), then re-raises the signal to the task loop."""
@@ -1426,6 +1441,7 @@ while 1:
         print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
         print(G+"     /ctx                context window + archives/logs on disk"+N)
         print(G+"     /where             show where everything lives (workspace, memory, context, logs)"+N)
+        print(G+"     /run <script.py>   run a Python script from the workspace, with optional args"+N)
         print(G+"     /compact            compress the context now"+N)
         print(G+"     /verbose            toggle full code/output of each step"+N)
         print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
@@ -1461,6 +1477,21 @@ while 1:
         if HOME_DIR==_DEFHOME:
             print(OF+"     note: running from the app sandbox (external storage not writable) -"+N)
             print(OF+"           files are NOT visible in a file manager here."+N)
+        continue
+
+    if q.startswith("/run "):
+        # /run <script.py> [args...] - ruleaza un script Python din workspace, cu argumente.
+        argv=shlex.split(q[5:].strip())
+        if not argv:
+            print(R+"   usage: /run <script.py> [args...]   (scriptul trebuie sa fie in workspace)"+N); continue
+        script=argv[0]
+        if not os.path.isabs(script): script=os.path.join(WORK,script)
+        if not os.path.exists(script):
+            print(R+"   no such file: "+script+N); continue
+        _a=argv[1:]
+        print(G+"   [run] "+os.path.basename(script)+(" "+" ".join(_a) if _a else "")+N)
+        _o=py_capture([script]+_a)
+        if _o.strip(): print(_o.rstrip())
         continue
 
     if q=="/mem":
