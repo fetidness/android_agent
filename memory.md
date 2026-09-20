@@ -202,3 +202,5 @@ DEAD: /tmp/nonexistent scripts fail silently -> relative assumptions -> use abso
 P: GNU/Linux `find -newermt` needs full timestamp or offset like `-newermt '-1 hour'`; bare `-newermt -1h` is parsed as a path -> use `-mmin -60` or quote `-newermt '-60 min'` -> verify by COUNTING matches first
 
 TRAP: read-only shell probe `nvidia-smi`/`systemctl status` can return empty/blank without root or with no params -> agent misreads as "missing GPU/service" -> always pass explicit query args and verify exit code before concluding.
+
+TRAP: bare `git diff` on a repo with only staged changes shows empty output -> changes are in index, not worktree -> verify with `git diff --cached` instead
