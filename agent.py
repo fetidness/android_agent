@@ -290,14 +290,30 @@ def mem_dups(before, after):
     return new, dup
 
 
+def _lesson_value(line):
+    """Scor de VALOARE 0-10 pentru o lectie de memorie. Memoria creste doar cu lectii care
+    (a) spun o cauza si o consecinta (->), (b) contin detalii specifice (numere/erori/Api.metoda),
+    (c) sunt destul de lungi sa fie informative. Respinge banalitatile si observatiile fara
+    consecinta. Utilizat strict: < 2 => lectia NU se scrie."""
+    import re as _r
+    s = 0
+    if "->" in line: s += 3
+    if _r.search(r"\d", line): s += 2
+    if _r.search(r"[a-z]+\.[A-Z]\w+", line): s += 2
+    if _r.search(r"\b(ERROR|DENY|DENIED|Exception|errno|ENOENT|EACCES|Permission|SELinux|null|refuses?|not found)\b", line, _r.I): s += 2
+    if len(line) < 60: s -= 3
+    if line.upper().startswith(("OK:", "P:")) and "->" not in line: s -= 2
+    return s
+
+
 def mem_lint(txt):
     """Checks EVERY /learn write LINE BY LINE (the prompt's rules, enforced in code):
-    - one lesson = ONE line, <=150 chars (the prompt says 150, density warns only on the AVERAGE)
+    - one lesson = ONE line, <=300 chars (density warns only on the AVERAGE)
     - no forbidden content: narration, tool calls, dialogue, praise, generic advice, code dumps
     - section heading present and well formed.
     Read-only: it NEVER edits or truncates the file. Returns (warnings, lessons)."""
     import re as _re
-    MAXLINE = 150
+    MAXLINE = 300
     FORBID = [
         (r"\b(am citit|am rulat|am apelat|am folosit tool|tool call)\b", "narration/tool-call"),
         (r"\b(operatorul|utilizatorul a spus|buna seara)\b", "operator dialogue"),
@@ -325,6 +341,9 @@ def mem_lint(txt):
         for rx, why in FORBID:
             if _re.search(rx, l, _re.I):
                 out.append((0, "forbidden [" + why + "]: " + l[:60]))
+        # filtru de VALOARE: o linie de lectie prea slaba (banala, fara consecinta) nu intra
+        if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:")) and _lesson_value(l) < 2:
+            out.append((0, "low value [" + str(_lesson_value(l)) + "]: " + l[:60]))
     return out, lessons
 
 
@@ -384,7 +403,7 @@ LBLW=lambda: max(18,min(24,CS()-40))   # label box: tighter, so the timers/log/s
 DURW=7   # widest _dur() value: "1:00:00" (7 chars)
 REFW=10  # widest log file name in the step line (longer names end with …)
 SZW=8    # width of the output-size box (and of the phase box in the live line)
-TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","1800"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
+TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","6000"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
 CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","1000000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
 CTXKEEP=24         # how many recent messages are never compressed
 LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted between sessions)
@@ -398,7 +417,9 @@ def _cut(o,ref=None):
     Nothing is lost: the original is at `ref` and can be read at any time with a tool call."""
     if len(o)<=TOOLMAX: return o
     h,t=TOOLMAX*3//4,TOOLMAX//4
-    mid="[... "+str(len(o)-TOOLMAX)+" chars in the middle, NOT LOST: the complete text "+(("in "+ref) if ref else "in the complete output")+" ...]"
+    _tot=len(o)
+    mid=("[... "+str(_tot-TOOLMAX)+" chars omitted here (NOT LOST). Read them with: "
+         +"read path="+(ref if ref else "<file>")+" offset="+str(h)+" limit="+str(TOOLMAX)+" (then increase offset to continue) ...]")
     return o[:h]+"\n"+mid+"\n"+o[-t:]
 def _store(o):
     """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None)."""
@@ -696,20 +717,28 @@ def mstats(s):
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 AUTOLEARN={"on":True,"min_steps":5}   # auto-learn after a finished task: ON by default, disable via /auto-learn off
-AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. Look at the task that just finished above. "
- "Extract the MOST VALUABLE GENUINELY NEW, REUSABLE lesson from it - if there is one. "
- "A lesson is reusable when it would change how you behave in a FUTURE session, not just describe this one task. "
- "It counts even if the task SUCCEEDED: be alert for SUBTLE, EASY-TO-MISS facts such as "
- "(a) a command that gives a MISLEADING or EMPTY result without root/params (so an agent could draw a WRONG conclusion), "
- "(b) an exact working command or absolute path worth reusing, "
- "(c) something you PROVED does not work (dead end, wrong flag, wrong path), "
- "(d) a non-obvious environment/hardware fact that constrains future commands, "
- "(e) a mistake you made plus the exact fix. "
- "Do NOT extract routine narration, task-specific trivia, or anything already in your memory snapshot. "
- "REPLY FORMAT - EXACTLY one line, nothing else: "
- "  - If there IS a lesson: start the line with NONE of the words YES/NO; write it as a dense memory bullet, "
- "    syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max ~200 chars, no markdown, no quotes. "
- "  - If there is genuinely NOTHING reusable: reply with the single word: NO.")
+AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a Linux desktop "
+ "(this machine, headless shell, no GUI). You act through the python/bash/smart/look tools and can touch "
+ "the whole filesystem and system. Look at the task that just finished above and decide whether it taught "
+ "you a REUSABLE fact about THIS machine/environment. "
+ "A lesson qualifies ONLY if it is BOTH (1) about this Linux system itself - its commands, flags, paths, "
+ "packages, kernel/proc behaviour, permissions, quirks of the tools available here - AND (2) likely to "
+ "change how you act on a FUTURE task here, not just describe what happened. "
+ "Typical valid lessons: a command that gives a MISLEADING or EMPTY result without a flag/param; an exact "
+ "working command or absolute path; something PROVEN not to work (dead end, wrong flag, wrong path); a "
+ "non-obvious environment fact that constrains future commands; a mistake you made plus the exact fix. "
+ "NEVER save: generic advice, paraphrases of the task, one-off artefacts (a file you happened to create), "
+ "trivia specific to a single run, or anything already in your memory snapshot. "
+ "If the lesson would be equally useful in a completely different environment, or is not about acting on "
+ "THIS machine, it does NOT qualify. Quality over quantity: memory must stay dense. "
+ "REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). "
+ "Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). "
+ "Do NOT pad - a weak or obvious line is worse than none. "
+ "  - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax "
+ "`KEY: what -> cause -> fix/verify`, KEY one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 300 chars, no markdown, no quotes. "
+ "Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time. "
+ "  - If there is genuinely NOTHING reusable or it is not about this machine: reply with the single word: NO.")
+
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -735,7 +764,8 @@ TC=E+"[38;5;216m";TCB=E+"[38;5;180;48;5;236m"   # TC=calling a tool (warm amber)
 T=[{"type":"function","function":{"name":"python","description":"Run Python 3 code on this Linux machine, returns stdout/stderr. Use stdlib only. BEST for: structured parsing (JSON/INI/KeyValues), logic, aggregations in memory, complex data structures, anything needing decisions. SLOW for multi-million-line streams; for those use `bash` or the `smart` router.","parameters":{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}}},
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
-   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android hardware/OS access. Only available on the Android build. FULL generic access to the whole Android SDK via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl"},"action":{"type":"string","description":"the sub-action, e.g. list|read|photo|get|set|say|launch"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request"}},"required":["tool"]}}}]
+   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android hardware/OS access. Only available on the Android build. FULL generic access to the whole Android SDK via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl"},"action":{"type":"string","description":"the sub-action, e.g. list|read|photo|get|set|say|launch"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request"}},"required":["tool"]}}},
+   {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
   "1) `python`: run Python 3 code (stdlib only). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
@@ -984,6 +1014,41 @@ def run_bash_tool(cmd):
     if _looks_like_error(o): TASK["err"]=True
     return cut
 
+def run_read_tool(path, offset=0, limit=4000):
+    """Citeste un FISIER (ex. un log de tool trunchiat) de la un offset, cu o limita.
+    Nu incarca tot in context: agentul poate pagina prin fisiere mari citind bucati.
+    Intoarce textul cerut + un header cu intervalul si cate caractere mai sunt."""
+    import os as _os
+    try:
+        offset=int(offset); limit=int(limit)
+    except Exception:
+        offset, limit = 0, 4000
+    if limit <= 0: limit = 4000
+    if limit > 20000: limit = 20000
+    if offset < 0: offset = 0
+    try:
+        p = path if _os.path.isabs(path) else _os.path.join(WORK, path)
+        tot = _os.path.getsize(p)
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            f.seek(offset)
+            chunk = f.read(limit)
+        n = len(chunk)
+        end = offset + n
+        hdr = "[read "+ _os.path.basename(p) +" | bytes "+str(offset)+"-"+str(end)+" of "+str(tot)
+        if end < tot:
+            hdr += " | MORE: call read path="+path+" offset="+str(end)+" limit="+str(limit)
+        else:
+            hdr += " | EOF"
+        hdr += "]\n"
+        o = hdr + chunk
+    except Exception as e:
+        o = "(read failed: "+str(e)+")"
+    n=TASK["steps"]+1
+    dsc="read: "+_short(str(path),58); col=HCLR[sum(map(ord,dsc))%len(HCLR)]
+    TN[0]+=1; TASK.update(steps=n,chars=TASK["chars"]+len(o))
+    _show_step("read "+str(path)+(" @"+str(offset) if offset else ""), o, n)
+    return o
+
 def _looks_like_error(o):
     """Cheap heuristic: does this tool output contain a FAILURE (traceback, non-zero exit, an
     ERROR/EXCEPTION line)? Used ONLY by auto-learn to decide whether a task is worth learning from.
@@ -1037,6 +1102,8 @@ def call_tool(c):
         return o
     if fn=="bash":
         return run_bash_tool(a.get("cmd",""))
+    if fn=="read":
+        return run_read_tool(a.get("path",""), a.get("offset",0), a.get("limit",4000))
     if fn=="smart":
         cmd=a.get("cmd","") or ""; code=a.get("code","") or ""
         eng,why=route(cmd,code)
@@ -1152,11 +1219,11 @@ def auto_learn_check(task_steps, had_error):
     if not AUTOLEARN["on"]:
         return
     if task_steps < AUTOLEARN["min_steps"] and not had_error:
-        print(G+"   [auto-learn] task too small ("+str(task_steps)+" steps, no error) - skipped."+N)
-        return
-    # DECIZIE: un singur mesaj scurt, fara tools
+        return   # task prea mic: iesim silentios (fara mesaj in output)
+    # DECIZIE: un singur mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
+    # la ce se refera "the task that just finished above" si raspunde NO orbește).
     try:
-        _probe = ask([{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
+        _probe = ask(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
     except Exception as e:
         print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
         return
@@ -1168,140 +1235,74 @@ def auto_learn_check(task_steps, had_error):
     if not _raw:
         print(G+"   [auto-learn] decision call returned empty - skipped."+N)
         return
-    # Noul format: fie "NO" (nimic reutilizabil), fie O LINIE de lecție cu cheie TRAP:/OK:/DEAD:/P:/PREVENT:.
-    _flat = " ".join(_raw.split())            # colapseaza newline/spatii multiple
-    _clean = _flat.strip("`").strip().strip('"').strip("'").strip()
-    if _clean.upper() == "NO" or _clean.upper().startswith("NO "):
-        print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
-        return
-    # validare: prima cheie trebuie sa fie una cunoscuta
+    # Noul format: fie "NO", fie UNA SAU MAI MULTE linii de lectie (TRAP:/OK:/DEAD:/P:/PREVENT:),
+    # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + Android).
     _KEYS = ("TRAP:","OK:","DEAD:","P:","PREVENT:")
-    _up = _clean.upper()
-    _hit = next((k for k in _KEYS if _up.startswith(k)), None)
-    if _hit is None:
-        # modelul a raspuns ceva neasteptat (poate tot YES/NO) -> comportament vechi, sigur
-        if _up.startswith("YES"):
+    _cand = []
+    for _ln in _raw.split("\n"):
+        _ln = _ln.strip().strip("`").strip().strip('"').strip("'").strip()
+        _ln = " ".join(_ln.split())                      # colapseaza spatiile din interior
+        if not _ln: continue
+        if _ln.upper() == "NO": continue
+        if len(_ln) > 300: _ln = _ln[:300].rstrip()
+        if _ln.upper().startswith(tuple(k.upper() for k in _KEYS)):
+            _cand.append(_ln)
+    if not _cand:
+        # nimic valid: fie NO explicit, fie altceva
+        _flat = " ".join(_raw.split())
+        if _flat.upper() == "NO" or _flat.upper().startswith("NO "):
+            print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
+        elif _flat.upper().startswith("YES"):
             print(G+"   [auto-learn] decision: YES (no explicit line) - running full do_learn()."+N)
             do_learn("auto-learn")
         else:
-            print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_clean[:80]+N)
+            print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_flat[:80]+N)
         return
-    # prea lung? taie la 300 ca sa nu sparga formatul memoriei
-    if len(_clean) > 300:
-        _clean = _clean[:300].rstrip()
-    # duplicat? daca linia (normalizata) exista deja in memorie, nu o scrie din nou
+    # memorie existenta (pentru dedup)
     try:
         _mem = open(MEM, "r", encoding="utf-8").read() if 'MEM' in globals() else ""
     except Exception:
         _mem = ""
     def _norm(x):
         return "".join(x.lower().split())
-    if _norm(_clean) in _norm(_mem):
-        print(G+"   [auto-learn] lesson already in memory - untouched."+N)
-        return
-    # scriere directa: adaugam linia in memorie, fara sa re-analizam tot istoricul
-    try:
-        _tgt = MEM if 'MEM' in globals() else None
-        if not _tgt:
-            print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
-            do_learn("auto-learn")
-            return
-        with open(_tgt, "a", encoding="utf-8") as _f:
-            _f.write("\n" + _clean + "\n")
-        print(G+"   [auto-learn] decision: YES - saved lesson: "+_clean[:110]+N)
-    except Exception as e:
-        print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
-        do_learn("auto-learn")
+    _memnorm = _norm(_mem)
+    _tgt = MEM if 'MEM' in globals() else None
+    if not _tgt:
+        print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
+        do_learn("auto-learn"); return
+    _saved, _skipped = [], []
+    for _ln in _cand:
+        # duplicat?
+        if _norm(_ln) in _memnorm:
+            _skipped.append(("duplicate", _ln)); continue
+        # validare stricta (format + Android + VALOARE)
+        try:
+            _issues, _ = mem_lint(_ln)
+        except Exception:
+            _issues = []
+        _why = None
+        for _w in _issues:
+            _txt = _w[1]
+            if _w[0] and _txt.strip() == _ln: _why = "too long"
+            elif _txt.startswith("forbidden"): _why = _txt.split("]:",1)[0].replace("forbidden [","")
+            elif _txt.startswith("low value"): _why = "low value"
+        if _why:
+            _skipped.append((_why, _ln)); continue
+        _saved.append(_ln)
+        _memnorm += _norm(_ln)
+    if _saved:
+        try:
+            with open(_tgt, "a", encoding="utf-8") as _f:
+                for _ln in _saved: _f.write("\n" + _ln + "\n")
+            print(G+"   [auto-learn] decision: YES - saved "+str(len(_saved))+" lesson(s):"+N)
+            for _ln in _saved: print(G+"        + "+_ln[:120]+N)
+        except Exception as e:
+            print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
+            do_learn("auto-learn"); return
+    for _why, _ln in _skipped:
+        print(OF+"   [auto-learn] skipped ("+_why+"): "+_ln[:90]+N)
+    if not _saved and not _skipped:
+        print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
 
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
-print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: "+", ".join(t["function"]["name"] for t in T)+" | "+os.getcwd()+N)
-print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
-while 1:
-    try: q=input(U+" TU > "+IN).strip()
-    except (EOFError,KeyboardInterrupt): print(N);break
-    if q in ("/exit","/quit",""): break
-    if q in ("/help","/?"):
-        _al="ON" if AUTOLEARN["on"] else "OFF"
-        print(G+"   COMMANDS"+N)
-        print(G+"     /learn              update memory now (manual learning)"+N)
-        print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
-        print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
-        print(G+"     /ctx                context window + archives/logs on disk"+N)
-        print(G+"     /compact            compress the context now"+N)
-        print(G+"     /verbose            toggle full code/output of each step"+N)
-        print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
-        print(G+"     /reset              erase the conversation history"+N)
-        print(G+"     /help, /?           this list"+N)
-        print(G+"     /exit, /quit        leave (empty line too)"+N)
-        print(G+"   "+(HINT_LINE)+N)
-        continue
-    if q=="/ctx":
-        _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
-        _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
-        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok | compress threshold "+_K(CTXBUDGET)+"tok (0=off) | steps kept intact: last "+str(CTXKEEP)+N)
-        print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
-    if q=="/compact":
-        ok=compact_history(force=True); save_ctx()
-        print(G+"   [compact] "+("done, context compressed WITHOUT loss (the original is in archive/)" if ok else "nothing to compress / archiving failed - I touched nothing")+N); continue
-    if q in ("/nospin","/spin"):
-        NOSPIN[0]=(q=="/nospin"); print(G+"   [ui] "+("NOSPIN: no live line at all - the terminal scrollback stays clean (recommended on a phone)" if NOSPIN[0] else "live line back on (spinner + timer rewritten in place)")+N); continue
-    if q=="/verbose":
-        VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
-    if q=="/mem":
-        _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
-    if q=="/reset":
-        M[:]=M[:1]; save_ctx()
-        print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
-    if q.startswith("/auto-learn"):
-        arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
-        if arg in ("on","1","yes"):
-            AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
-        elif arg in ("off","0","no"):
-            AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
-        else:
-            print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
-        continue
-    if q=="/learn":
-        do_learn("/learn"); continue
-    M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
-    print(_task_head(q))
-    try:
-     tries=0
-     while 1:
-        m,u=_spin(ask,phase="think");print_usage_compact(u)
-        if m is None: M.pop();print(_task_foot("interrupted: API error"));break
-        if _empty(m):
-            tries+=1
-            if tries<=EMPTY_RETRY:
-                print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
-                continue
-            print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
-            print(_task_foot("stopped: empty answer"));break
-        tries=0
-        M.append(m);save_ctx()
-        if m.get("tool_calls"):
-            _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
-            _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
-            _txt=str(m.get("content") or "").strip() or _fb
-            # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
-            if _txt:
-                _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
-                if _clean: print(OF+"   "+N+C+_clean+N)
-            for c in m["tool_calls"]:
-                code=json.loads(c["function"]["arguments"] or "{}").get("code","")
-                o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
-                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
-        else:
-            print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
-            print(_task_foot())
-            auto_learn_check(TASK["steps"], TASK["err"])
-            flush_task_tokens()
-            break
-    except KeyboardInterrupt:
-        LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
-        print("\r\33[K",end="",flush=True)
-        print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
-        while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
-        complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
-save_ctx()   # on /exit or Ctrl+D the history is already on disk
