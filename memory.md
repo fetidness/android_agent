@@ -316,3 +316,11 @@ DEAD: `adb shell run-as <pkg> cat <file>` drops the final trailing newline -> by
 TRAP: `adb shell run-as <pkg> <script>` fails "Permission denied" for scripts in /data/local/tmp (SELinux) -> copy the wrapper into the app filesDir first and exec it from there
 
 TRAP: `joblib` `libpyexec.so` gives "library libpython3.14.so not found" or "Failed to import encodings" without the full env -> must set LD_LIBRARY_PATH=<nativeLibraryDir> PYTHONHOME=files/pyhome HOME=files/home, not PYTHONHOME=files/python
+
+TRAP: `run-as <pkg> sh -c 'cp x y'` prin adb pierde argumentele din cauza quote-urilor -> fisierul nu se copiaza si zici ca lipseste -> ruleaza cp ca argumente separate (`run-as pkg cp /data/local/tmp/x /data/data/.../y`), fara sh -c.
+
+TRAP: calea libdir din `dumpsys package | grep codePath` nu contine ABI -> `lib/libpyexec.so` da "inaccessible or not found" -> append `/arm64` la libdir, iar calea se schimba la fiecare reinstalare (`~~hash` nou), deci re-citeste-o inainte de fiecare rulare.
+
+TRAP: `run-as <pkg> cat fisier` pierde newline-ul final -> md5 diferit fata de original (113545 vs 113546) desi continutul e identic -> verifica identitatea cu `run-as pkg md5sum fisier` pe device, nu prin cat.
+
+TRAP: lansarea Python din app cere PYTHONHOME=files/pyhome (nu files/python) si LD_LIBRARY_PATH=nativeLibraryDir -> altfel "Fatal Python error: Failed to import encodings module" -> copiaza exact env-ul din ProcessBuilder (PYTHONHOME, HOME, PATH, AGENT_HOME) in wrapper.

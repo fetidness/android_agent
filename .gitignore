@@ -54,3 +54,8 @@ workspace/app/net.sys32.agent/gradlew.bat
 workspace/samsung_dump/
 # fisiere temporare de test
 temp/
+
+# chei API - NU se urca niciodata
+key.txt
+**/key.txt
+.deepseek_agent_key
