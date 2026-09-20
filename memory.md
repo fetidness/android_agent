@@ -176,3 +176,7 @@ OK: /usr/bin/time -v gives Max RSS and page faults, but /usr/bin/time without -v
 DEAD: vgmstream/ffmpeg trimming with -ss before -i on some VGM/ADPCM streams yields wrong/empty audio -> seeking happens on demuxer not decoder -> decode full then trim with -ss after -i or re-encode -t.
 
 TRAP: nvidia-smi/lspci show GPU but no driver -> CUDA ops fail silently/absent -> verify with nvcc --version or python -c "import torch;print(torch.cuda.is_available())" before assuming GPU usable.
+
+OK: `find / -name '*.conf'` as non-root floods stderr with permission-denied noise -> obscures real matches -> use `find /path -name '*.conf' 2>/dev/null` or restrict to readable dirs.
+
+P: pipe/exec tool output may be truncated with no error -> verify by counting lines or grepping expected markers -> re-run with narrower scope if missing.

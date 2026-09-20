@@ -24,9 +24,10 @@ class Reflection(private val ctx: Context) {
 
     companion object { const val TAG = "AgentRefl" }
 
-    private val objects = HashMap<String, Any?>()          // id -> obiect pastrat
+    private val objects = java.util.concurrent.ConcurrentHashMap<String, Any?>()  // id -> obiect pastrat
     private var nextId = 0
     private val javaClasses = HashMap<String, Class<*>>()  // cache
+    private val prim = Primitives(ctx, objects)            // primitive generale: proxy/await/events
 
     /** Servicii de sistem expuse sub nume simple. */
     private val services: Map<String, String> = mapOf(
@@ -410,6 +411,21 @@ class Reflection(private val ctx: Context) {
                 "info" -> doInfo(req)
                 "services" -> doServices()
                 "free" -> { val id = req.optString("id"); objects.remove(id); ok(JSONObject().put("freed", id)) }
+                // ---- primitive generale: proxy de interfete + evenimente async ----
+                // op=proxy: creeaza o instanta care implementeaza ORICE interfata Java.
+                //   {"op":"proxy","iface":"java.lang.Runnable"}  -> {"id":"s0",...}
+                //   obiectul primit se foloseste ca orice alt obiect: target "obj:s0".
+                "proxy" -> {
+                    val iface = req.optString("iface")
+                    if (iface.isBlank()) err("proxy: 'iface' required (fully qualified interface name, e.g. java.lang.Runnable)")
+                    else ok(JSONObject().put("id", prim.makeProxy(iface, null))
+                        .put("iface", iface)
+                        .put("note", "proxy created; every interface call is recorded as an event - use op=await to receive them"))
+                }
+                "await" -> prim.await(req.optString("id").ifBlank { null }, req.optLong("timeout_ms", 10000))
+                "events" -> prim.events(req.optString("id"))
+                "drain" -> prim.drain(req.optString("id"))
+                "sinks" -> prim.listSinks()
                 "objs" -> {
                     val a = JSONArray()
                     for ((k, v) in objects) a.put(JSONObject().put("id", k).put("class", v?.javaClass?.name ?: "null"))
@@ -441,7 +457,7 @@ class Reflection(private val ctx: Context) {
         val receiver = if (isStatic || targetObj is Class<*>) null else targetObj
         val args = Array(argsJson.length()) { i ->
             val v = argsJson.get(i)
-            if (v is JSONArray && v.length() == 2 && (v.get(0) as? String) in listOf("svc","obj","class","str","int","long","double","bool","new")) {
+            if (v is JSONArray && v.length() == 2 && (v.get(0) as? String) in listOf("svc","obj","class","str","int","long","double","bool","new","ref","ctx","app")) {
                 // argument cu tip: [tip, valoare]  ex ["svc","sensor"]
                 resolveArg(v.getString(0), v.get(1))
             } else v
@@ -454,20 +470,64 @@ class Reflection(private val ctx: Context) {
         return ok(wrapReturn(out, req.optString("as"), req.optBoolean("keep", true)))
     }
 
+    /** rezolva o referinta textuala ("obj:oN", "ctx", "app", "svc:X") la obiectul real */
+    private fun resolveRef(r: String?): Any? = when {
+        r == null -> null
+        r == "ctx" -> ctx
+        r == "app" -> ctx.applicationContext
+        r.startsWith("obj:") -> objects[r.removePrefix("obj:")]
+        r.startsWith("svc:") -> svc(r.removePrefix("svc:"))
+        else -> objects[r]
+    }
+
     private fun resolveArg(kind: String, value: Any?): Any? = when (kind) {
         "svc" -> svc(value as String)
         "class" -> resolveClass(value as String)
-        "obj" -> objects[value as String]
-        else -> value
+        "obj" -> objects[value as String] ?: (value as? String)?.removePrefix("obj:")?.let { objects[it] }
+        "ref" -> resolveRef(value as? String)
+        "ctx" -> ctx
+        "app" -> ctx.applicationContext
+        else -> {
+            // Primitiva 2: orice string care arata ca o referinta ("obj:oN", "ctx", "app",
+            // "svc:X") se rezolva la obiectul Java real - asa putem transmite proxy-uri,
+            // Context, servicii etc. ca argumente la apeluri.
+            val s = value as? String
+            when {
+                s == null -> value
+                s == "ctx" -> ctx
+                s == "app" -> ctx.applicationContext
+                s.startsWith("obj:") -> objects[s.removePrefix("obj:")] ?: value
+                s.startsWith("svc:") -> svc(s.removePrefix("svc:")) ?: value
+                else -> value
+            }
+        }
     }
 
     private fun doNew(req: JSONObject): JSONObject {
         val name = req.optString("target").removePrefix("class:")
         val argsJson = req.optJSONArray("args") ?: JSONArray()
         val cls = resolveClass(name)
-        val args = Array(argsJson.length()) { i -> argsJson.get(i) }
-        val ctor = cls.constructors.firstOrNull { it.parameterCount == args.size }
-            ?: return err("no constructor with ${args.size} args for $name (hint: many Android classes have no public constructor; obtain them via ctx.getSystemService(\"name\"), a static factory, or a service target like svc:NAME)")
+        val args = Array(argsJson.length()) { i ->
+            val v = argsJson.get(i)
+            if (v is JSONArray && v.length() == 2 && (v.get(0) as? String) in listOf("svc","obj","class","str","int","long","double","bool","new","ref","ctx","app")) {
+                resolveArg(v.getString(0), v.get(1))
+            } else {
+                val sv = v as? String
+                when {
+                    sv == null -> v
+                    sv == "ctx" -> ctx
+                    sv == "app" -> ctx.applicationContext
+                    sv.startsWith("obj:") || sv.startsWith("svc:") -> resolveRef(sv) ?: sv
+                    else -> sv
+                }
+            }
+        }
+        val want = args.size
+        val ctor = cls.constructors
+            .filter { it.parameterCount == want }
+            .sortedByDescending { c -> c.parameterTypes.indices.count { i -> args[i] == null || compatible(c.parameterTypes[i], args[i]!!.javaClass) } }
+            .firstOrNull()
+            ?: return err("no constructor with $want args for $name (hint: many Android classes have no public constructor; obtain them via ctx.getSystemService(\"name\"), a static factory, or a service target like svc:NAME)")
         ctor.isAccessible = true
         val o = ctor.newInstance(*args)
         val id = req.optString("id", "o${nextId++}")
@@ -522,18 +582,24 @@ class Reflection(private val ctx: Context) {
 
     // ---------------- reflection helpers ----------------
     private fun findMethod(cls: Class<*>, name: String, args: Array<Any?>): Method? {
-        for (m in cls.methods) {
-            if (m.name != name || m.parameterCount != args.size) continue
+        // 1) candidate cu exact numele si numarul de argumente, scor de compatibilitate
+        val cands = cls.methods.filter { it.name == name && it.parameterCount == args.size }
+        var best: Method? = null
+        var bestScore = -1
+        for (m in cands) {
             val p = m.parameterTypes
+            var score = 0
             var fits = true
             for (i in args.indices) {
-                if (args[i] == null) continue
-                if (!compatible(p[i], args[i]!!.javaClass)) { fits = false; break }
+                val a = args[i]
+                if (a == null) { score++; continue }   // null se potriveste oriunde (ambiguu, dar acceptabil)
+                if (compatible(p[i], a.javaClass)) score++ else { fits = false; break }
             }
-            if (fits) return m
+            if (fits && score > bestScore) { bestScore = score; best = m }
         }
-        // fallback: orice metoda cu numele dat
-        return cls.methods.firstOrNull { it.name == name }
+        if (best != null) return best
+        // 2) fallback: orice metoda cu numele dat (dar NU un overload incompatibil)
+        return cands.firstOrNull()
     }
 
     private fun compatible(param: Class<*>, given: Class<*>): Boolean {
