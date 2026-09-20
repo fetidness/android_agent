@@ -1025,20 +1025,31 @@ def vision(path,prompt,max_tokens=None):
         return out+"\n[look] "+str(os.path.getsize(p)//1024)+" KB | tok in "+str(u.get("prompt_tokens","?"))+" out "+str(u.get("completion_tokens","?"))+(" (reasoning "+str(u["completion_tokens_details"]["reasoning_tokens"])+")" if u.get("completion_tokens_details") else "")
     except Exception as e:
         return "[look] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]
-def py_capture(argv, timeout=300):
-    """Ruleaza un fisier de script Python (argv = [script, args...]) si intoarce stdout+stderr.
-    Folosit de comanda /run. Ruleaza in WORK, ca scriptul sa vada fisierele din workspace."""
-    o=tempfile.TemporaryFile(dir=WORK)
+def py_capture(argv, timeout=600):
+    """Ruleaza un script Python (argv=[script, args...]) si afiseaza output-ul LINIE cu LINIE,
+    in timp real (streaming). Returneaza intregul output (pentru context), dar il si printeaza
+    pe masura ce apare, ca sa vezi progresul unui script care dureaza."""
+    buf=[]
+    p=subprocess.Popen([sys.executable]+list(argv),cwd=WORK,stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT,start_new_session=True,text=True,bufsize=1)
+    t0=time.time()
     try:
-        p=subprocess.Popen([sys.executable]+list(argv),cwd=WORK,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
-        p.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try: os.killpg(p.pid,signal.SIGKILL)
+        for line in p.stdout:             # streaming: fiecare linie apare imediat
+            buf.append(line)
+            sys.stdout.write(line); sys.stdout.flush()
+            if time.time()-t0 > timeout:
+                try: os.killpg(p.pid,signal.SIGKILL)
+                except Exception: pass
+                print(R+"\n[timeout after "+str(timeout)+"s]"+N); break
+        p.wait(timeout=5)
+    except KeyboardInterrupt:
+        try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
         except Exception: pass
-        o.seek(0); return (o.read().decode("utf-8","replace") or "")+"\n[timeout after "+str(timeout)+"s]"
+        raise
     except Exception as e:
-        o.seek(0); return (o.read().decode("utf-8","replace") or "")+"\n[run error: "+str(e)+"]"
-    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")[:20000]
+        buf.append("[run error: "+str(e)+"]\n")
+    out="".join(buf)
+    return out or "(no output)"
 
 def py(c,cwd):
     """Runs the code in its own process group. Ctrl+C kills ONLY this
@@ -1490,8 +1501,14 @@ while 1:
             print(R+"   no such file: "+script+N); continue
         _a=argv[1:]
         print(G+"   [run] "+os.path.basename(script)+(" "+" ".join(_a) if _a else "")+N)
-        _o=py_capture([script]+_a)
-        if _o.strip(): print(_o.rstrip())
+        _o=py_capture([script]+_a)   # afiseaza live (streaming), linie cu linie
+        if len(_o)>4000:             # output lung: il salvam, ca sa nu-ti scape nimic
+            try:
+                _lf=os.path.join(LOGDIR,"run_"+os.path.basename(script)+"_"+time.strftime("%Y%m%d-%H%M%S")+".log")
+                os.makedirs(LOGDIR,exist_ok=True)
+                with open(_lf,"w",encoding="utf-8") as f: f.write(_o)
+                print(SD+"   (full output: "+_lf+")"+N)
+            except Exception: pass
         continue
 
     if q=="/mem":
