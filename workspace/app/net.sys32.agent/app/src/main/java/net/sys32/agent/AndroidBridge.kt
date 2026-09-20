@@ -191,8 +191,17 @@ class AndroidBridge(
         return try {
             when (action) {
                 "read", "screen", "tree" -> svc.readScreen(
-                    p.optInt("depth", 12),
-                    p.optInt("max", 400)
+                    p.optInt("depth", p.optInt("max_depth", 20)),
+                    p.optInt("max", p.optInt("max_nodes", 250)),
+                    p.optBoolean("compact", true),       // text lizibil (default), nu JSON umflat
+                    p.optBoolean("textonly", p.optBoolean("text_only", false)),
+                    p.optString("package", p.optString("pkg", ""))
+                )
+                "find", "search", "query" -> svc.findNodes(
+                    p.optString("find", p.optString("text", p.optString("query", ""))),
+                    p.optBoolean("exact", false),
+                    p.optBoolean("clickable", p.optBoolean("clickable_only", false)),
+                    p.optInt("max", 20)
                 )
                 "settext", "type", "text" -> {
                     val find = p.optString("find", p.optString("field", ""))

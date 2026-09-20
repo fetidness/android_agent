@@ -115,16 +115,127 @@ class AgentAccessibilityService : AccessibilityService() {
 
     // ---------------- ACTIUNI (apelate din bridge) ----------------
 
-    /** Citește ecranul curent: pachet + arborele de noduri. */
-    fun readScreen(maxDepth: Int, maxNodes: Int): JSONObject {
-        val root = activeRoot() ?: return JSONObject().put("ok", false).put("error", "no active window (ecranul nu e disponibil)")
-        val counter = intArrayOf(0)
-        val tree = nodeToJson(root, 0, maxDepth, maxNodes, counter) ?: JSONObject()
+    /** Numeste scurt tipul de nod, ca sa fie lizibil (TextView -> TextView). */
+    private fun shortCls(n: AccessibilityNodeInfo): String {
+        val c = n.className?.toString() ?: return "View"
+        return c.substringAfterLast('.')
+    }
+
+    /** Nodurile care CONTEAZA (au text, descriere, id relevant sau sunt interactive). */
+    private fun isRelevant(n: AccessibilityNodeInfo): Boolean {
+        val txt = n.text?.toString()?.trim()
+        val desc = n.contentDescription?.toString()?.trim()
+        val id = n.viewIdResourceName ?: ""
+        if (!txt.isNullOrEmpty()) return true
+        if (!desc.isNullOrEmpty()) return true
+        if (n.isEditable) return true
+        if (n.isClickable && (id.isNotEmpty() || n.isCheckable)) return true
+        return false
+    }
+
+    /**
+     * Cea mai IMPORTANTA functie pentru agent: transforma arborele de noduri intr-o
+     * LISTA TEXT compacta, nu JSON umflat cu metadate. Rezulta de ~10x mai putine
+     * caractere si informatia utila (numele contactelor, butoanele) e direct vizibila.
+     *
+     * Format:  [n] <Cls> id=<id> "text" @[x,y] <flags>
+     *   flags: E=editable  C=clickable  K=checkable(+checked)  S=scrollable  D=descriere
+     */
+    private fun readCompact(maxDepth: Int, maxNodes: Int, textOnly: Boolean, packageFilter: String): JSONObject {
+        val root = activeRoot() ?: return JSONObject().put("ok", false)
+                .put("error", "no active window (ecranul nu e disponibil)")
+        val lines = ArrayList<String>()
+        var count = 0
+        fun walk(n: AccessibilityNodeInfo, depth: Int) {
+            if (count >= maxNodes) return
+            val relevant = isRelevant(n)
+            if (relevant) {
+                count++
+                val sb = StringBuilder()
+                sb.append("[").append(count).append("] ").append(shortCls(n))
+                val id = n.viewIdResourceName
+                if (!id.isNullOrEmpty()) sb.append(" id=").append(id.substringAfterLast('/'))
+                val txt = n.text?.toString()?.trim()
+                if (!txt.isNullOrEmpty()) sb.append(" \"").append(txt.replace("\n", " ")).append("\"")
+                val desc = n.contentDescription?.toString()?.trim()
+                if (!desc.isNullOrEmpty()) sb.append(" desc=\"").append(desc.replace("\n", " ")).append("\"")
+                val b = boundsOf(n)
+                if (!b.isEmpty) sb.append(" @[").append((b.left + b.right) / 2).append(",").append((b.top + b.bottom) / 2).append("]")
+                val flags = StringBuilder()
+                if (n.isEditable) flags.append("E")
+                if (n.isClickable) flags.append("C")
+                if (n.isCheckable) flags.append(if (n.isChecked) "K+" else "K-")
+                if (n.isScrollable) flags.append("S")
+                if (n.isEnabled == false) flags.append("!")
+                if (flags.isNotEmpty()) sb.append(" <").append(flags).append(">")
+                if (textOnly && txt.isNullOrEmpty() && desc.isNullOrEmpty()) {
+                    // mod text-only: sarim peste nodurile fara text (dar pastram copiii)
+                } else {
+                    lines.add(sb.toString())
+                }
+            }
+            if (count < maxNodes && depth < maxDepth) {
+                for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
+            }
+        }
+        walk(root, 0)
+        val pkg = root.packageName?.toString() ?: ""
+        if (packageFilter.isNotEmpty() && pkg != packageFilter) {
+            return JSONObject().put("ok", false).put("error", "fereastra activa e $pkg, nu $packageFilter")
+        }
+        return JSONObject()
+            .put("ok", true)
+            .put("package", pkg)
+            .put("nodes", count)
+            .put("text", lines.joinToString("\n"))
+    }
+
+    /**
+     * Caută noduri dupa text/descriere/id si le returneaza ca lista compacta.
+     * E calea EFICIENTA: agentul nu citeste tot ecranul, cere direct ce il intereseaza.
+     */
+    fun findNodes(needle: String, exact: Boolean, clickableOnly: Boolean, max: Int): JSONObject {
+        val root = activeRoot() ?: return JSONObject().put("ok", false).put("error", "no active window")
+        val hits = findByText(root, needle, exact)
+            .filter { !clickableOnly || it.isClickable }
+            .take(max)
+        val arr = JSONArray()
+        for (n in hits) {
+            val b = boundsOf(n)
+            val o = JSONObject()
+            o.put("cls", shortCls(n))
+            val id = n.viewIdResourceName
+            if (!id.isNullOrEmpty()) o.put("id", id)
+            val t = n.text?.toString(); if (!t.isNullOrEmpty()) o.put("text", t)
+            val d = n.contentDescription?.toString(); if (!d.isNullOrEmpty()) o.put("desc", d)
+            if (!b.isEmpty) {
+                o.put("bounds", JSONArray(listOf(b.left, b.top, b.right, b.bottom)))
+                o.put("center", JSONArray(listOf((b.left + b.right) / 2, (b.top + b.bottom) / 2)))
+            }
+            o.put("clickable", n.isClickable)
+            o.put("editable", n.isEditable)
+            arr.put(o)
+        }
         return JSONObject()
             .put("ok", true)
             .put("package", root.packageName?.toString() ?: "")
-            .put("nodes", counter[0])
-            .put("tree", tree)
+            .put("count", hits.size)
+            .put("matches", arr)
+    }
+
+    /** Citește ecranul curent. `compact=true` (default) returneaza text lizibil, nu JSON umflat. */
+    fun readScreen(maxDepth: Int, maxNodes: Int, compact: Boolean = true, textOnly: Boolean = false, packageFilter: String = ""): JSONObject {
+        return if (compact) readCompact(maxDepth, maxNodes, textOnly, packageFilter)
+        else {
+            val root = activeRoot() ?: return JSONObject().put("ok", false).put("error", "no active window")
+            val counter = intArrayOf(0)
+            val tree = nodeToJson(root, 0, maxDepth, maxNodes, counter) ?: JSONObject()
+            JSONObject()
+                .put("ok", true)
+                .put("package", root.packageName?.toString() ?: "")
+                .put("nodes", counter[0])
+                .put("tree", tree)
+        }
     }
 
     /** Scrie text intr-un camp: fie dupa textul/id-ul curent al campului, fie in campul FOCUSAT, fie in primul editabil. */

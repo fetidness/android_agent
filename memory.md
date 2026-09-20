@@ -288,3 +288,7 @@ P: Samsung Settings are accessibility sub numele "Installed apps", ascuns in "Ad
 OK: `dumpsys accessibility | grep -A3 <pkg>` arata serviciile a11y declarate+enabled ale pachetului chiar daca UI-ul nu le gaseste -> foloseste ca verificare obiectiva a starii serviciului, nu screenshot-ul
 
 TRAP: `adb forward tcp:N tcp:M` moare cand telefonul intra in Doze (ecran stins/blocat) -> curl de pe laptop primeste gol desi procesul traieste -> citirea `mWakefulness=Dozing` in `dumpsys power` confirma, iar interactiunea functioneaza totusi: scrie-le corect, fara ghilimele, complet.
+
+OK: starea reala a serviciilor Android (foreground/accessibility/ecran) se citeste cu `adb shell dumpsys power | grep -E 'mWakefulness=|net.sys32'` si `dumpsys deviceidle whitelist | grep <pkg>` -> arata daca wake lock-ul e tinut si daca app-ul e exclus de Doze
+
+TRAP: reconstruirea/instalarea APK-ului DEZACTIVEAZA serviciul de accessibility si scoate app-ul din whitelist-ul de baterie -> `accessibility:false` dupa `adb install -r` -> reactiveaza cu `adb shell settings put secure enabled_accessibility_services <pkg>/<pkg>.AgentAccessibilityService` + `settin

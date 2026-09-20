@@ -115,7 +115,11 @@ Android interzice injectarea de input aplicatiilor normale (INJECT_EVENTS e o
 permisiune de SEMNATURA - doar system apps o pot avea). AccessibilityService e
 calea oficiala si singura viabila pentru un app normal.
 Capabilitati expuse prin bridge (tool `ui`):
-- read       - citeste arborele UI al oricarei aplicatii (text, id, bounds, clickable, editable)
+- read       - citeste arborele UI al oricarei aplicatii. COMPACT (default): lista text
+               lizibila, ~10x mai mica decit JSON-ul brut. Format: [n] Cls id=x "text" @[x,y] <flags>
+               (E=editabil C=clickabil K=checkable S=scrollabil). params: max, depth, textonly
+- find       - CAUTA un nod dupa text/id FARA sa citeasca tot ecranul; intoarce potrivirile
+               cu center=[x,y] gata de click. E calea eficienta cind cauti contact/buton/cimp
 - settext    - scrie text (ACTION_SET_TEXT) in cimpul cautat / focalizat / primul editabil
 - click      - apasa un nod (dupa text/id) sau un punct (x,y)
 - tap/swipe  - gesturi reale prin dispatchGesture
@@ -349,6 +353,26 @@ Verificat: cu ecranul STINS si BLOCAT (mWakefulness=Dozing, AOD aprins):
   - 6/6 + 8/8 + 10/10 task-uri HEADLESS reusite (baterie/device/senzori)
   - task UI reusit: `ui wake` -> `ui openapp com.android.settings` -> `ui read` (20 noduri)
   - procesul rămas viu dupa toate (PID stabil)
+
+
+### Etapa 25 - read compact + find (ecranul devine lizibil pentru model)
+Problema (reprodusa cu un task real: "deschide WhatsApp, cauta 'gab', trimite 'salut'"):
+`ui read` returna JSON brut cu TOATE metadatele pe fiecare nod
+(`"enabled":true,"bounds":[0,0,1080,2340],"pkg":"com.whatsapp"` etc) -> ~120 caractere
+de zgomot pentru 3 caractere de text util. Un ecran WhatsApp = 8500+ caractere, iar
+raspunsul era TRUNCHIAT la 8000 -> informatia cautata ("Gab") ajungea la poz. 6375,
+la un pas de taiere. Agentul primea zgomot, nu informatie, si a ajuns sa caute
+contactul in agenda Android (3 contacte de serviciu) in loc de rezultatele search-ului.
+Solutii:
+- read COMPACT (default): arborele devine lista text `[n] Cls id=x "text" @[x,y] <flags>`.
+  Rezultat masurat: 8581 -> 1949 caractere (~4.5x mai putin); "Gab" vizibil pe linia [8].
+- find <text>: cauta direct un nod (text/id/descriere) si intoarce potrivirile cu
+  center=[x,y] -> agentul nu mai citeste tot ecranul cind cauta ceva anume.
+- trunchiere inteligenta in agent.py: ui read/find primesc 12000 chars (textul e dens),
+  iar mesajul de taiere spune explicit sa foloseasca max/depth mici sau `ui find`.
+Verificat end-to-end pe Samsung A36 (taskul care esuase inainte):
+  WhatsApp -> find "Gab" (13 potriviri) -> tap pe contact -> camp message (id=entry)
+  -> settext "salut" -> tap send -> mesaj TRIMIS (confirmat vizual: bubble verde la Gab)
 
 
 ## 6. PROBLEME INTALNITE SI SOLUTII
