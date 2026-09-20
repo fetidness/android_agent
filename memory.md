@@ -276,3 +276,15 @@ TRAP: `ui read` cu depth=4-8 întoarce doar scheletul (action_bar, RecyclerView)
 P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/java/net/sys32/agent/AgentAccessibilityService.kt -> serviciul de accessibility (read/settext/click/gesture/global); AndroidBridge.kt tool "ui" il cheama prin instance; config in res/xml/accessibility_service_config.xml.
 
 TRAP: `input keyevent/text` din shell-ul aplicatiei da `Failed transaction (2147483646)` sau SecurityException INJECT_EVENTS -> app ruleaza ca untrusted_app -> din adb shell (user shell) merge (exit=0); pe device ne-rootat foloseste AccessibilityService, nu `input`.
+
+TRAP: `git commit -m` cu mesaj ce contine backtick-uri (ex. "tool `ui`") -> bash -lc executa textul dintre backtick-uri ("ui: command not found"), desi commit-ul reuseste -> scrie mesajul intr-un fisier si foloseste `git commit -F fisier
+
+P: /home/gab/Desktop/agent/temp/ -> singurul loc de lucru temporar, dar se CURATA periodic -> fisierele puse aici (backup-uri, scripturi de test) dispar intre pasi -> nu te baza pe ele pentru recuperare; scrie in workspace/ sau fa backup in afara temp
+
+TRAP: `settings put secure enabled_accessibility_services` se pierde la fiecare `adb install -r` -> Android dezactiveaza serviciul de accessibility la reinstalare -> re-activeaza-l din Settings > Accessibility > Installed apps (Samsung) sau cu cele 2 comenzi adb
+
+P: Samsung Settings are accessibility sub numele "Installed apps", ascuns in "Advanced settings" dupa scroll -> "Installed applications" (denumirea Android standard) nu exista -> verifica cu `dumpsys accessibility | grep -A3 <pkg>` ca serviciul e listat
+
+OK: `dumpsys accessibility | grep -A3 <pkg>` arata serviciile a11y declarate+enabled ale pachetului chiar daca UI-ul nu le gaseste -> foloseste ca verificare obiectiva a starii serviciului, nu screenshot-ul
+
+TRAP: `adb forward tcp:N tcp:M` moare cand telefonul intra in Doze (ecran stins/blocat) -> curl de pe laptop primeste gol desi procesul traieste -> citirea `mWakefulness=Dozing` in `dumpsys power` confirma, iar interactiunea functioneaza totusi: scrie-le corect, fara ghilimele, complet.

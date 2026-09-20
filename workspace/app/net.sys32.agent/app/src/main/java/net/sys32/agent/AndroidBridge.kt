@@ -56,6 +56,13 @@ class AndroidBridge(
 
     private val refl by lazy { Reflection(ctx) }
 
+    /** Aplicatia e exclusa de la optimizarea bateriei (Doze)? Numai asa nu moare in background. */
+    private fun isIgnoringBatteryOpt(): Boolean = try {
+        if (android.os.Build.VERSION.SDK_INT < 23) true
+        else (ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
+            .isIgnoringBatteryOptimizations(ctx.packageName)
+    } catch (_: Exception) { false }
+
     @Volatile private var running = false
     private var server: ServerSocket? = null
     private val sensorHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -161,6 +168,23 @@ class AndroidBridge(
     // ---------------- UI (AccessibilityService) ----------------
     /** Vedere + control asupra altor aplicatii, prin AgentAccessibilityService. */
     private fun ui(action: String, p: JSONObject): JSONObject {
+        // wake/sleep NU depind de accessibility: tin ecranul aprins/treaz cind agentul lucreaza.
+        if (action == "wake" || action == "screenon") {
+            AgentService.wakeScreen(ctx)
+            return JSONObject().put("ok", true).put("screen", "on")
+                .put("hint", "ecranul se aprinde; tine minte sa apelezi ui sleep la finalul taskului")
+        }
+        if (action == "sleep" || action == "screenoff") {
+            AgentService.sleepScreen(ctx)
+            return JSONObject().put("ok", true).put("screen", "auto-off")
+        }
+        if (action == "service") {
+            return JSONObject()
+                .put("ok", true)
+                .put("foreground", AgentService.running)
+                .put("accessibility", AgentAccessibilityService.instance != null)
+                .put("ignore_battery_opt", isIgnoringBatteryOpt())
+        }
         val svc = AgentAccessibilityService.instance
             ?: return err("accessibility service NOT enabled. Activeaza: Settings > Accessibility > Agent (control ecran). "
                     + "Fara el, Android interzice scrierea/taparea in alte aplicatii (INJECT_EVENTS e permisiune de sistem).")
@@ -203,7 +227,7 @@ class AndroidBridge(
                     .put("ok", true)
                     .put("enabled", true)
                     .put("service", "AgentAccessibilityService")
-                else -> err("unknown ui action: $action (read|settext|click|tap|swipe|scroll|back|home|recents|notifications|quicksettings|screenshot|lockscreen|openapp|windows|status)")
+                else -> err("unknown ui action: $action (read|settext|click|tap|swipe|scroll|back|home|recents|notifications|quicksettings|screenshot|lockscreen|openapp|windows|status|wake|sleep|service)")
             }
         } catch (e: Exception) {
             err("ui error: ${e.message}")

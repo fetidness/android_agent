@@ -61,6 +61,22 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // ===== BACKGROUND / LOCK SCREEN =====
+        // Permite activitatii sa se afiseze PESTE lock screen si sa aprinda ecranul
+        // cand agentul are nevoie de UI (task care atinge alte aplicatii).
+        if (android.os.Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+        // ecranul nu se stinge CAT TIMP agentul lucreaza (flag adaugat dinamic in setTaskScreenOn)
+
         window.statusBarColor = Color.parseColor("#0D1117")
         window.navigationBarColor = Color.parseColor("#0D1117")
 
@@ -236,6 +252,8 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { appendAnsi("\n[bridge error] $e\n") }
         startPython()
         startAgentService()
+        // Cere o singura data excluderea de la optimizarea bateriei (ca sa nu moara in Doze).
+        requestIgnoreBatteryOptimizations()
     }
 
     /** Porneste AgentService (foreground) ca procesul sa supravietuiasca in background. */
@@ -244,6 +262,41 @@ class MainActivity : AppCompatActivity() {
             val i = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_START)
             if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
         } catch (e: Exception) { appendAnsi("\n[service error] $e\n") }
+    }
+
+    /**
+     * Aprinde ecranul si il tine treaz cit timp agentul lucreaza (FLAG_KEEP_SCREEN_ON),
+     * apoi il lasa sa se stinga singur. Se apeleaza la inceputul/sfirsitul unui task.
+     */
+    private fun setTaskScreenOn(on: Boolean) {
+        runOnUiThread {
+            try {
+                if (on) {
+                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Cere sistemului sa NU limiteze aplicatia in background (Doze/battery optimization).
+     * Fara asta, Samsung suspenda agresiv procesul si tunelurile de retea.
+     * Dialogul se arata o singura data (daca nu e deja acordat).
+     */
+    private fun requestIgnoreBatteryOptimizations() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT < 23) return
+            val pm = getSystemService(android.os.PowerManager::class.java) ?: return
+            if (pm.isIgnoringBatteryOptimizations(packageName)) return
+            val i = android.content.Intent(
+                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+            ).setData(android.net.Uri.parse("package:" + packageName))
+            startActivity(i)
+        } catch (e: Exception) {
+            appendAnsi("\n[battery-opt] nu am putut cere excluderea: " + e.message + "\n")
+        }
     }
 
     override fun onStop() {
@@ -261,6 +314,7 @@ class MainActivity : AppCompatActivity() {
         // butonul STOP: il ascund cand taskul s-a terminat
         if (btnStop.visibility == View.VISIBLE && (s.contains("TASK #") && (s.contains("done") || s.contains("interrupted")))) {
             btnStop.visibility = View.GONE
+            setTaskScreenOn(false)
         }
 
         // urmarim coada DOAR daca userul nu a derulat manual in sus (followTail).
@@ -392,7 +446,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v49")
+        val stamp = File(filesDir, ".assets_v50")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -503,6 +557,7 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
         input.setText("")
         // NU afisam ecou aici: agentul afiseaza el linia "You > <mesaj>" in _task_head.
         btnStop.visibility = View.VISIBLE
+        setTaskScreenOn(true)
         try { pyIn?.write(t + "\n"); pyIn?.flush() } catch (e: Exception) {
             appendAnsi("[write failed: $e]\n")
         }

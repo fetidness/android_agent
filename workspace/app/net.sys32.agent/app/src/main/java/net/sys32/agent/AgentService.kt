@@ -34,10 +34,30 @@ class AgentService : Service() {
         const val NOTIF_ID = 4711
         const val ACTION_START = "net.sys32.agent.START"
         const val ACTION_STOP = "net.sys32.agent.STOP"
+        const val ACTION_WAKE = "net.sys32.agent.WAKE"
+        const val ACTION_SLEEP = "net.sys32.agent.SLEEP"
+
         @Volatile var running = false
+
+        /** Aprinde ecranul + il tine treaz (pentru task-uri care ating UI-ul altor aplicatii). */
+        fun wakeScreen(ctx: Context) {
+            try {
+                val i = Intent(ctx, AgentService::class.java).setAction(ACTION_WAKE)
+                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+            } catch (_: Exception) {}
+        }
+
+        /** Lasa ecranul sa se stinga singur (dupa terminarea taskului). */
+        fun sleepScreen(ctx: Context) {
+            try {
+                val i = Intent(ctx, AgentService::class.java).setAction(ACTION_SLEEP)
+                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+            } catch (_: Exception) {}
+        }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockFull: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -51,6 +71,19 @@ class AgentService : Service() {
             stopForegroundCompat()
             stopSelf()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_WAKE) {
+            // task cu UI: ecranul trebuie APRINS si telefonul DEBLOCAT
+            acquireWakeLock()
+            wakeLockFull?.let { if (!it.isHeld) it.acquire(10 * 60 * 1000L) }
+            startForegroundCompat()
+            running = true
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_SLEEP) {
+            try { if (wakeLockFull?.isHeld == true) wakeLockFull?.release() } catch (_: Exception) {}
+            // nu oprim serviciul: procesul trebuie sa ramina viu (headless)
+            return START_STICKY
         }
         startForegroundCompat()
         acquireWakeLock()
@@ -99,12 +132,20 @@ class AgentService : Service() {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "net.sys32.agent::agent")
             wakeLock?.setReferenceCounted(false)
             wakeLock?.acquire()
+            // wake lock suplimentar care APRINDE ecranul (folosit doar pentru task-uri cu UI)
+            wakeLockFull = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "net.sys32.agent::screen"
+            )
+            wakeLockFull?.setReferenceCounted(false)
         } catch (_: Exception) {}
     }
 
     private fun releaseWakeLock() {
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        try { if (wakeLockFull?.isHeld == true) wakeLockFull?.release() } catch (_: Exception) {}
         wakeLock = null
+        wakeLockFull = null
     }
 
     private fun createChannel() {

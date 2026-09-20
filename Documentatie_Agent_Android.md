@@ -101,6 +101,13 @@ e minimizata (ex. cind umbla prin alte aplicatii).
 - START_STICKY + onTaskRemoved -> serviciul revine daca sistemul il omoara (sau la swipe din recents)
 - onDestroy-ul MainActivity NU mai omoara Python/bridge-ul cit timp serviciul ruleaza
 - manifest: foregroundServiceType="specialUse", stopWithTask="false"
+- merge si cu ECRANUL STINS/BLOCAT: task-urile HEADLESS (bridge, senzori, fisiere, retea)
+  functioneaza 100% chiar in Doze, atita vreme cit aplicatia e in whitelist-ul de baterie
+- pentru task-uri care ating UI-ul altor aplicatii (specific Android), agentul poate
+  chema `ui wake` (wake lock ACQUIRE_CAUSES_WAKEUP + setShowWhenLocked/setTurnScreenOn pe
+  activity): ecranul se aprinde si activitatea se arata peste lock screen
+- `ui sleep` elibereaza wake lock-ul de ecran (procesul rămine viu, headless)
+- `ui service` returneaza starea: foreground / accessibility / ignore_battery_opt
 
 ### 3.6 AgentAccessibilityService (vedere + control UI)
 Da agentului VEDERE si CONTROL asupra oricarei alte aplicatii, FARA root.
@@ -326,6 +333,24 @@ Verificat end-to-end pe telefon: am deschis Settings, am apasat "Search settings
 am TASTAT "bluetooth" in cimpul de cautare si am citit rezultatele ("Results (27)").
 
 
+### Etapa 24 - Ecran stins / telefon blocat: headless mereu, UI la nevoie
+Problema: cu ecranul stins si telefonul blocat, agentul parea ca "se opreste".
+Diagnostic (reprodus pe Samsung A36): procesul NU murea si wake lock-ul era activ;
+ce nu raspundea era tunelul `adb forward` (suspendat de Doze) - o limitare adb, nu a app-ului.
+Testat direct pe telefon (adb shell nc): bridge-ul raspundea perfect cu ecranul blocat.
+Solutii implementate:
+- PARTIAL_WAKE_LOCK (CPU treaz) - deja existent, confirmat activ in Doze
+- `ui wake` / `ui sleep`: wake lock suplimentar ACQUIRE_CAUSES_WAKEUP + setShowWhenLocked(true)
+  + setTurnScreenOn(true) + FLAG_KEEP_SCREEN_ON pe perioada unui task cu UI
+- cerere automata REQUEST_IGNORE_BATTERY_OPTIMIZATIONS la prima pornire (fara ea Samsung
+  suspenda agresiv procesul); se poate pune si manual: Settings > Battery > Unrestricted
+- `ui service`: expune starea (foreground / accessibility / ignore_battery_opt)
+Verificat: cu ecranul STINS si BLOCAT (mWakefulness=Dozing, AOD aprins):
+  - 6/6 + 8/8 + 10/10 task-uri HEADLESS reusite (baterie/device/senzori)
+  - task UI reusit: `ui wake` -> `ui openapp com.android.settings` -> `ui read` (20 noduri)
+  - procesul rămas viu dupa toate (PID stabil)
+
+
 ## 6. PROBLEME INTALNITE SI SOLUTII
 
 1. SSL pe Android: URLError b'' la api.deepseek.com
@@ -449,6 +474,28 @@ Verificare rapida cu adb (util dupa reinstalare, se pierde la update):
 Nota: la fiecare REINSTALARE a APK, Android dezactiveaza serviciul -> re-activeaza-l
 din Settings (sau cu cele 2 comenzi adb de mai sus).
 
+### Baterie: exclude agentul de la optimizare (pentru rulare pe ecran stins)
+
+Ca agentul sa ramina VIU cu ecranul stins/blocat (Doze), exclude-l de la optimizarea bateriei:
+
+1. Aplicatia cere asta automat o data, la prima pornire (dialog "Allow Agent to run in background?")
+2. Sau manual: **Settings > Battery > Background usage limits > Never sleeping apps / Unrestricted**
+   (pe Samsung: Settings > Battery > Background usage limits -> adauga `Agent`)
+3. Verificare din chat: `android(tool="ui", action="service")` -> `ignore_battery_opt:true`
+
+Fara asta, Samsung poate suspenda procesul dupa citeva minute de ecran stins.
+Nota: task-urile care nu au nevoie de UI (bridge, senzori, fisiere, retea) merg si asa,
+dar cu whitelist-ul e garantat ca procesul nu e omorit.
+
+### Ce functioneaza cu ecranul STINS si telefonul BLOCAT
+
+| Tip task | Functioneaza? |
+|---|---|
+| Bridge, senzori, baterie, wifi, fisiere, retea (HEADLESS) | ✅ DA (mereu) |
+| Agentul lucreaza singur pe un task dat din interfata | ✅ DA |
+| UI in alte aplicatii (tastare/click) | ✅ DA, daca agentul cheama `ui wake` intii |
+| Talk cu utilizatorul prin interfata aplicatiei | ⚠️ ecran stins (normal) |
+
 ## 10. TOOL-URI SI ACCESUL LA SISTEM
 
 ### Tool-uri principale
@@ -565,8 +612,9 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - Interfata terminal in engleza, raspuns in limba operatorului, auto-scroll corect,
   stop generare, fara tabele pe ecran mic
 - Iconita profesionala
-- Ruleaza in BACKGROUND (foreground service): agentul isi continua taskul cind app-ul e
-  minimizat, inclusiv in timp ce lucreaza in alte aplicatii
+- Ruleaza in BACKGROUND (foreground service): taskul continua cind app-ul e minimizat
+- Merge si cu ECRANUL STINS/BLOCAT: task-uri headless 100%, task-uri UI prin `ui wake`
+- Excludere de la optimizarea bateriei (Doze) ceruta automat la prima pornire
 - Senzori functionali (fix registerListener + Handler mainLooper)
 - Vedere + control asupra altor aplicatii (AccessibilityService, fara root)
 - Repo git cu push pe GitHub
