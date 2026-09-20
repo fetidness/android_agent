@@ -198,3 +198,7 @@ OK: Long-running global-trade/GTM eval batches -> task text can be stale/mismatc
 OK: pkg-config --modversion <lib> with no .pc file returns empty exit 1 -> stderr suppressed reads as "not installed" -> use `pkg-config --exists X && echo yes` or check dpkg -l instead
 
 DEAD: /tmp/nonexistent scripts fail silently -> relative assumptions -> use absolute paths and verify file existence before exec
+
+P: GNU/Linux `find -newermt` needs full timestamp or offset like `-newermt '-1 hour'`; bare `-newermt -1h` is parsed as a path -> use `-mmin -60` or quote `-newermt '-60 min'` -> verify by COUNTING matches first
+
+TRAP: read-only shell probe `nvidia-smi`/`systemctl status` can return empty/blank without root or with no params -> agent misreads as "missing GPU/service" -> always pass explicit query args and verify exit code before concluding.

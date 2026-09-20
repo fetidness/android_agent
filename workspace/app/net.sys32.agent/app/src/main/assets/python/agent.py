@@ -320,6 +320,23 @@ def mem_dups(before, after):
     return new, dup
 
 
+def _lesson_value(line):
+    """Scor de VALOARE 0-10 pentru o lectie de memorie. Ideea: memoria sa creasca doar cu
+    lectii care (a) spun o cauza si o consecinta (->), (b) contin detalii specifice
+    (numere, Exception/errno, Api.metoda), (c) sunt destul de lungi ca sa fie informative.
+    Resping banalitatile ('telefonul are 4 camere') si observatiile fara consecinta.
+    Utilizat DOAR cand e strict: < 2 => lectia nu se scrie."""
+    import re as _r
+    s = 0
+    if "->" in line: s += 3                       # are lant cauza -> efect
+    if _r.search(r"\d", line): s += 2             # contine valori/numerot concrete
+    if _r.search(r"[a-z]+\.[A-Z]\w+", line): s += 2  # nume Api.metoda
+    if _r.search(r"\b(ERROR|DENY|DENIED|Exception|errno|ENOENT|EACCES|Permission|SELinux|null|refuses?)\b", line, _r.I): s += 2
+    if len(line) < 60: s -= 3                     # prea scurta = probabil banala
+    if line.upper().startswith(("OK:", "P:")) and "->" not in line: s -= 2   # observatie fara consecinta
+    return s
+
+
 def mem_lint(txt):
     """Checks EVERY /learn write LINE BY LINE (the prompt's rules, enforced in code):
     - one lesson = ONE line, <=300 chars (the prompt says 150, density warns only on the AVERAGE)
@@ -361,6 +378,9 @@ def mem_lint(txt):
         for rx, why in FORBID:
             if _re.search(rx, l, _re.I):
                 out.append((0, "forbidden [" + why + "]: " + l[:60]))
+        # filtru de VALOARE: o linie de lectie prea slaba (banala, fara consecinta) nu intra
+        if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:")) and _lesson_value(l) < 2:
+            out.append((0, "low value [" + str(_lesson_value(l)) + "]: " + l[:60]))
     return out, lessons
 
 
@@ -751,7 +771,7 @@ def mstats(s):
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 AUTOLEARN={"on":True,"min_steps":5}   # auto-learn after a finished task: ON by default, disable via /auto-learn off
-AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running INSIDE an Android app on a real phone (Samsung SM-A366B, Android 16, no root). You talk to the device through the android tool (reflection + native shortcuts, socket bridge to Kotlin) and through a POSIX shell (sh -c). Look at the task that just finished above and decide whether it taught you a REUSABLE fact about THIS PHONE. A lesson qualifies ONLY if it is BOTH (1) about the Android device itself - its services, APIs, permissions, reflection quirks, sensors, storage layout, SELinux limits, shell behaviour on this phone - AND (2) likely to change how you act on a FUTURE task here, not just describe what happened. Typical valid lessons: an API call that needs [\"ref\",\"ctx\"] or fails with a specific exception; an abstract class that must be subclassed via op=subclass; a service that returns null / a value that is misleading without root; an exact working chain of reflection calls; a feature PROVEN impossible for a normal app; a permission/SELinux boundary. NEVER save: generic software/desktop knowledge (bash vs bash -lc, BusyBox, OpenRouter, claude CLI, Gradle, systemd, Windows, other tools), paraphrases of the task, trivia about one specific device you scanned, or anything already in your memory snapshot. If the lesson would be equally true on a Linux desktop, or is not about interacting with THIS phone, it does NOT qualify. REPLY FORMAT - EXACTLY one line, nothing else:   - If there IS such a lesson: start the line with NONE of the words YES/NO; write it as a dense memory bullet,     syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max ~200 chars, no markdown, no quotes.   - If there is genuinely NOTHING reusable or it is not Android-specific: reply with the single word: NO.")
+AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running INSIDE an Android app on a real phone (Samsung SM-A366B, Android 16, no root). You talk to the device through the android tool (reflection + native shortcuts, socket bridge to Kotlin) and through a POSIX shell (sh -c). Look at the task that just finished above and decide whether it taught you a REUSABLE fact about THIS PHONE. A lesson qualifies ONLY if it is BOTH (1) about the Android device itself - its services, APIs, permissions, reflection quirks, sensors, storage layout, SELinux limits, shell behaviour on this phone - AND (2) likely to change how you act on a FUTURE task here, not just describe what happened. Typical valid lessons: an API call that needs [\"ref\",\"ctx\"] or fails with a specific exception; an abstract class that must be subclassed via op=subclass; a service that returns null / a value that is misleading without root; an exact working chain of reflection calls; a feature PROVEN impossible for a normal app; a permission/SELinux boundary. NEVER save: generic software/desktop knowledge (bash vs bash -lc, BusyBox, OpenRouter, claude CLI, Gradle, systemd, Windows, other tools), paraphrases of the task, trivia about one specific device you scanned, or anything already in your memory snapshot. If the lesson would be equally true on a Linux desktop, or is not about interacting with THIS phone, it does NOT qualify. REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). Do NOT pad - a weak or obvious line is worse than none.    - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 300 chars, no quotes, no markdown. Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time; skip obvious facts and one-off task artefacts.   - If there is genuinely NOTHING reusable or it is not Android-specific: reply with the single word: NO.")
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -1286,64 +1306,74 @@ def auto_learn_check(task_steps, had_error):
     if not _raw:
         print(G+"   [auto-learn] decision call returned empty - skipped."+N)
         return
-    # Noul format: fie "NO" (nimic reutilizabil), fie O LINIE de lecție cu cheie TRAP:/OK:/DEAD:/P:/PREVENT:.
-    _flat = " ".join(_raw.split())            # colapseaza newline/spatii multiple
-    _clean = _flat.strip("`").strip().strip('"').strip("'").strip()
-    if _clean.upper() == "NO" or _clean.upper().startswith("NO "):
-        print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
-        return
-    # validare: prima cheie trebuie sa fie una cunoscuta
+    # Noul format: fie "NO", fie UNA SAU MAI MULTE linii de lectie (TRAP:/OK:/DEAD:/P:/PREVENT:),
+    # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + Android).
     _KEYS = ("TRAP:","OK:","DEAD:","P:","PREVENT:")
-    _up = _clean.upper()
-    _hit = next((k for k in _KEYS if _up.startswith(k)), None)
-    if _hit is None:
-        # modelul a raspuns ceva neasteptat (poate tot YES/NO) -> comportament vechi, sigur
-        if _up.startswith("YES"):
+    _cand = []
+    for _ln in _raw.split("\n"):
+        _ln = _ln.strip().strip("`").strip().strip('"').strip("'").strip()
+        _ln = " ".join(_ln.split())                      # colapseaza spatiile din interior
+        if not _ln: continue
+        if _ln.upper() == "NO": continue
+        if len(_ln) > 300: _ln = _ln[:300].rstrip()
+        if _ln.upper().startswith(tuple(k.upper() for k in _KEYS)):
+            _cand.append(_ln)
+    if not _cand:
+        # nimic valid: fie NO explicit, fie altceva
+        _flat = " ".join(_raw.split())
+        if _flat.upper() == "NO" or _flat.upper().startswith("NO "):
+            print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
+        elif _flat.upper().startswith("YES"):
             print(G+"   [auto-learn] decision: YES (no explicit line) - running full do_learn()."+N)
             do_learn("auto-learn")
         else:
-            print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_clean[:80]+N)
+            print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_flat[:80]+N)
         return
-    # prea lung? taie la 300 ca sa nu sparga formatul memoriei
-    if len(_clean) > 300:
-        _clean = _clean[:300].rstrip()
-    # duplicat? daca linia (normalizata) exista deja in memorie, nu o scrie din nou
+    # memorie existenta (pentru dedup)
     try:
         _mem = open(MEM, "r", encoding="utf-8").read() if 'MEM' in globals() else ""
     except Exception:
         _mem = ""
     def _norm(x):
         return "".join(x.lower().split())
-    if _norm(_clean) in _norm(_mem):
-        print(G+"   [auto-learn] lesson already in memory - untouched."+N)
-        return
-    # VALIDARE (aceleasi reguli ca la /learn): lecțiile care nu sunt despre acest telefon
-    # sau continut interzis NU se scriu. mem_lint intoarce (issues, lessons).
-    try:
-        _issues, _ = mem_lint(_clean)
-    except Exception:
-        _issues = []
-    _bad_reason = None
-    for _w in _issues:
-        _txt = _w[1]
-        if _w[0] and _w[1].strip() == _clean: _bad_reason = "too long"
-        elif _txt.startswith("forbidden"): _bad_reason = _txt.split("]:",1)[0].replace("forbidden [","")
-    if _bad_reason:
-        print(R+"   [auto-learn] REJECTED ("+_bad_reason+") - not written to memory: "+_clean[:90]+N)
-        return
-    # scriere directa: adaugam linia in memorie, fara sa re-analizam tot istoricul
-    try:
-        _tgt = MEM if 'MEM' in globals() else None
-        if not _tgt:
-            print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
-            do_learn("auto-learn")
-            return
-        with open(_tgt, "a", encoding="utf-8") as _f:
-            _f.write("\n" + _clean + "\n")
-        print(G+"   [auto-learn] decision: YES - saved lesson: "+_clean[:110]+N)
-    except Exception as e:
-        print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
-        do_learn("auto-learn")
+    _memnorm = _norm(_mem)
+    _tgt = MEM if 'MEM' in globals() else None
+    if not _tgt:
+        print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
+        do_learn("auto-learn"); return
+    _saved, _skipped = [], []
+    for _ln in _cand:
+        # duplicat?
+        if _norm(_ln) in _memnorm:
+            _skipped.append(("duplicate", _ln)); continue
+        # validare stricta (format + Android + VALOARE)
+        try:
+            _issues, _ = mem_lint(_ln)
+        except Exception:
+            _issues = []
+        _why = None
+        for _w in _issues:
+            _txt = _w[1]
+            if _w[0] and _txt.strip() == _ln: _why = "too long"
+            elif _txt.startswith("forbidden"): _why = _txt.split("]:",1)[0].replace("forbidden [","")
+            elif _txt.startswith("low value"): _why = "low value"
+        if _why:
+            _skipped.append((_why, _ln)); continue
+        _saved.append(_ln)
+        _memnorm += _norm(_ln)
+    if _saved:
+        try:
+            with open(_tgt, "a", encoding="utf-8") as _f:
+                for _ln in _saved: _f.write("\n" + _ln + "\n")
+            print(G+"   [auto-learn] decision: YES - saved "+str(len(_saved))+" lesson(s):"+N)
+            for _ln in _saved: print(G+"        + "+_ln[:120]+N)
+        except Exception as e:
+            print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
+            do_learn("auto-learn"); return
+    for _why, _ln in _skipped:
+        print(OF+"   [auto-learn] skipped ("+_why+"): "+_ln[:90]+N)
+    if not _saved and not _skipped:
+        print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
 
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
