@@ -322,12 +322,12 @@ def mem_dups(before, after):
 
 def mem_lint(txt):
     """Checks EVERY /learn write LINE BY LINE (the prompt's rules, enforced in code):
-    - one lesson = ONE line, <=150 chars (the prompt says 150, density warns only on the AVERAGE)
+    - one lesson = ONE line, <=300 chars (the prompt says 150, density warns only on the AVERAGE)
     - no forbidden content: narration, tool calls, dialogue, praise, generic advice, code dumps
     - section heading present and well formed.
     Read-only: it NEVER edits or truncates the file. Returns (warnings, lessons)."""
     import re as _re
-    MAXLINE = 150
+    MAXLINE = 300
     FORBID = [
         (r"\b(am citit|am rulat|am apelat|am folosit tool|tool call)\b", "narration/tool-call"),
         (r"\b(operatorul|utilizatorul a spus|buna seara)\b", "operator dialogue"),
@@ -1182,7 +1182,7 @@ def do_learn(trigger="/learn"):
       "- SIZE IS UNLIMITED: the memory has NO cap - never delete a still-true, reusable lesson because the file feels big. A large dense file is FINE. What is NOT fine is a padded line.\n"
       "- WRITE DISCIPLINE (the only rule, applied whatever the current size): append with mode 'a', NEVER truncate the whole file, and add at most the few genuinely-new bullets you found in step 3. When several existing bullets clearly overlap on the same subject, merge them in place into one denser line (this SHRINKS only redundancy, never information). Keep every exact path/command/error string.\n"
       "- SELF-CLEANING: you MAY rewrite a section by code to merge/dedupe it, but only to remove redundancy - the result must still contain every distinct fact present before. If in doubt, keep the old line.\n"
-      "FORMAT - one lesson = ONE line, <=150 chars, telegraphic, no sentences:\n"
+      "FORMAT - one lesson = ONE line, <=300 chars, telegraphic, no sentences:\n"
       "  `TRAP: what I did -> exact error -> cause -> fix that worked` (exact command/flag/path/error string - this is the MOST valuable line type)\n"
       "  `OK: command/path/flag that verifiably works`   `DEAD: what does NOT work -> proof`   `P: absolute path -> artifact / how to run it`\n"
       "  `PREVENT: rule to apply next time so <trap> never happens again` (only when it is a real, reusable rule)\n"
@@ -1248,11 +1248,11 @@ def do_learn(trigger="/learn"):
             except Exception as _e: print(R+"   [mem] could not rewrite memory: "+str(_e)+N)
         print(R+"   [mem] LINT: "+str(len(_lint))+" issue(s); dropped "+str(_dropped)+" bad lesson line(s) (not saved to memory)."+N)
         for _w in _lint[:6]:
-            _msg = ("line "+str(_w[0])+" chars (>150): "+_w[1][:90]) if _w[0] else _w[1]
+            _msg = ("line "+str(_w[0])+" chars (>300): "+_w[1][:90]) if _w[0] else _w[1]
             print(R+"        ! "+_msg+N)
         if len(_lint)>6: print(R+"        ... +"+str(len(_lint)-6)+" more"+N)
     elif _nless:
-        print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), all <=150 chars, no forbidden content."+N)
+        print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), all <=300 chars, no forbidden content."+N)
     save_ctx()
     if m and m.get("content"): print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render(m["content"].strip()))
     print(G+"   [/learn] the new memory loads into the system prompt at the NEXT startup."+N)
@@ -1271,9 +1271,10 @@ def auto_learn_check(task_steps, had_error):
         return
     if task_steps < AUTOLEARN["min_steps"] and not had_error:
         return   # task prea mic: iesim silentios (fara mesaj in output)
-    # DECIZIE: un singur mesaj scurt, fara tools
+    # DECIZIE: un singur mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
+    # la ce se refera "the task that just finished above" si raspunde NO orbește).
     try:
-        _probe = ask([{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
+        _probe = ask(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
     except Exception as e:
         print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
         return
