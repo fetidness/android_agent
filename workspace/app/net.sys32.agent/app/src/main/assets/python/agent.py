@@ -420,7 +420,7 @@ LBLW=lambda: max(18,min(24,CS()-40))   # label box: tighter, so the timers/log/s
 DURW=7   # widest _dur() value: "1:00:00" (7 chars)
 REFW=10  # widest log file name in the step line (longer names end with …)
 SZW=8    # width of the output-size box (and of the phase box in the live line)
-TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","1800"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
+TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","6000"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
 CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","1000000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
 CTXKEEP=24         # how many recent messages are never compressed
 LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted between sessions)
@@ -434,7 +434,9 @@ def _cut(o,ref=None):
     Nothing is lost: the original is at `ref` and can be read at any time with a tool call."""
     if len(o)<=TOOLMAX: return o
     h,t=TOOLMAX*3//4,TOOLMAX//4
-    mid="[... "+str(len(o)-TOOLMAX)+" chars in the middle, NOT LOST: the complete text "+(("in "+ref) if ref else "in the complete output")+" ...]"
+    _tot=len(o)
+    mid=("[... "+str(_tot-TOOLMAX)+" chars omitted here (NOT LOST). Read them with: "
+         +"read path="+(ref if ref else "<file>")+" offset="+str(h)+" limit="+str(TOOLMAX)+" (then increase offset to continue) ...]")
     return o[:h]+"\n"+mid+"\n"+o[-t:]
 def _store(o):
     """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None)."""
@@ -777,7 +779,8 @@ TC=E+"[38;5;216m";TCB=E+"[38;5;180;48;5;236m"   # TC=calling a tool (warm amber)
 T=[{"type":"function","function":{"name":"python","description":"Run Python 3 code on this Linux machine, returns stdout/stderr. Use stdlib only. BEST for: structured parsing (JSON/INI/KeyValues), logic, aggregations in memory, complex data structures, anything needing decisions. SLOW for multi-million-line streams; for those use `bash` or the `smart` router.","parameters":{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}}},
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
-   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android hardware/OS access. Only available on the Android build. FULL generic access to the whole Android SDK via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}}]
+   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android hardware/OS access. Only available on the Android build. FULL generic access to the whole Android SDK via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
+   {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
   "1) `python`: run Python 3 code (stdlib only). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
@@ -1046,6 +1049,41 @@ def run_bash_tool(cmd):
     if _looks_like_error(o): TASK["err"]=True
     return cut
 
+def run_read_tool(path, offset=0, limit=4000):
+    """Citeste un FISIER (ex. un log de tool trunchiat) de la un offset, cu o limita.
+    Nu incarca tot in context: agentul poate pagina prin fisiere mari citind bucati.
+    Intoarce textul cerut + un header care arata intervalul si cate caractere mai sunt."""
+    import os as _os
+    try:
+        offset=int(offset); limit=int(limit)
+    except Exception:
+        offset, limit = 0, 4000
+    if limit <= 0 or limit > 20000: limit = 20000 if limit > 20000 else 4000
+    if offset < 0: offset = 0
+    try:
+        p = path if _os.path.isabs(path) else _os.path.join(WORK, path)
+        tot = _os.path.getsize(p)
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            f.seek(offset)
+            chunk = f.read(limit)
+        n = len(chunk)
+        end = offset + n
+        hdr = "[read "+ _os.path.basename(p) +" | bytes "+str(offset)+"-"+str(end)+" of "+str(tot)
+        if end < tot:
+            hdr += " | MORE: call read path="+path+" offset="+str(end)+" limit="+str(limit)
+        else:
+            hdr += " | EOF"
+        hdr += "]\n"
+        o = hdr + chunk
+    except Exception as e:
+        o = "(read failed: "+str(e)+")"
+    _step_show = "read "+str(path)+(" @"+str(offset) if offset else "")
+    n=TASK["steps"]+1
+    dsc="read: "+_short(str(path),58); col=HCLR[sum(map(ord,dsc))%len(HCLR)]
+    TN[0]+=1; TASK.update(steps=n,chars=TASK["chars"]+len(o))
+    _show_step(_step_show, o, n)
+    return o
+
 def _looks_like_error(o):
     """Cheap heuristic: does this tool output contain a FAILURE (traceback, non-zero exit, an
     ERROR/EXCEPTION line)? Used ONLY by auto-learn to decide whether a task is worth learning from.
@@ -1099,6 +1137,8 @@ def call_tool(c):
         return o
     if fn=="bash":
         return run_bash_tool(a.get("cmd",""))
+    if fn=="read":
+        return run_read_tool(a.get("path",""), a.get("offset",0), a.get("limit",4000))
     if fn=="smart":
         cmd=a.get("cmd","") or ""; code=a.get("code","") or ""
         eng,why=route(cmd,code)

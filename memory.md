@@ -190,3 +190,7 @@ TRAP: bare `grep`/`find` style discovery commands can return empty without root 
 OK: ipex-llm conda env setup -> `conda create -n ipex python=3.11` then `pip install ipex-llm[cpu]` works but pip resolves slow; use `pip install --extra-index-url https://pytorch-ipex.github.io/whl/cpu ipex-llm` for faster reliable install.
 
 TRAP: nvidia-smi/docker info can appear fine while GPU is unusable in containers -> container lacks --gpus all or NVIDIA runtime -> verify with device query inside container, not host.
+
+OK: macOS `grep` without file args reads stdin and hangs/empty → misleading "no match" → pass explicit paths or `-r`, or verify input source first.
+
+OK: Long-running global-trade/GTM eval batches -> task text can be stale/mismatched (watcher picks arbitrary task per domain) -> trust the per-session launcher command over eval prompt wording; verify by reading the live task .txt before acting.
