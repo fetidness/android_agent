@@ -375,13 +375,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v41")
+        val stamp = File(filesDir, ".assets_v45")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
         val memFile = File(dest, "memory.md")
         val memSaved = if (memFile.exists()) memFile.readText() else null
         if (stamp.exists() && dest.exists()) return
+        // la fiecare re-extragere, stergem si pyhome: altfel stdlib-ul copiat o singura data
+        // (Lib/ + site-packages/) NU s-ar actualiza cand adaugam biblioteci noi in assets.
+        File(filesDir, "pyhome").deleteRecursively()
         dest.deleteRecursively()
         fun copyDir(path: String, out: File) {
             val list = assets.list(path) ?: return
