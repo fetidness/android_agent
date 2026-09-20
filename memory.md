@@ -196,3 +196,5 @@ OK: macOS `grep` without file args reads stdin and hangs/empty → misleading "n
 OK: Long-running global-trade/GTM eval batches -> task text can be stale/mismatched (watcher picks arbitrary task per domain) -> trust the per-session launcher command over eval prompt wording; verify by reading the live task .txt before acting.
 
 OK: pkg-config --modversion <lib> with no .pc file returns empty exit 1 -> stderr suppressed reads as "not installed" -> use `pkg-config --exists X && echo yes` or check dpkg -l instead
+
+DEAD: /tmp/nonexistent scripts fail silently -> relative assumptions -> use absolute paths and verify file existence before exec
