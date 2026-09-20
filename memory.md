@@ -292,3 +292,19 @@ TRAP: `adb forward tcp:N tcp:M` moare cand telefonul intra in Doze (ecran stins/
 OK: starea reala a serviciilor Android (foreground/accessibility/ecran) se citeste cu `adb shell dumpsys power | grep -E 'mWakefulness=|net.sys32'` si `dumpsys deviceidle whitelist | grep <pkg>` -> arata daca wake lock-ul e tinut si daca app-ul e exclus de Doze
 
 TRAP: reconstruirea/instalarea APK-ului DEZACTIVEAZA serviciul de accessibility si scoate app-ul din whitelist-ul de baterie -> `accessibility:false` dupa `adb install -r` -> reactiveaza cu `adb shell settings put secure enabled_accessibility_services <pkg>/<pkg>.AgentAccessibilityService` + `settin
+
+TRAP: `ui read` pe Android returna JSON brut cu toate metadatele pe fiecare nod (~120 chars zgomot pentru 3 chars text) -> ecran WhatsApp 8500+ chars trunchiat la 8000, informatia cautata la poz 6375 -> foloseste read compact (lista text `[n] Cls id=x "text" @[x,y]`) si action=find <text> pentru cau
+
+TRAP: un agent care cauta un contact prin UI si nu-l gaseste in arborele de accesibilitate -> poate rata ca datele ERAU in raspuns dar ingropate in zgomot -> inainte de a declara "nu exista", verifica cu find <text> sau read compact, nu trage concluzia din JSON trunchiat
+
+P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/assets/python/agent.py -> agentul Python din APK (assets vN se re-extragg pe device la .assets_vN din MainActivity) -> la orice schimbare de assets INCREMENTEAZA versiunea sau ramane copia veche
+
+OK: testare Android fara laptop prin tunel adb -> bridge-ul raspunde via `adb shell 'echo -n <json> | nc 127.0.0.1 <port>'` (port din files/bridge.port) -> functioneaza chiar si cu ecranul blocat, spre deosebire de adb forward care moare in Doze
+
+OK: `ui find "Send"` (bridge Android) gaseste butonul chiar cind arborele e trunchiat de `ui read` -> foloseste find inainte de read pe ecrane lungi cu RecyclerView.
+
+TRAP: `adb shell input text 'fraza cu spatii'` se opreste la primul spatiu -> scrie `%s` in loc de spatiu -> `input text 'deschide%swhatsapp'`.
+
+TRAP: `adb shell input tap X Y` rateaza butonul daca textul multi-linie din EditText rearanjeaza layout-ul (butonul s-a mutat de la y=2211 la y=1509) -> reia `uiautomator dump` si recalculeaza bounds inainte de fiecare tap.
+
+TRAP: `/reset` in agentul Android (comanda in app) goleste context.json dar PASTREAZA memory.md -> calea corecta de a da un task curat fara sa pierzi lectiile invatate.

@@ -374,6 +374,25 @@ Verificat end-to-end pe Samsung A36 (taskul care esuase inainte):
   WhatsApp -> find "Gab" (13 potriviri) -> tap pe contact -> camp message (id=entry)
   -> settext "salut" -> tap send -> mesaj TRIMIS (confirmat vizual: bubble verde la Gab)
 
+TEST COMPLET CURAT (memoria + contextul STERSE, WhatsApp pe ecranul principal):
+  Task: "deschide whatsapp, cauta userul gab si da i un mesaj de salut" - pornit de la zero.
+  Fluxul agentului (37 mesaje, ~1 minut, 100% autonom):
+    1. ui wake + apps.launch com.whatsapp
+    2. ui read (textonly) -> 49 noduri, lista de chat-uri
+    3. ui find "Gab"       -> gasit conversatia in lista (fara sa citeasca tot ecranul)
+    4. ui tap pe contact
+    5. ui find id=entry    -> gasit campul de mesaj
+    6. ui settext "Salut Gab! Ce faci?"
+    7. ui find (verificare ca textul e scris)
+    8. ui read             -> gasit butonul Send
+    9. ui tap send
+   10. ui read             -> VERIFICAT ca mesajul a plecat
+   11. ui sleep            -> eliberat ecranul
+  Rezultat: mesaj "Salut Gab! Ce faci?" trimis la 14:12 (ora reala a telefonului),
+  confirmat vizual (bubble verde + bife duble in lista de chat-uri).
+  CONCLUZIE: cu read compact + find, taskul care esua inainte (17 citiri de ecran
+  pierdute in JSON) acum reuseste din prima, complet autonom, de la memorie zero.
+
 
 ## 6. PROBLEME INTALNITE SI SOLUTII
 
