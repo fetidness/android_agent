@@ -334,6 +334,12 @@ def mem_lint(txt):
         (r"\b(bravo|excelent|grozav|perfect)\b", "praise"),
         (r"\b(ar trebui|e bine sa|pe viitor incearca)\b", "generic advice"),
         (r"^```|^def |^import ", "code/output dump"),
+        # NOT about this Android phone = not a memory lesson (desktop/CI/dev-environment knowledge)
+        (r"\b(openrouter|hermes|claude cli|auto-learn hook|gradle|systemd|tmux|git-bash|busybox|coreutils|"
+         r"debian|ubuntu|windows|win32|powershell|nvcc|cuda|docker|nginx|apt-get|pip install|npm|node_modules|"
+         r"/dev/video|wsl|macos|homebrew|kernel-header|dkms|sshpass|ansible|venv|site-packages|"
+         r"sudo|bash -lc|profile sourcing|login shell|non-login shell|/usr/bin/time)\b",
+         "not about this Android device (dev/desktop topic)"),
     ]
     out = []
     lines = [l.rstrip() for l in txt.split("\n") if l.strip()]
@@ -743,20 +749,7 @@ def mstats(s):
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 AUTOLEARN={"on":True,"min_steps":5}   # auto-learn after a finished task: ON by default, disable via /auto-learn off
-AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. Look at the task that just finished above. "
- "Extract the MOST VALUABLE GENUINELY NEW, REUSABLE lesson from it - if there is one. "
- "A lesson is reusable when it would change how you behave in a FUTURE session, not just describe this one task. "
- "It counts even if the task SUCCEEDED: be alert for SUBTLE, EASY-TO-MISS facts such as "
- "(a) a command that gives a MISLEADING or EMPTY result without root/params (so an agent could draw a WRONG conclusion), "
- "(b) an exact working command or absolute path worth reusing, "
- "(c) something you PROVED does not work (dead end, wrong flag, wrong path), "
- "(d) a non-obvious environment/hardware fact that constrains future commands, "
- "(e) a mistake you made plus the exact fix. "
- "Do NOT extract routine narration, task-specific trivia, or anything already in your memory snapshot. "
- "REPLY FORMAT - EXACTLY one line, nothing else: "
- "  - If there IS a lesson: start the line with NONE of the words YES/NO; write it as a dense memory bullet, "
- "    syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max ~200 chars, no markdown, no quotes. "
- "  - If there is genuinely NOTHING reusable: reply with the single word: NO.")
+AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running INSIDE an Android app on a real phone (Samsung SM-A366B, Android 16, no root). You talk to the device through the android tool (reflection + native shortcuts, socket bridge to Kotlin) and through a POSIX shell (sh -c). Look at the task that just finished above and decide whether it taught you a REUSABLE fact about THIS PHONE. A lesson qualifies ONLY if it is BOTH (1) about the Android device itself - its services, APIs, permissions, reflection quirks, sensors, storage layout, SELinux limits, shell behaviour on this phone - AND (2) likely to change how you act on a FUTURE task here, not just describe what happened. Typical valid lessons: an API call that needs [\"ref\",\"ctx\"] or fails with a specific exception; an abstract class that must be subclassed via op=subclass; a service that returns null / a value that is misleading without root; an exact working chain of reflection calls; a feature PROVEN impossible for a normal app; a permission/SELinux boundary. NEVER save: generic software/desktop knowledge (bash vs bash -lc, BusyBox, OpenRouter, claude CLI, Gradle, systemd, Windows, other tools), paraphrases of the task, trivia about one specific device you scanned, or anything already in your memory snapshot. If the lesson would be equally true on a Linux desktop, or is not about interacting with THIS phone, it does NOT qualify. REPLY FORMAT - EXACTLY one line, nothing else:   - If there IS such a lesson: start the line with NONE of the words YES/NO; write it as a dense memory bullet,     syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max ~200 chars, no markdown, no quotes.   - If there is genuinely NOTHING reusable or it is not Android-specific: reply with the single word: NO.")
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -1197,7 +1190,23 @@ def do_learn(trigger="/learn"):
     if nb2 and den2<=180: print(G+"   [mem] density OK: "+str(den2)+" chars/bullet - tight and reusable."+N)
     _lint, _nless = mem_lint(now)
     if _lint:
-        print(R+"   [mem] LINT: "+str(len(_lint))+" line-level issue(s):"+N)
+        # ENFORCE the rules: drop the offending lesson lines from the proposed memory
+        # BEFORE writing, so bad lessons never reach the file (not just a warning).
+        _bad = set()
+        for _w in _lint:
+            _txt = _w[1]
+            if _w[0]:  # (length, line) -> too long
+                _bad.add(_w[1].strip())
+            elif _txt.startswith("forbidden"):
+                _bad.add(_txt.split("]: ", 1)[-1].strip())
+        _kept = [l for l in now.split("\n")
+                 if not (l.strip().startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:")) and l.strip() in _bad)]
+        _dropped = len(now.split("\n")) - len(_kept)
+        if _dropped > 0:
+            now = "\n".join(_kept)
+            try: open(MEM, "w", encoding="utf-8").write(now)
+            except Exception as _e: print(R+"   [mem] could not rewrite memory: "+str(_e)+N)
+        print(R+"   [mem] LINT: "+str(len(_lint))+" issue(s); dropped "+str(_dropped)+" bad lesson line(s) (not saved to memory)."+N)
         for _w in _lint[:6]:
             _msg = ("line "+str(_w[0])+" chars (>150): "+_w[1][:90]) if _w[0] else _w[1]
             print(R+"        ! "+_msg+N)
@@ -1266,6 +1275,20 @@ def auto_learn_check(task_steps, had_error):
         return "".join(x.lower().split())
     if _norm(_clean) in _norm(_mem):
         print(G+"   [auto-learn] lesson already in memory - untouched."+N)
+        return
+    # VALIDARE (aceleasi reguli ca la /learn): lecțiile care nu sunt despre acest telefon
+    # sau continut interzis NU se scriu. mem_lint intoarce (issues, lessons).
+    try:
+        _issues, _ = mem_lint(_clean)
+    except Exception:
+        _issues = []
+    _bad_reason = None
+    for _w in _issues:
+        _txt = _w[1]
+        if _w[0] and _w[1].strip() == _clean: _bad_reason = "too long"
+        elif _txt.startswith("forbidden"): _bad_reason = _txt.split("]:",1)[0].replace("forbidden [","")
+    if _bad_reason:
+        print(R+"   [auto-learn] REJECTED ("+_bad_reason+") - not written to memory: "+_clean[:90]+N)
         return
     # scriere directa: adaugam linia in memorie, fara sa re-analizam tot istoricul
     try:
