@@ -1,25 +1,5 @@
 #!/usr/bin/env python3
 import base64,datetime,json,os,random,re,shutil,signal,subprocess,sys,tempfile,threading,time,urllib.request
-
-# --- ANDROID FIX: folosim certificatele CA ale sistemului Android pentru HTTPS ---
-if sys.platform=="android" or os.path.exists("/system/bin/linker64"):
-    try:
-        import ssl as _ssl, glob as _glob
-        _b=os.path.join(tempfile.gettempdir(),"ca-bundle.pem")
-        if not os.path.exists(_b):
-            with open(_b,"w") as _o:
-                for _d in ("/apex/com.android.conscrypt/cacerts","/system/etc/security/cacerts"):
-                    for _f in sorted(_glob.glob(_d+"/*")):
-                        try:
-                            _z=open(_f,"rb").read()
-                            if b"BEGIN CERTIFICATE" in _z: _o.write(_z.decode("utf-8","replace"))
-                        except Exception: pass
-        _ssl._create_default_https_context=lambda cafile=None,capath=None,cadata=None,_b=_b: _ssl.create_default_context(cafile=_b)
-        os.environ.setdefault("SSL_CERT_FILE",_b)
-    except Exception: pass
-
-# --- SHELL: Android nu are bash, doar sh (mksh). Desktop ramane bash -lc. ---
-SHELL=[("sh","-c") if (sys.platform=="android" or os.path.exists("/system/bin/linker64")) else ("bash","-lc")]
 E="\33"                                     # ESC, kept separate so regexes never touch it
 D={"h1":E+"[1;38;5;213m","h2":E+"[1;38;5;51m","h3":E+"[1;38;5;226m","h4":E+"[1;38;5;118m",
    "h5":E+"[1;38;5;208m","h6":E+"[1;38;5;141m","b":E+"[1;38;5;231m","i":E+"[3;38;5;219m",
@@ -225,20 +205,15 @@ def render(t):
         else:
             out.append(_chunk(_compact(p)))
     return re.sub(r"^\n+","",re.sub(r"\n(?:\n)+$","\n","".join(out)))
-WORK=os.path.join(os.path.dirname(os.path.abspath(__file__)),"workspace")
+WORK=os.path.join(os.path.dirname(os.path.abspath(__file__)),"temp")
 os.makedirs(WORK,exist_ok=True)
-CTXNAME="context.json"       # conversation history: lives permanently in the working folder (workspace)
-# NU se sterge workspace-ul la startup: proiectele trebuie sa supravietuiasca sesiunilor.
-# Se curata doar gunoiul evident (fisiere temporare recunoscute), niciodata folderele de proiect.
-for f in os.listdir(WORK):
-    if f in (CTXNAME,CTXNAME+".tmp","logs","archive"): continue
-    # sterge doar fisiere temporare clar recunoscute (nu foldere, nu surse)
-    if os.path.isfile(os.path.join(WORK,f)) and (
-        f.endswith(".tmp") or f.endswith(".log.tmp") or f.startswith(".tmp_")):
-        try: os.remove(os.path.join(WORK,f))
-        except Exception: pass
-os.chdir(WORK)              # everything the agent does (files, projects) lives here, persistently
-K=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"key.txt")).read().strip()
+CTXNAME="context.json"       # conversation history: lives permanently in the working folder (temp)
+for f in os.listdir(WORK):   # clean working folder on every startup
+    if f in (CTXNAME,CTXNAME+".tmp","logs","archive"): continue   # the context, the logs and the archives are NOT deleted
+    try: os.remove(os.path.join(WORK,f)) if os.path.isfile(os.path.join(WORK,f)) else shutil.rmtree(os.path.join(WORK,f))
+    except Exception: pass
+os.chdir(WORK)              # everything the agent does (files, tests, temp) lives here
+K=open(os.path.expanduser("~/.deepseek_agent_key")).read().strip()
 MEM=os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md")
 def mem(txt=None):
     if txt is None:
@@ -338,6 +313,11 @@ def mem_lint(txt):
             if not _re.match(r"^##\s+\d{4}-\d{2}-\d{2}\s+-\s+\S+", h):
                 out.append((0, "suspicious heading format: " + h[:60]))
     for l in body:
+        # ORICE linie de corp trebuie sa fie o lectie cu prefix valid.
+        # Altfel text liber (observatii, paragrafe) intra in memorie fara nicio validare.
+        if not l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")):
+            out.append((0, "no valid prefix (TRAP:/OK:/DEAD:/P:/PREVENT:): " + l[:60]))
+            continue
         for rx, why in FORBID:
             if _re.search(rx, l, _re.I):
                 out.append((0, "forbidden [" + why + "]: " + l[:60]))
@@ -403,13 +383,12 @@ LBLW=lambda: max(18,min(24,CS()-40))   # label box: tighter, so the timers/log/s
 DURW=7   # widest _dur() value: "1:00:00" (7 chars)
 REFW=10  # widest log file name in the step line (longer names end with …)
 SZW=8    # width of the output-size box (and of the phase box in the live line)
-TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","6000"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
-CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","1000000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
+TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","1800"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
+CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","120000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
 CTXKEEP=24         # how many recent messages are never compressed
 LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted between sessions)
 ARCH=os.path.join(WORK,"archive")     # COMPLETE snapshots of the history, before every compression
 VERBOSE=[os.environ.get("AGENT_VERBOSE")=="1"]   # /verbose: re-prints code + output in the terminal
-NOSPIN=[os.environ.get("AGENT_NOSPIN")=="1"]     # /nospin: NO live/redrawn line at all (clean scrollback on a phone)
 THINKMIN=float(os.environ.get("AGENT_THINKMIN","0"))   # MINIMUM time "Thinking..." stays on screen (0 = the printed time is exactly the measured one). It never delays a tool step.
 def _cut(o,ref=None):
     """What goes INTO THE WINDOW: the first TOOLMAX*3/4 chars + the last TOOLMAX/4 chars (the tail is where
@@ -417,9 +396,7 @@ def _cut(o,ref=None):
     Nothing is lost: the original is at `ref` and can be read at any time with a tool call."""
     if len(o)<=TOOLMAX: return o
     h,t=TOOLMAX*3//4,TOOLMAX//4
-    _tot=len(o)
-    mid=("[... "+str(_tot-TOOLMAX)+" chars omitted here (NOT LOST). Read them with: "
-         +"read path="+(ref if ref else "<file>")+" offset="+str(h)+" limit="+str(TOOLMAX)+" (then increase offset to continue) ...]")
+    mid="[... "+str(len(o)-TOOLMAX)+" chars in the middle, NOT LOST: the complete text "+(("in "+ref) if ref else "in the complete output")+" ...]"
     return o[:h]+"\n"+mid+"\n"+o[-t:]
 def _store(o):
     """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None)."""
@@ -587,28 +564,7 @@ def _live(i):
     lbl=_lbl()
     if lbl and lbl.strip("- "): st+="  "+lbl+N
     st+="  "+SD+"\u23f1"+N+" "+GY+cur+N
-    return _clamp(st)
-
-def _clamp(s):
-    """Termux/Android: a line longer than the terminal wraps onto a second row, and a LIVE
-    line redrawn with \r then smears the scrollback when the operator scrolls up. So the live
-    line is HARD-CLAMPED to (width-1) visible columns. Control sequences (\33[...m colours)
-    are skipped while counting, so the colour codes never get cut in the middle."""
-    try: w=os.get_terminal_size().columns
-    except Exception: return s
-    if w<=8: return s
-    lim=w-1
-    out=[]; vis=0; i=0; n=len(s)
-    while i<n:
-        if s[i]=="\33":
-            j=i+1
-            # copy the whole escape sequence untouched
-            while j<n and not ("A"<=s[j]<="Z" or "a"<=s[j]<="z"):
-                j+=1
-            out.append(s[i:j+1]); i=j+1; continue
-        if vis>=lim: break
-        out.append(s[i]); vis+=1; i+=1
-    return "".join(out)+("\33[0m" if "\33" in s else "")
+    return st
 def _lbl(col=False):
     """The exact label of the RUNNING step, with its own colour. Written once by _spin and reused by the
     final line, so the live line and the finished line can never show different words."""
@@ -620,7 +576,7 @@ def _spin(fn,*a,phase="tool",desc="",col=None):
     the model answer, 'step NN - <what the step really does>' once the tool runs. One line, no flicker."""
     if phase: LIVE.update(phase=phase,desc=desc,col=col,n=TASK["steps"]+1,t=time.time())
     t0=time.time()
-    if VERBOSE[0] or NOSPIN[0] or not sys.stdout.isatty():
+    if VERBOSE[0] or not sys.stdout.isatty():
         r=fn(*a); dt=time.time()-t0; LIVE["dt"]=dt
         if phase=="think": TASK["think"]+=dt
         elif phase=="tool": TASK["tool"]+=dt
@@ -717,7 +673,7 @@ def mstats(s):
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 AUTOLEARN={"on":True,"min_steps":5}
-AL_TIMEOUT=int(os.environ.get("DS_AL_TIMEOUT","45"))   # auto-learn: max seconds to WAIT for the decision (never block the agent)   # auto-learn after a finished task: ON by default, disable via /auto-learn off
+AL_TIMEOUT=int(os.environ.get("DS_AL_TIMEOUT","45"))   # auto-learn: max secunde de asteptare pentru decizie (nu blocheaza agentul)   # auto-learn after a finished task: off by default, opt-in via /auto-learn on
 AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a Linux desktop "
  "(this machine, headless shell, no GUI). You act through the python/bash/smart/look tools and can touch "
  "the whole filesystem and system. Look at the task that just finished above and decide whether it taught "
@@ -739,7 +695,6 @@ AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a L
  "`KEY: what -> cause -> fix/verify`, KEY one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 300 chars, no markdown, no quotes. "
  "Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time. "
  "  - If there is genuinely NOTHING reusable or it is not about this machine: reply with the single word: NO.")
-
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -765,8 +720,7 @@ TC=E+"[38;5;216m";TCB=E+"[38;5;180;48;5;236m"   # TC=calling a tool (warm amber)
 T=[{"type":"function","function":{"name":"python","description":"Run Python 3 code on this Linux machine, returns stdout/stderr. Use stdlib only. BEST for: structured parsing (JSON/INI/KeyValues), logic, aggregations in memory, complex data structures, anything needing decisions. SLOW for multi-million-line streams; for those use `bash` or the `smart` router.","parameters":{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}}},
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
-   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android hardware/OS access. Only available on the Android build. FULL generic access to the whole Android SDK via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl"},"action":{"type":"string","description":"the sub-action, e.g. list|read|photo|get|set|say|launch"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request"}},"required":["tool"]}}},
-   {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
+   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
   "1) `python`: run Python 3 code (stdlib only). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
@@ -776,35 +730,7 @@ TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps):
   "Never pipe a huge file through python line by line if a single awk/grep does it; never parse JSON with grep when python json.loads is right there. "
   "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - that was measured at 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
 
-# --- FORMATARE OUTPUT (Android: terminalul nu randeaza tabele corect) ---
-FMT=("OUTPUT FORMAT: NEVER draw tables, ASCII boxes or column-aligned layouts - the terminal "
-  "on this device does not align them and they come out broken. ALWAYS use plain LISTS instead: "
-  "`- item` for bullets or `1. item` for numbered steps. For key/value data write `key: value` "
-  "on its own line. Keep lines short (wrap manually under ~70 chars). Do NOT use `|` pipes to "
-  "build columns. Simple lists, blank lines between blocks, and short prose paragraphs only.")
-
-# --- GHID ACCES ANDROID COMPLET (reflection) ---
-ANDROID_GUIDE=("ANDROID ACCESS: on this device you have the `android` tool, which gives FULL generic access "
- "to the whole Android SDK through reflection - no root needed. You are NOT limited to a fixed list: "
- "you can call ANY public class, method or field. "
- "HOW: android(tool=\"eval\", params={\"expr\":{...}}) where expr is one of: "
- "{\"op\":\"services\"} to list ALL system services (name + available); "
- "{\"op\":\"info\",\"target\":\"class:android.hardware.SensorManager\",\"filter\":\"Sensor\"} to list methods+fields of any class; "
- "{\"op\":\"call\",\"target\":\"svc:sensor\",\"method\":\"getSensorList\",\"args\":[0]} to call on a system service; "
- "{\"op\":\"call\",\"target\":\"class:android.os.Environment\",\"static\":true,\"method\":\"getExternalStorageDirectory\"}; "
- "{\"op\":\"new\",\"target\":\"class:android.media.MediaRecorder\"} to create an object (returns id, refer to it as obj:<id>); "
- "{\"op\":\"get\",\"target\":\"svc:wifi\",\"field\":\"mService\"} or {\"op\":\"set\",\"target\":\"obj:o0\",\"field\":\"x\",\"value\":1}; "
- "{\"op\":\"free\",\"id\":\"o0\"} or {\"op\":\"objs\"}. "
- "TARGETS: svc:NAME (system service), class:FQCN, obj:ID (kept object), ctx (the Application context), app, str:X, int:N, bool:true, null. "
- "Use action=\"services\" to see every service (sensor, camera, location, connectivity, wifi, audio, clipboard, notification, "
- "power, battery, vibrator, telephony, usb, bluetooth, nfc, display, window, input, keyguard, storage, activity, alarm, job, "
- "download, biometric, device_policy, media_projection and ~300 more). Use action=\"info\" to discover a class's methods first. "
- "For complex APIs (camera2, MediaRecorder, ContentResolver) go step by step: info -> new/call -> keep the object -> call further. "
- "Shortcuts also exist (action=sensors/camera/location/battery/clipboard/notify/vibrate/tts/volume/wifi/device/apps/intent/settings) "
- "but eval is the POWERFUL path: prefer it whenever a shortcut does not cover your need. "
- "Everything the Android SDK exposes to an app, you can reach.")
-
-M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
+M=[{"role":"system","content":TOOLGUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
   "WHILE WORKING (mandatory, never skip): BEFORE EVERY python tool call you MUST put a FULL, COMPLETE sentence in the `content` field, in the operator\u2019s language, telling what you are about to do and why. There is NO word limit and NO character limit: NEVER cut, shorten or abbreviate it with \u201c...\u201d or \u201c\u2026\u201d - the operator must always see the WHOLE sentence he needs to follow you. NEVER send a tool call with empty content. Markdown is NOT allowed in that sentence. "
   "VISION: you have a second tool, `look(path, prompt)` - it sends an IMAGE file to the same model with THINKING ENABLED and returns what is REALLY in it. Use it whenever the operator asks you to see/analyze a screen, a screenshot, a chart or a photo: first capture it (e.g. `xwd -root -out shot.xwd` then convert with ffmpeg to png), then call look on the png. Never guess what an image contains - look at it. "
   "STEP LABELS: the FIRST line of every python tool call is a comment (lowercase) - the terminal prints it as the label of that step, so write WHAT the step does, clearly and COMPLETELY, in the language of the operator (Romanian), never `# step 1` or `# test`. There is NO word limit: write the full label, do not cut it. "
@@ -813,7 +739,7 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
   "FINAL MESSAGE: it is rendered as FULL rich Markdown in a 256-colour terminal, so use it heavily and correctly: headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, ==highlight==, > blockquote, --- rules, numbered and bulleted lists, task lists (- [x]), links [text](url), tables with | pipes |, and fenced code blocks with a language tag. Write the final answer in Romanian, complete and well structured."}]
-CTX=os.path.join(WORK,CTXNAME)   # the history lives in the working folder (workspace), permanently
+CTX=os.path.join(WORK,CTXNAME)   # the history lives in the working folder (temp), permanently
 LEGACY=os.path.join(os.path.dirname(os.path.abspath(__file__)),"context.json")  # the old location (next to the script)
 def _migrate_ctx():
     """If the history still exists next to the script (the old location) and we do not already have one
@@ -997,7 +923,7 @@ def bash(cmd, cwd):
     """Ruleaza o comanda shell (bash -lc) in propriul grup de procese; Ctrl+C omoara doar acest
     tool. Intoarce stdout+stderr combinat, trunchiat la 8000 de caractere (ca la python)."""
     o=tempfile.TemporaryFile(dir=WORK)
-    p=subprocess.Popen(SHELL[0]+(cmd,),cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    p=subprocess.Popen(["bash","-lc",cmd],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
     try:
         p.wait(timeout=600)
     except KeyboardInterrupt:
@@ -1015,41 +941,6 @@ def run_bash_tool(cmd):
     if _looks_like_error(o): TASK["err"]=True
     return cut
 
-def run_read_tool(path, offset=0, limit=4000):
-    """Citeste un FISIER (ex. un log de tool trunchiat) de la un offset, cu o limita.
-    Nu incarca tot in context: agentul poate pagina prin fisiere mari citind bucati.
-    Intoarce textul cerut + un header cu intervalul si cate caractere mai sunt."""
-    import os as _os
-    try:
-        offset=int(offset); limit=int(limit)
-    except Exception:
-        offset, limit = 0, 4000
-    if limit <= 0: limit = 4000
-    if limit > 20000: limit = 20000
-    if offset < 0: offset = 0
-    try:
-        p = path if _os.path.isabs(path) else _os.path.join(WORK, path)
-        tot = _os.path.getsize(p)
-        with open(p, "r", encoding="utf-8", errors="replace") as f:
-            f.seek(offset)
-            chunk = f.read(limit)
-        n = len(chunk)
-        end = offset + n
-        hdr = "[read "+ _os.path.basename(p) +" | bytes "+str(offset)+"-"+str(end)+" of "+str(tot)
-        if end < tot:
-            hdr += " | MORE: call read path="+path+" offset="+str(end)+" limit="+str(limit)
-        else:
-            hdr += " | EOF"
-        hdr += "]\n"
-        o = hdr + chunk
-    except Exception as e:
-        o = "(read failed: "+str(e)+")"
-    n=TASK["steps"]+1
-    dsc="read: "+_short(str(path),58); col=HCLR[sum(map(ord,dsc))%len(HCLR)]
-    TN[0]+=1; TASK.update(steps=n,chars=TASK["chars"]+len(o))
-    _show_step("read "+str(path)+(" @"+str(offset) if offset else ""), o, n)
-    return o
-
 def _looks_like_error(o):
     """Cheap heuristic: does this tool output contain a FAILURE (traceback, non-zero exit, an
     ERROR/EXCEPTION line)? Used ONLY by auto-learn to decide whether a task is worth learning from.
@@ -1060,38 +951,8 @@ def _looks_like_error(o):
     if re.search(r"\b(error|exception|failed|non-zero exit status|command not found|no such file)\b", lo): return True
     return False
 
-def run_android_tool(tool, action, params):
-    """Ruleaza un tool nativ Android prin bridge-ul Kotlin (socket local).
-    Intoarce textul (JSON compact) trimis modelului, cu acelasi contor de pasi."""
-    import importlib.util as _iu
-    global _ABRIDGE
-    try:
-        _ABRIDGE
-    except NameError:
-        _ABRIDGE=None
-    if _ABRIDGE is None:
-        try:
-            sp=_iu.spec_from_file_location("android_bridge", os.path.join(os.path.dirname(os.path.abspath(__file__)),"android_bridge.py"))
-            _ABRIDGE=_iu.module_from_spec(sp); sp.loader.exec_module(_ABRIDGE)
-        except Exception as e:
-            _ABRIDGE=False
-    if not _ABRIDGE:
-        o="android tool unavailable: bridge module not loaded"
-        _show_step("android "+tool+(" "+action if action else ""), o, TASK["steps"])
-        return o
-    dsc="android: "+tool+("."+action if action else "")
-    try:
-        o=_spin(lambda: json.dumps(_ABRIDGE.call(tool, action, **params), ensure_ascii=False, indent=1),
-                phase="tool", desc=dsc, col=HCLR[sum(map(ord,dsc))%len(HCLR)])
-    except Exception as e:
-        o="android error: "+str(e)
-    TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o))
-    _show_step(dsc+"  <- "+json.dumps(params, ensure_ascii=False)[:60], o, TASK["steps"])
-    return o[:8000]
-
-
-
 def call_tool(c):
+
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
     endpoint (thinking ON). Both increment the SAME step counter and print the SAME column
     layout, so the operator sees every step the same way. Returns what goes to the model."""
@@ -1103,8 +964,6 @@ def call_tool(c):
         return o
     if fn=="bash":
         return run_bash_tool(a.get("cmd",""))
-    if fn=="read":
-        return run_read_tool(a.get("path",""), a.get("offset",0), a.get("limit",4000))
     if fn=="smart":
         cmd=a.get("cmd","") or ""; code=a.get("code","") or ""
         eng,why=route(cmd,code)
@@ -1115,32 +974,31 @@ def call_tool(c):
             return run_tool(code)
         # fallback: ce a dat modelul, indiferent de engine
         return run_tool(code) if code.strip() else run_bash_tool(cmd)
-    if fn=="android":
-        return run_android_tool(a.get("tool",""), a.get("action",""), a.get("params",{}) or {})
     return run_tool(a.get("code",""))
-APITIMEOUT=int(os.environ.get("DS_TIMEOUT","90"))    # seconds per attempt (was a hard 600 = 10 min hang)
-APITRIES=int(os.environ.get("DS_TRIES","3"))          # attempts before giving up, with backoff
-def ask(messages=None, tools=None, model=None):
-    """Call the API with a sane timeout and retries. Returns (message, usage) or (None,None).
-    A hung API must NEVER freeze the agent for 10 minutes: 3 tries x APITIMEOUT, backoff 2s/3s."""
+def ask(messages=None, tools=None):
     _msgs = M if messages is None else messages
     _tools = T if tools is None else tools
-    _model = model or os.environ.get("DS_MODEL","deepseek-flash")
-    body=json.dumps({"model":_model,"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode()
-    last=None
-    for _try in range(1, APITRIES+1):
-        r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=body,headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
-        try:
-            d=json.loads(urllib.request.urlopen(r,timeout=APITIMEOUT).read())
-            return d["choices"][0]["message"], d.get("usage")
-        except Exception as e:
-            last=e
-            _detail=str(getattr(e,"read",lambda:b"")())[:200] or str(e)[:200]
-            if _try < APITRIES:
-                print(R+" [API] try "+str(_try)+"/"+str(APITRIES)+" failed: "+e.__class__.__name__+" "+_detail+" - retrying"+N)
-                time.sleep(2*_try)
-    print(R+" [API] GAVE UP after "+str(APITRIES)+" tries ("+str(APITIMEOUT)+"s each): "+last.__class__.__name__+" "+str(getattr(last,"read",lambda:b"")())[:200]+N)
-    return None,None
+    r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode(),headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
+    try:
+        d=json.loads(urllib.request.urlopen(r,timeout=600).read()); return d["choices"][0]["message"], d.get("usage")
+    except Exception as e:
+        print(R+" [API] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]+N);return None,None
+
+
+def ask_short(messages, timeout=None):
+    """Apel API SCURT, fara tools, cu timeout mic: folosit doar de auto-learn ca sa NU blocheze
+    agentul. Daca nu raspunde in timeout, intoarce (None,None) iar auto-learn renunta elegant."""
+    _to = AL_TIMEOUT if timeout is None else timeout
+    r=urllib.request.Request("https://api.deepseek.com/chat/completions",
+        data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":messages,
+        "tools":[],"max_tokens":2048,"thinking":{"type":"disabled"}}).encode(),
+        headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
+    try:
+        d=json.loads(urllib.request.urlopen(r,timeout=_to).read()); return d["choices"][0]["message"], d.get("usage")
+    except Exception as e:
+        print(R+" [auto-learn API] "+e.__class__.__name__+N); return None, None
+
+
 def do_learn(trigger="/learn"):
     """Shared /learn routine: used by the manual /learn command AND by auto-learn.
     `trigger` is only a label shown in the task footer (e.g. '/learn' or 'auto-learn')."""
@@ -1227,39 +1085,34 @@ def do_learn(trigger="/learn"):
 def auto_learn_check(task_steps, had_error):
     """V4 hybrid auto-learn, run right AFTER a task finishes (only if AUTOLEARN['on']).
     Filter (cheap): only bother on a non-trivial task - enough steps OR an error occurred.
-    Decision (model): ONE short call, no tools. The model replies EITHER "NO" (nothing reusable)
-    OR one dense lesson line (TRAP:/OK:/DEAD:/P:/PREVENT: ...). A valid, non-duplicate line is
-    APPENDED STRAIGHT TO MEMORY (no full re-analysis), so subtle lessons (a misleading command
-    without root, a working path, a proven dead end) are not lost. Anything unexpected falls
-    back to the old do_learn() path. Returns nothing; prints what it did. /auto-learn toggles."""
+    Decision (model): ONE short call (no tools, WITH the task history so it knows what just happened).
+    The model replies EITHER "NO" OR one or more dense lesson lines (TRAP:/OK:/DEAD:/P:/PREVENT:).
+    Each candidate line goes INDIVIDUALLY through mem_lint (format + value + dedup); the accepted
+    lines are APPENDED STRAIGHT TO MEMORY (no full re-analysis). Anything unexpected falls back to
+    do_learn(). A SHORT timeout means auto-learn can never block the agent. /auto-learn toggles."""
     if not AUTOLEARN["on"]:
         return
     if task_steps < AUTOLEARN["min_steps"] and not had_error:
         return   # task prea mic: iesim silentios (fara mesaj in output)
-    # DECIZIE: un singur mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
-    # la ce se refera "the task that just finished above" si raspunde NO orbește).
+    # DECIZIE: un mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
+    # la ce se refera "the task that just finished above" si raspunde NO orbestte).
     # TIMEOUT SCURT: auto-learn NU trebuie sa blocheze agentul. Daca API-ul e lent, renuntam
-    # elegant (taskul e deja terminat, memoria ramane neatinse) si oprim pentru tura asta.
-    _orig_to, _orig_tries = APITIMEOUT, APITRIES
-    APITIMEOUT, APITRIES = AL_TIMEOUT, 1
+    # elegant (taskul e deja terminat, memoria ramane neatinse).
     try:
-        _probe = ask(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
+        _probe, _u = ask_short(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}])
     except Exception as e:
-        APITIMEOUT, APITRIES = _orig_to, _orig_tries
         print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
         return
-    finally:
-        APITIMEOUT, APITRIES = _orig_to, _orig_tries
     _raw = ""
     try:
-        _raw = (((_probe[0] if _probe else None) or {}).get("content") or "").strip()
+        _raw = (((_probe if _probe else None) or {}).get("content") or "").strip()
     except Exception:
         pass
     if not _raw:
         print(G+"   [auto-learn] decision call returned empty - skipped."+N)
         return
     # Noul format: fie "NO", fie UNA SAU MAI MULTE linii de lectie (TRAP:/OK:/DEAD:/P:/PREVENT:),
-    # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + Android).
+    # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + dedup).
     _KEYS = ("TRAP:","OK:","DEAD:","P:","PREVENT:")
     _cand = []
     for _ln in _raw.split("\n"):
@@ -1298,17 +1151,17 @@ def auto_learn_check(task_steps, had_error):
         # duplicat?
         if _norm(_ln) in _memnorm:
             _skipped.append(("duplicate", _ln)); continue
-        # validare stricta (format + Android + VALOARE)
+        # validare stricta (format + VALOARE)
         try:
-            _issues, _ = mem_lint(_ln)
+            _issues, _ = mem_lint("## auto (session)\n"+_ln+"\n")
         except Exception:
             _issues = []
         _why = None
         for _w in _issues:
             _txt = _w[1]
-            if _w[0] and _txt.strip() == _ln: _why = "too long"
-            elif _txt.startswith("forbidden"): _why = _txt.split("]:",1)[0].replace("forbidden [","")
+            if _txt.startswith("forbidden"): _why = _txt.split("]:",1)[0].replace("forbidden [","")
             elif _txt.startswith("low value"): _why = "low value"
+            elif _txt.startswith("no valid prefix"): _why = "no prefix"
         if _why:
             _skipped.append((_why, _ln)); continue
         _saved.append(_ln)

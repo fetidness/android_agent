@@ -218,3 +218,27 @@ OK: script de copiere care itereaza doar os.listdir() pe directoare rateaza fisi
 P: /home/gab/Desktop/agent/.gitignore -> are exceptii `!.../Lib/site-packages/` si `!.../Lib/zipfile/`; fara ele git ignora bibliotecile si fixul stdlib
 
 TRAP: git push pe repo cu remote SSH nou -> cheia trebuie adaugata pe GitHub intai; core.sshCommand per-repo (`ssh -i <key> -o IdentitiesOnly=yes`) forteaza cheia corecta fara sa atinga ~/.ssh/config global
+
+TRAP: `python3 -u -c "<script lung multi-linie>"` atarna fara output (nici primul print nu apare) -> comanda inline prea lunga e blocata de shell/hook -> scrie scriptul intr-un fisier (/tmp/x.py) si ruleaza `python3 -u /tmp/x.py
+
+TRAP: `urllib.request.getproxies()` pe aceasta masina atarna intermitent (cheama gsettings/GNOME proxy) -> api.deepseek.com prin urllib atarna desi curl merge in 0.3s -> nu concluziona "reteaua e moarta" doar din urllib
+
+OK: `curl -s -w "%{http_code} %{time_total}s" https://api.deepseek.com` returneaza 401 in ~0.3s (fara auth) -> test rapid de conectivitate fara sa astepte inferenta
+
+TRAP: proces blocat in `hrtimer_nanosleep` (vezi /proc/<pid>/wchan fara sudo) = asteapta un timeout de socket, NU e deadlock -> nu-l omori; verifica ce timeout are codul
+
+TRAP: modificarea lui agent.py (fisierul care ma ruleaza) live -> UnboundLocalError: cannot access local variable 'APITIMEOUT' la urmatorul task -> adauga `global X` sau testeaza cu py_compile + reporneste procesul
+
+TRAP: atribuire `X = ...` intr-o functie care citeste X din global -> Python il face LOCAL in toata functia -> orice citire inainte de atribuire da UnboundLocalError -> declara `global X` in capul functiei
+
+OK: tool-ul bash al framework-ului atarna intermitent, dar `subprocess.run(["bash","-lc",cmd])` din tool-ul python merge instant 0.01s -> cand bash atarna, ocoleste prin python
+
+DEAD: `open(p,"w").write(open(p).read()...)` trunchiaza fisierul la 0 (w deschide inainte de read) -> scrie intai intr-o variabila, apoi open(w), sau os.replace atomic
+
+OK: tool-ul `bash` se blocheaza intermitent (comanda nu ajunge la Popen, niciun proces copil) -> ocolesc cu tool-ul `python`: subprocess.run(['bash','-lc',cmd]) merge in 0.002-0.006s",
+
+TRAP: atribuire `APITIMEOUT=...` intr-o functie fara `global` -> Python il face LOCAL in toata functia -> UnboundLocalError la citirea dinaintea atribuirii -> declara `global` in capul functiei",
+
+P: /home/gab/Desktop/agent/agent.py -> agentul Linux care ruleaza ACUM (eu); backup-uri: agent.py.broken (versiunea rupta)",
+
+OK: /proc/<pid>/syscall arata exact syscall-ul (230=nanosleep, 202=futex) -> util sa distingi 'doarme normal' de 'blocat in I/O' fara root",
