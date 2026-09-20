@@ -180,3 +180,5 @@ TRAP: nvidia-smi/lspci show GPU but no driver -> CUDA ops fail silently/absent -
 OK: `find / -name '*.conf'` as non-root floods stderr with permission-denied noise -> obscures real matches -> use `find /path -name '*.conf' 2>/dev/null` or restrict to readable dirs.
 
 P: pipe/exec tool output may be truncated with no error -> verify by counting lines or grepping expected markers -> re-run with narrower scope if missing.
+
+TRAP: `snap list` / `snap info` on classic distros without snapd installed returns empty or not-found, misleading you into thinking a package isn't available -> verify `which snap` or `dpkg -l snapd` first
