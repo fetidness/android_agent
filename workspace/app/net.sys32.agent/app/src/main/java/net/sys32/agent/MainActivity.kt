@@ -122,8 +122,13 @@ class MainActivity : AppCompatActivity() {
             typeface = mono
             setBackgroundColor(Color.TRANSPARENT)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            maxLines = 5
-            setPadding(12, 12, 12, 12)
+            maxLines = 6
+            minLines = 1
+            setSingleLine(false)
+            // padding vertical generos: altfel ultima linie de text e taiata pe marginea de jos
+            setPadding(dp(14), dp(16), dp(14), dp(16))
+            // textul se aseaza pe inaltimea lui, caseta creste pana la maxLines
+            includeFontPadding = true
             // ENTER trimite taskul; SHIFT+ENTER (sau Enter cu Alt) baga linie noua.
             setOnKeyListener { _, keyCode, event ->
                 if (keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN) {
@@ -210,7 +215,10 @@ class MainActivity : AppCompatActivity() {
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             val topPad = maxOf(bars.top, cutout.top) + extraTop
-            val bottom = maxOf(bars.bottom, ime.bottom)
+            // cand tastatura e deschisa, lasam o marja in plus ca ultimul rand al casetei de
+            // scris sa NU fie lipit/acoperit de tastatura (mai ales la text pe mai multe randuri)
+            val imeLift = if (ime.bottom > 0) ime.bottom + dp(6) else 0
+            val bottom = maxOf(bars.bottom, imeLift)
             v.updatePadding(top = topPad, bottom = bottom)
             insets
         }
@@ -367,7 +375,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v40")
+        val stamp = File(filesDir, ".assets_v41")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.

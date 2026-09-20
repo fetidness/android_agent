@@ -1,0 +1,85 @@
+=== functii definite ===
+36:def _empty(m):
+40:def _compact(s):
+51:def _paint(line):
+73:def _box(info,body):
+78:def _sp(m):
+90:def _in(s): return SPAN.sub(_sp,s)
+91:def _vislen(s):
+94:def _tbl_cells(line):
+110:def _is_sep(line):
+113:def _tbl_align(cells):
+115:def _tbl_row(cells,w,al):
+125:def _wrap(s,W):
+138:def _table(lines):
+192:def _f(m):
+204:def _chunk(p):
+219:def render(t):
+243:def mem(txt=None):
+250:def _mem_norm(s):
+256:def mem_dups(before, after):
+293:def _lesson_value(line):
+309:def mem_lint(txt):
+357:def _real_cols():
+389:def CS():
+414:def _cut(o,ref=None):
+424:def _store(o):
+432:def _tokm(m):
+436:def ctx_tokens(): return sum(_tokm(m) for m in M)
+437:def compact_history(force=False):
+472:def _clk(t):
+476:def _dur(t):
+483:def _short(s,n=60):
+487:def _op_of(code):
+531:def phrase_op(op=""):
+548:def brief(code):
+552:def _task_head(q=""):
+564:def _task_foot(stare="done"):
+575:def _live(i):
+592:def _clamp(s):
+612:def _lbl(col=False):
+618:def _spin(fn,*a,phase="tool",desc="",col=None):
+643:def run_tool(code):
+654:def _fisier(code):
+673:def _operatie(code):
+687:def _step_line(code,n):
+697:def _show_step(code,cut,n):
+711:def mstats(s):
+744:def last_learn_idx():
+817:def _migrate_ctx():
+830:def save_ctx():
+838:def load_ctx():
+860:def _K(n):
+866:def print_usage_compact(usage):
+884:def flush_task_tokens():
+898:def complete_pending(msgs):
+914:def refresh():
+921:def vision(path,prompt,max_tokens=None):
+945:def py(c,cwd):
+972:def route(cmd="", code=""):
+995:def bash(cmd, cwd):
+1008:def run_bash_tool(cmd):
+1017:def run_read_tool(path, offset=0, limit=4000):
+1052:def _looks_like_error(o):
+1062:def run_android_tool(tool, action, params):
+1093:def call_tool(c):
+1120:def ask(messages=None, tools=None):
+1128:def do_learn(trigger="/learn"):
+1211:def auto_learn_check(task_steps, had_error):
+
+=== ultimele 15 linii din agent-original.py ===
+                o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
+                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
+        else:
+            print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
+            print(_task_foot())
+            auto_learn_check(TASK["steps"], TASK["err"])
+            flush_task_tokens()
+            break
+    except KeyboardInterrupt:
+        LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
+        print("\r\33[K",end="",flush=True)
+        print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
+        while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
+        complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
+save_ctx()   # on /exit or Ctrl+D the history is already on disk

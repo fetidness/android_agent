@@ -206,3 +206,5 @@ TRAP: read-only shell probe `nvidia-smi`/`systemctl status` can return empty/bla
 TRAP: bare `git diff` on a repo with only staged changes shows empty output -> changes are in index, not worktree -> verify with `git diff --cached` instead
 
 TRAP: `git log -1 --format=%cd` in shallow clone shows only tip date, not repo age -> looks like recent project -> use `git log --reverse` or check tag count before assuming maturity
+
+TRAP: `cat /proc/net/dev` without root works but reading `/proc/<pid>/net/dev` needs PTRACE/root -> misleading empty/permission result -> use root or `/proc/net/dev` for interface stats.

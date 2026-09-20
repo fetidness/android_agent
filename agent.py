@@ -1306,3 +1306,90 @@ def auto_learn_check(task_steps, had_error):
 
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
+print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
+print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
+while 1:
+    try: q=input(U+" TU > "+IN).strip()
+    except (EOFError,KeyboardInterrupt): print(N);break
+    if q in ("/exit","/quit",""): break
+    if q in ("/help","/?"):
+        _al="ON" if AUTOLEARN["on"] else "OFF"
+        print(G+"   COMMANDS"+N)
+        print(G+"     /learn              update memory now (manual learning)"+N)
+        print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
+        print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
+        print(G+"     /ctx                context window + archives/logs on disk"+N)
+        print(G+"     /compact            compress the context now"+N)
+        print(G+"     /verbose            toggle full code/output of each step"+N)
+        print(G+"     /reset              erase the conversation history"+N)
+        print(G+"     /help, /?           this list"+N)
+        print(G+"     /exit, /quit        leave (empty line too)"+N)
+        print(G+"   "+(HINT_LINE)+N)
+        continue
+    if q=="/ctx":
+        _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
+        _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
+        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok | compress threshold "+_K(CTXBUDGET)+"tok (0=off) | steps kept intact: last "+str(CTXKEEP)+N)
+        print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
+    if q=="/compact":
+        ok=compact_history(force=True); save_ctx()
+        print(G+"   [compact] "+("done, context compressed WITHOUT loss (the original is in archive/)" if ok else "nothing to compress / archiving failed - I touched nothing")+N); continue
+    if q=="/verbose":
+        VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
+    if q=="/mem":
+        _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
+    if q=="/reset":
+        M[:]=M[:1]; save_ctx()
+        print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
+    if q.startswith("/auto-learn"):
+        arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
+        if arg in ("on","1","yes"):
+            AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
+        elif arg in ("off","0","no"):
+            AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
+        else:
+            print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
+        continue
+    if q=="/learn":
+        do_learn("/learn"); continue
+    M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
+    print(_task_head(q))
+    try:
+     tries=0
+     while 1:
+        m,u=_spin(ask,phase="think");print_usage_compact(u)
+        if m is None: M.pop();print(_task_foot("interrupted: API error"));break
+        if _empty(m):
+            tries+=1
+            if tries<=EMPTY_RETRY:
+                print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
+                continue
+            print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
+            print(_task_foot("stopped: empty answer"));break
+        tries=0
+        M.append(m);save_ctx()
+        if m.get("tool_calls"):
+            _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
+            _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
+            _txt=str(m.get("content") or "").strip() or _fb
+            # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
+            if _txt:
+                _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
+                if _clean: print(OF+"   "+N+C+_clean+N)
+            for c in m["tool_calls"]:
+                code=json.loads(c["function"]["arguments"] or "{}").get("code","")
+                o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
+                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
+        else:
+            print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
+            print(_task_foot())
+            auto_learn_check(TASK["steps"], TASK["err"])
+            flush_task_tokens()
+            break
+    except KeyboardInterrupt:
+        LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
+        print("\r\33[K",end="",flush=True)
+        print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
+        while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
+        complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
+save_ctx()   # on /exit or Ctrl+D the history is already on disk

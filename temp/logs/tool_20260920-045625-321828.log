@@ -1,0 +1,29 @@
+=== git log recent ===
+1a1df3b Interzis tabelele pe telefon: prompt dur + conversie automata la afisare.
+7f223eb Portat sistemul auto-learn imbunatatit in scriptul Linux (agent.py de pe desktop).
+fed5b19 memory: lectie noua (git diff gol pe repo cu doar staged -> foloseste git diff --cached)
+dd96362 Auto-learn: extractie multipla + filtru de VALOARE (balans calitate/cantitate).
+88b4e51 Verificat auto-learn pe al doilea task complex (media/biometrie).
+73d40ca Auto-learn: FIX major - modelul nu vedea taskul + limite de lungime inconsistente.
+8fb5493 Trunchiere: TOOLMAX 1800->6000 + tool nou 'read' (paginare) + mesaj cu comanda de continuare.
+29da30f Auto-learn: filtrat strict pe Android + ENFORCE (nu doar warning).
+4bdcefb Ghid actualizat cu op=subclass (DexMaker) + testat pe device.
+435ec2c SUBCLASARE la runtime prin DexMaker: op=subclass (primitiva 4).
+e1fc266 Documentate primitivele in ghidul agentului (proxy + referinte obiecte + await).
+0ba6b81 Primitive generale de acces (proxy interfețe + referințe obiecte + evenimente async).
+7f69beb Documentatie completa de dezvoltare (md) + actualizare memorie.
+284a6f7 Iconita aplicatiei: prompt de terminal (sageata albastra '>' + linie alba '_') pe fundal inchis rotunjit. Generata din SVG (rsvg-convert) in toate densitatile mdpi..xxxhdpi: adaptive foreground + legacy + round.
+65342d5 Comanda /where: arata unde traieste totul (home, workspace, memory, context, logs, archive) + nr fisiere. Daca ruleaza din sandbox (storage extern nescriibil) afiseaza avertisment. Trebuie mentionata si in /help. assets v32.
+
+=== git status ===
+ M agent.py
+ M memory.md
+ M workspace/app/net.sys32.agent/app/src/main/java/net/sys32/agent/MainActivity.kt
+?? agent-original.py
+?? temp/
+
+=== git diff stat ===
+ agent.py                                                             | 2 +-
+ memory.md                                                            | 2 ++
+ .../app/src/main/java/net/sys32/agent/MainActivity.kt                | 5 ++++-
+ 3 files changed, 7 insertions(+), 2 deletions(-)

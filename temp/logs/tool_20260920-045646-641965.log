@@ -1,0 +1,46 @@
+    def _norm(x):
+        return "".join(x.lower().split())
+    if _norm(_clean) in _norm(_mem):
+        print(G+"   [auto-learn] lesson already in memory - untouched."+N)
+        return
+    # scriere directa: adaugam linia in memorie, fara sa re-analizam tot istoricul
+    try:
+        _tgt = MEM if 'MEM' in globals() else None
+        if not _tgt:
+            print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
+            do_learn("auto-learn")
+            return
+        with open(_tgt, "a", encoding="utf-8") as _f:
+            _f.write("\n" + _clean + "\n")
+        print(G+"   [auto-learn] decision: YES - saved lesson: "+_clean[:110]+N)
+    except Exception as e:
+        print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
+        do_learn("auto-learn")
+
+
+refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
+print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
+print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
+while 1:
+    try: q=input(U+" TU > "+IN).strip()
+    except (EOFError,KeyboardInterrupt): print(N);break
+    if q in ("/exit","/quit",""): break
+    if q in ("/help","/?"):
+        _al="ON" if AUTOLEARN["on"] else "OFF"
+        print(G+"   COMMANDS"+N)
+        print(G+"     /learn              update memory now (manual learning)"+N)
+        print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
+        print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
+        print(G+"     /ctx                context window + archives/logs on disk"+N)
+        print(G+"     /compact            compress the context now"+N)
+        print(G+"     /verbose            toggle full code/output of each step"+N)
+        print(G+"     /reset              erase the conversation history"+N)
+        print(G+"     /help, /?           this list"+N)
+        print(G+"     /exit, /quit        leave (empty line too)"+N)
+        print(G+"   "+(HINT_LINE)+N)
+        continue
+    if q=="/ctx":
+        _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
+        _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
+        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok | compress threshold "+_K(CTXBUDGET)+"tok (0=off) | steps kept intact: last "+str(CTXKEEP)+N)
+        print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue

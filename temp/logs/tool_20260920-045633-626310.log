@@ -1,0 +1,98 @@
+=== refresh() CORP COMPLET (914-1000) ===
+def refresh():
+    """Glues the memory into the system message. Called ONCE, at startup:
+    from then on the system prefix stays IDENTICAL for the whole session (maximum prompt cache),
+    and what /learn learns enters the context only at the next startup."""
+    mm=mem()
+    for m in M:
+        if m["role"]=="system": m["content"]=m["content"].split("\n\n--- MEMORY ---")[0]+("\n\n--- MEMORY ---\n"+mm if mm else "")
+def vision(path,prompt,max_tokens=None):
+    """Sends ONE image to the same API in VISION mode, with THINKING ENABLED so the model
+    really looks at the pixels (layout, alignment, what is broken) instead of guessing.
+    Used by the `look` tool. Returns the model text, or an error string."""
+    p=path if os.path.isabs(path) else os.path.join(os.getcwd(),path)
+    if not os.path.isfile(p): return "[look] file not found: "+p
+    try: b=base64.b64encode(open(p,"rb").read()).decode()
+    except Exception as e: return "[look] cannot read "+p+": "+e.__class__.__name__+": "+str(e)
+    mime={"png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg","gif":"image/gif","webp":"image/webp","xwd":"image/x-xwindowdump"}.get(p.rsplit(".",1)[-1].lower(),"image/png")
+    mt=int(max_tokens or os.environ.get("DS_VISION_MAXTOK","4000"))
+    msg=[{"role":"user","content":[{"type":"text","text":prompt or "Describe exactly what this image shows."},
+          {"type":"image_url","image_url":{"url":"data:"+mime+";base64,"+b}}]}]
+    body={"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":msg,"max_tokens":mt,
+          "thinking":{"type":os.environ.get("DS_VISION_THINKING","disabled")}}
+    r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps(body).encode(),
+      headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
+    try:
+        d=json.loads(urllib.request.urlopen(r,timeout=600).read())
+        m=d["choices"][0]["message"]; u=d.get("usage") or {}
+        out=(m.get("content") or "").strip()
+        if not out: out="(the model returned no text; try a bigger DS_VISION_MAXTOK)"
+        return out+"\n[look] "+str(os.path.getsize(p)//1024)+" KB | tok in "+str(u.get("prompt_tokens","?"))+" out "+str(u.get("completion_tokens","?"))+(" (reasoning "+str(u["completion_tokens_details"]["reasoning_tokens"])+")" if u.get("completion_tokens_details") else "")
+    except Exception as e:
+        return "[look] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]
+def py(c,cwd):
+    """Runs the code in its own process group. Ctrl+C kills ONLY this
+    tool (SIGKILL on the group), then re-raises the signal to the task loop."""
+    o=tempfile.TemporaryFile(dir=WORK)
+    p=subprocess.Popen([sys.executable,"-c",c],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    try:
+        p.wait(timeout=600)
+    except KeyboardInterrupt:
+        try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
+        except Exception: pass
+        raise
+    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")[:8000]
+
+# ==================== TOOL ROUTER: alege AUTOMAT python vs bash ====================
+# Euristici bazate pe masuratori reale (teste 1-3): bash castiga pe fluxuri/volum/paralelism,
+# python castiga pe parsare structurata + logica. Routerul decide inainte de a executa.
+PY_STRUCT = (r"\bjson\b", r"\bimport\s+json", r"json\.loads", r"json\.load\b", r"\.ini\b",
+             r"configparser", r"def\s+\w+\(", r"class\s+\w+", r"\bCounter\b", r"collections",
+             r"re\.(findall|search|match|sub)", r"dict\(|defaultdict", r"\.get\(", r"\blambda\b",
+             r"os\.walk", r"glob\.", r"shutil\.", r"struct\.", r"\bdataclass\b", r"yield\b",
+             r"\btry:", r"\bexcept\b", r"\.items\(\)", r"\.keys\(\)", r"\.values\(\)")
+BASH_STREAM = (r"\bgrep\b", r"\bawk\b", r"\bsed\b", r"\bsort\b", r"\buniq\b", r"\bwc\b",
+               r"\bcut\b", r"\btail\b", r"\bhead\b", r"\bxargs\b", r"\bfind\b", r"\bdu\b",
+               r"\bdf\b", r"\brsync\b", r"\bzgrep\b", r"\btr\b", r"\bpaste\b", r"\bcomm\b",
+               r"\bjoin\b", r"\bflock\b", r"\bcomm\b", r"\bparallel\b", r"-P\s*\d", r"\|\s*\w+")
+BASH_HEAVY = (r"\.log\b", r"/var/log", r">\s*\d{6,}", r"\bfor\s+\w+\s+in\b", r"\bseq\b")
+
+def route(cmd="", code=""):
+    """Decide engine = 'bash' sau 'python' pentru un task, pe baza a ce urmeaza sa se intample.
+    Intoarce (engine, why). Prioritatea: structura > stream > volum > implicit."""
+    c = (cmd or "").strip()
+    k = (code or "").strip()
+    t = (c + "\n" + k).lower()
+    # 1) cod Python clar structurat -> python
+    py_hits = sum(1 for pat in PY_STRUCT if re.search(pat, k))
+    if py_hits >= 2:
+        return "python", f"structured logic detected ({py_hits} python-structure signals): parsing/logic is where python wins (test 2: ~130x faster than bash)"
+    # 2) comanda shell de tip stream -> bash
+    sh_hits = sum(1 for pat in BASH_STREAM if re.search(pat, c or k))
+    heavy = any(re.search(pat, t) for pat in BASH_HEAVY)
+    if c and sh_hits >= 1:
+        why = f"shell pipeline detected ({sh_hits} stream signals)"
+        if heavy: why += "; large/streamed data -> bash (test 3: 1.3-1.6x faster, far less memory)"
+        return "bash", why
+    # 3) cod python pur dar cu semnale de stream (subprocess grep/awk in el) -> las python
+    if py_hits == 1:
+        return "python", "mostly python-shaped task (single structure signal)"
+    # 4) implicit: python (logic-safe)
+    return "python", "default: python (safe for logic; explicit `bash` for pure streams)"
+
+def bash(cmd, cwd):
+    """Ruleaza o comanda shell (bash -lc) in propriul grup de procese; Ctrl+C omoara doar acest
+    tool. Intoarce stdout+stderr combinat, trunchiat la 8000 de caractere (ca la python)."""
+    o=tempfile.TemporaryFile(dir=WORK)
+    p=subprocess.Popen(SHELL[0]+(cmd,),cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    try:
+        p.wait(timeout=600)
+    except KeyboardInterrupt:
+        try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
+        except Exception: pass
+        raise
+    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")[:8000]
+
+def run_bash_tool(cmd):
+    """Wrapper cu acelasi contor de pasi si aceeasi linie de afisare ca run_tool."""
+    n=TASK["steps"]+1; dsc="bash: "+_short(cmd,58); col=HCLR[sum(map(ord,dsc))%len(HCLR)] if dsc else G

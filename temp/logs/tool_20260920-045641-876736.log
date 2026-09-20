@@ -1,0 +1,45 @@
+=== while True in agent-original.py ===
+792:    print("\n")   # 2 blank lines: separate the token block from the next "TU >" prompt (every caller of this returns to input())
+1114:    try: q=input(U+" TU > "+IN).strip()
+
+=== ultimele 40 linii agent-original.py ===
+    print(_task_head(q))
+    try:
+     tries=0
+     while 1:
+        m,u=_spin(ask,phase="think");print_usage_compact(u)
+        if m is None: M.pop();print(_task_foot("interrupted: API error"));break
+        if _empty(m):
+            tries+=1
+            if tries<=EMPTY_RETRY:
+                print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
+                continue
+            print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
+            print(_task_foot("stopped: empty answer"));break
+        tries=0
+        M.append(m);save_ctx()
+        if m.get("tool_calls"):
+            _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
+            _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
+            _txt=str(m.get("content") or "").strip() or _fb
+            # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
+            if _txt:
+                _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
+                if _clean: print(OF+"   "+N+C+_clean+N)
+            for c in m["tool_calls"]:
+                code=json.loads(c["function"]["arguments"] or "{}").get("code","")
+                o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
+                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
+        else:
+            print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
+            print(_task_foot())
+            auto_learn_check(TASK["steps"], TASK["err"])
+            flush_task_tokens()
+            break
+    except KeyboardInterrupt:
+        LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
+        print("\r\33[K",end="",flush=True)
+        print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
+        while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
+        complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
+save_ctx()   # on /exit or Ctrl+D the history is already on disk
