@@ -204,3 +204,5 @@ P: GNU/Linux `find -newermt` needs full timestamp or offset like `-newermt '-1 h
 TRAP: read-only shell probe `nvidia-smi`/`systemctl status` can return empty/blank without root or with no params -> agent misreads as "missing GPU/service" -> always pass explicit query args and verify exit code before concluding.
 
 TRAP: bare `git diff` on a repo with only staged changes shows empty output -> changes are in index, not worktree -> verify with `git diff --cached` instead
+
+TRAP: `git log -1 --format=%cd` in shallow clone shows only tip date, not repo age -> looks like recent project -> use `git log --reverse` or check tag count before assuming maturity

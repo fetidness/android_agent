@@ -216,6 +216,30 @@ def _chunk(p):
             buf.append(lines[i]); i+=1
     flush()
     return "\n".join(out)
+def _mdtable_to_list(block):
+    """Converteste un bloc de tabel Markdown (linii cu '|') in LISTA simpla - pe ecranul mic
+    al telefonului tabelele se vad prost. Fiecare rand devine un bullet."""
+    lines=[l for l in block.split("\n") if l.strip()]
+    if sum(1 for l in lines if l.count("|")>=2) < 2: return block   # nu e tabel
+    has_sep = any(re.match(r"^\s*\|?[\s:-]*(\|[\s:-]*)+\|?\s*$", l) for l in lines)
+    head=None; out=[]
+    for l in lines:
+        if re.match(r"^\s*\|?[\s:-]*(\|[\s:-]*)+\|?\s*$", l): continue   # separator |---|
+        if l.count("|")>=2 or l.strip().startswith("|"):
+            cells=[c.strip() for c in l.strip().strip("|").split("|")]
+            if has_sep and head is None:      # primul rand = header, il retinem pentru etichete
+                head=cells; continue
+            if head and len(cells)>1:
+                first=cells[0]
+                rest=", ".join(f"{head[i]}: {cells[i]}" for i in range(1,len(cells)) if i<len(head) and cells[i])
+                out.append("- "+first+(": "+rest if rest else ""))
+            else:
+                out.append("- "+", ".join(x for x in cells if x))
+        else:
+            out.append(l.strip())
+    return "\n".join(out) if out else block
+
+
 def render(t):
     out=[]
     for p in BLK.split(t):
@@ -223,7 +247,7 @@ def render(t):
             L=p.strip("\n").split("\n"); body=[x for x in L[1:] if not x.strip().startswith("```")]
             out.append(_box(L[0].strip("` ").strip() or "code",body))
         else:
-            out.append(_chunk(_compact(p)))
+            out.append(_chunk(_compact(_mdtable_to_list(p))))
     return re.sub(r"^\n+","",re.sub(r"\n(?:\n)+$","\n","".join(out)))
 _SANDBOX=os.path.dirname(os.path.abspath(__file__))
 _DEFHOME=os.path.join(_SANDBOX,"..")          # fallback: langa scriptul agentului (in sandbox)
@@ -811,11 +835,15 @@ TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps):
   "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - that was measured at 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
 
 # --- FORMATARE OUTPUT (Android: terminalul nu randeaza tabele corect) ---
-FMT=("OUTPUT FORMAT: NEVER draw tables, ASCII boxes or column-aligned layouts - the terminal "
-  "on this device does not align them and they come out broken. ALWAYS use plain LISTS instead: "
-  "`- item` for bullets or `1. item` for numbered steps. For key/value data write `key: value` "
-  "on its own line. Keep lines short (wrap manually under ~70 chars). Do NOT use `|` pipes to "
-  "build columns. Simple lists, blank lines between blocks, and short prose paragraphs only.")
+FMT=("OUTPUT FORMAT - ABSOLUTE RULES for this small phone screen: "
+  "(1) NEVER output a Markdown table. A line containing two or more `|` characters is FORBIDDEN. "
+  "No header separator lines like `|---|---|`, no `| a | b |` rows, ever. "
+  "(2) NEVER draw ASCII boxes, frames or column-aligned layouts (things made of +---+ or +===+ or box-drawing chars). "
+  "(3) For any tabular data ALWAYS use a plain LIST, one field per line, like: "
+  "`- camera 0: back, flash yes, max 4080x3060` then next line `- camera 1: front, ...`. "
+  "Or a key/value block: `key: value`, one per line. "
+  "(4) Bullets with `- `, numbered steps with `1. `, short prose paragraphs. Lines short (under ~70 chars). "
+  "If you catch yourself typing `|`, STOP and rewrite as a list instead. A list is ALWAYS preferred over a table here.")
 
 # --- GHID ACCES ANDROID COMPLET (reflection) ---
 ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at the first source. Squeeze EVERYTHING reachable - use the native shortcuts AND reflection AND shell, cross-check them, and report everything you found (including what is NOT available and why). It is fine to take many steps. Explore every relevant nook: services, build props, sensors (action=all), sysfs, settings, managers. ANDROID ACCESS: on this device you have the `android` tool with FULL generic access to the whole "
@@ -853,7 +881,7 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. "
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
-  "FINAL MESSAGE: it is rendered as FULL rich Markdown in a 256-colour terminal, so use it heavily and correctly: headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, ==highlight==, > blockquote, --- rules, numbered and bulleted lists, task lists (- [x]), links [text](url), tables with | pipes |, and fenced code blocks with a language tag. Write the final answer in Romanian, complete and well structured."}]
+  "FINAL MESSAGE: rendered as Markdown in a 256-colour terminal. You MAY use headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, > blockquote, --- rules, numbered/bulleted lists and fenced code blocks. BUT on this small phone screen NEVER use tables (no | pipes | rows, no |---| separators) and never ASCII boxes - present ALL structured data as plain lists, one item or `key: value` per line. Write the final answer in Romanian, complete and well structured."}]
 CTX=os.path.join(HOME_DIR,CTXNAME)
 # --- migrare: muta context.json/memory.md din locatiile vechi (sandbox sau /sdcard/agent) ---
 def _migrate():
