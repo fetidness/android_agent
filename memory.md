@@ -188,3 +188,5 @@ TRAP: git log --oneline without a ref/path in a repo where HEAD is detached or o
 TRAP: bare `grep`/`find` style discovery commands can return empty without root or params on this system -> wrong "nothing exists" conclusion -> always re-run with explicit path/params or sudo before concluding absence.
 
 OK: ipex-llm conda env setup -> `conda create -n ipex python=3.11` then `pip install ipex-llm[cpu]` works but pip resolves slow; use `pip install --extra-index-url https://pytorch-ipex.github.io/whl/cpu ipex-llm` for faster reliable install.
+
+TRAP: nvidia-smi/docker info can appear fine while GPU is unusable in containers -> container lacks --gpus all or NVIDIA runtime -> verify with device query inside container, not host.
