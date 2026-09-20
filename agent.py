@@ -716,7 +716,8 @@ def mstats(s):
     nb=len([l for l in lines if not l.startswith(("#","<!--")) and (
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
-AUTOLEARN={"on":True,"min_steps":5}   # auto-learn after a finished task: ON by default, disable via /auto-learn off
+AUTOLEARN={"on":True,"min_steps":5}
+AL_TIMEOUT=int(os.environ.get("DS_AL_TIMEOUT","45"))   # auto-learn: max seconds to WAIT for the decision (never block the agent)   # auto-learn after a finished task: ON by default, disable via /auto-learn off
 AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a Linux desktop "
  "(this machine, headless shell, no GUI). You act through the python/bash/smart/look tools and can touch "
  "the whole filesystem and system. Look at the task that just finished above and decide whether it taught "
@@ -1117,14 +1118,29 @@ def call_tool(c):
     if fn=="android":
         return run_android_tool(a.get("tool",""), a.get("action",""), a.get("params",{}) or {})
     return run_tool(a.get("code",""))
-def ask(messages=None, tools=None):
+APITIMEOUT=int(os.environ.get("DS_TIMEOUT","90"))    # seconds per attempt (was a hard 600 = 10 min hang)
+APITRIES=int(os.environ.get("DS_TRIES","3"))          # attempts before giving up, with backoff
+def ask(messages=None, tools=None, model=None):
+    """Call the API with a sane timeout and retries. Returns (message, usage) or (None,None).
+    A hung API must NEVER freeze the agent for 10 minutes: 3 tries x APITIMEOUT, backoff 2s/3s."""
     _msgs = M if messages is None else messages
     _tools = T if tools is None else tools
-    r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode(),headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
-    try:
-        d=json.loads(urllib.request.urlopen(r,timeout=600).read()); return d["choices"][0]["message"], d.get("usage")
-    except Exception as e:
-        print(R+" [API] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]+N);return None,None
+    _model = model or os.environ.get("DS_MODEL","deepseek-flash")
+    body=json.dumps({"model":_model,"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode()
+    last=None
+    for _try in range(1, APITRIES+1):
+        r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=body,headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
+        try:
+            d=json.loads(urllib.request.urlopen(r,timeout=APITIMEOUT).read())
+            return d["choices"][0]["message"], d.get("usage")
+        except Exception as e:
+            last=e
+            _detail=str(getattr(e,"read",lambda:b"")())[:200] or str(e)[:200]
+            if _try < APITRIES:
+                print(R+" [API] try "+str(_try)+"/"+str(APITRIES)+" failed: "+e.__class__.__name__+" "+_detail+" - retrying"+N)
+                time.sleep(2*_try)
+    print(R+" [API] GAVE UP after "+str(APITRIES)+" tries ("+str(APITIMEOUT)+"s each): "+last.__class__.__name__+" "+str(getattr(last,"read",lambda:b"")())[:200]+N)
+    return None,None
 def do_learn(trigger="/learn"):
     """Shared /learn routine: used by the manual /learn command AND by auto-learn.
     `trigger` is only a label shown in the task footer (e.g. '/learn' or 'auto-learn')."""
@@ -1222,11 +1238,18 @@ def auto_learn_check(task_steps, had_error):
         return   # task prea mic: iesim silentios (fara mesaj in output)
     # DECIZIE: un singur mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
     # la ce se refera "the task that just finished above" si raspunde NO orbește).
+    # TIMEOUT SCURT: auto-learn NU trebuie sa blocheze agentul. Daca API-ul e lent, renuntam
+    # elegant (taskul e deja terminat, memoria ramane neatinse) si oprim pentru tura asta.
+    _orig_to, _orig_tries = APITIMEOUT, APITRIES
+    APITIMEOUT, APITRIES = AL_TIMEOUT, 1
     try:
         _probe = ask(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
     except Exception as e:
+        APITIMEOUT, APITRIES = _orig_to, _orig_tries
         print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
         return
+    finally:
+        APITIMEOUT, APITRIES = _orig_to, _orig_tries
     _raw = ""
     try:
         _raw = (((_probe[0] if _probe else None) or {}).get("content") or "").strip()
