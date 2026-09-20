@@ -208,3 +208,13 @@ TRAP: bare `git diff` on a repo with only staged changes shows empty output -> c
 TRAP: `git log -1 --format=%cd` in shallow clone shows only tip date, not repo age -> looks like recent project -> use `git log --reverse` or check tag count before assuming maturity
 
 TRAP: `cat /proc/net/dev` without root works but reading `/proc/<pid>/net/dev` needs PTRACE/root -> misleading empty/permission result -> use root or `/proc/net/dev` for interface stats.
+
+P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/site-packages/ -> biblioteci pure-Python (requests, bs4, yaml, toml, packaging) descarcate de pe PyPI pentru agentul Android; puse aici ajung pe device in pyhome/lib/python3.14/site-packages
+
+TRAP: folderele care incep cu `_` sunt IGNORATE la impachetare in assets Android (AAPT2) -> zipfile/_path/ nu ajungea in APK desi exista in sursa -> livrez pachetul ca fisier simplu _path.py, nu ca director
+
+OK: script de copiere care itereaza doar os.listdir() pe directoare rateaza fisierele .py de la radacina unui wheel (ex six.py) -> copiaza explicit si fisierele, nu doar folderele
+
+P: /home/gab/Desktop/agent/.gitignore -> are exceptii `!.../Lib/site-packages/` si `!.../Lib/zipfile/`; fara ele git ignora bibliotecile si fixul stdlib
+
+TRAP: git push pe repo cu remote SSH nou -> cheia trebuie adaugata pe GitHub intai; core.sshCommand per-repo (`ssh -i <key> -o IdentitiesOnly=yes`) forteaza cheia corecta fara sa atinga ~/.ssh/config global
