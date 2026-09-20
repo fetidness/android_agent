@@ -153,7 +153,60 @@ class AndroidBridge(
             "eval" -> refl.execute(p.optJSONObject("expr") ?: JSONObject())
             "services" -> refl.execute(JSONObject().put("op", "services"))
             "info" -> refl.execute(JSONObject().put("op", "info").put("target", p.optString("target")).put("filter", p.optString("filter")))
+            "ui" -> ui(action, p)
             else -> JSONObject().put("ok", false).put("error", "unknown tool: $tool")
+        }
+    }
+
+    // ---------------- UI (AccessibilityService) ----------------
+    /** Vedere + control asupra altor aplicatii, prin AgentAccessibilityService. */
+    private fun ui(action: String, p: JSONObject): JSONObject {
+        val svc = AgentAccessibilityService.instance
+            ?: return err("accessibility service NOT enabled. Activeaza: Settings > Accessibility > Agent (control ecran). "
+                    + "Fara el, Android interzice scrierea/taparea in alte aplicatii (INJECT_EVENTS e permisiune de sistem).")
+        return try {
+            when (action) {
+                "read", "screen", "tree" -> svc.readScreen(
+                    p.optInt("depth", 12),
+                    p.optInt("max", 400)
+                )
+                "settext", "type", "text" -> {
+                    val find = p.optString("find", p.optString("field", ""))
+                    val text = p.optString("text", "")
+                    val exact = p.optBoolean("exact", false)
+                    val replace = p.optBoolean("replace", true)
+                    svc.setText(find, text, exact, replace)
+                }
+                "click" -> svc.click(
+                    p.optString("find", p.optString("text", "")),
+                    p.optInt("x", -1), p.optInt("y", -1),
+                    p.optBoolean("exact", false)
+                )
+                "tap" -> svc.tap(p.optInt("x", -1), p.optInt("y", -1))
+                "swipe" -> svc.swipe(
+                    p.optInt("x1", -1), p.optInt("y1", -1),
+                    p.optInt("x2", -1), p.optInt("y2", -1),
+                    p.optLong("ms", 300)
+                )
+                "scroll" -> svc.scroll(p.optString("dir", "down"), p.optString("find", ""))
+                "back" -> svc.global("back")
+                "home" -> svc.global("home")
+                "recents" -> svc.global("recents")
+                "notifications" -> svc.global("notifications")
+                "quicksettings" -> svc.global("quicksettings")
+                "screenshot" -> svc.global("screenshot")
+                "lockscreen" -> svc.global("lockscreen")
+                "global" -> svc.global(p.optString("what", "back"))
+                "openapp", "open" -> svc.openApp(p.optString("package", p.optString("pkg", "")))
+                "windows" -> svc.windowsList()
+                "status", "info" -> JSONObject()
+                    .put("ok", true)
+                    .put("enabled", true)
+                    .put("service", "AgentAccessibilityService")
+                else -> err("unknown ui action: $action (read|settext|click|tap|swipe|scroll|back|home|recents|notifications|quicksettings|screenshot|lockscreen|openapp|windows|status)")
+            }
+        } catch (e: Exception) {
+            err("ui error: ${e.message}")
         }
     }
 

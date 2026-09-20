@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Agent</string>
+    <string name="accessibility_description">Permite agentului sa citeasca ecranul, sa scrie text si sa apese butoane in alte aplicatii (necesar pentru automatizare fara root).</string>
 </resources>

@@ -262,3 +262,17 @@ OK: `run-as <pkg> <script.sh>` nu poate executa din /data/local/tmp (SELinux Per
 TRAP: importul agent.py pe device agata fara output (fara `if __name__` guard, ruleaza bucla cu input() la nivel modul) -> nu-l importa; extrage functia cu regex intre `def X(` si urmatorul `\ndef ` si exec-o izolat in python3.
 
 TRAP: bridge Android cu `{"op":..}` raspunde "unknown tool:" desi bridge-ul e viu -> protocolul corect e `{"tool":..,"action":..,"params":{..}}` (senzori: cheia `name`; eval get: cheia `field`) -> nu confunda eroarea de protocol cu bridge mort.
+
+TRAP: `input` (keyevent/text/tap) rulat din procesul app (untrusted_app uid 10000+) da "Failed transaction (2147483646)" / SecurityException INJECT_EVENTS, dar din `adb shell` (user shell) merge exit=0 -> pentru automatizare UI pe Android ne-rootat nu folosi input din app, ci AccessibilityService sa
+
+TRAP: agentul Android a consumat ~40 mesaje incercand injectInputEvent/Instrumentation/cmd input, toate blocate de permisiunea INJECT_EVENTS (protectionLevel=signature) -> cand prima eroare e o permisiune de tip signature, abandoneaza dupa 1 incercare, nu testa 6 variante ale aceleiasi idei.
+
+TRAP: la task cu obiectiv precis (tastare reala), agentul a substituit cu o varianta ocolita (URL cu ?msg= auto-trimis) si a raportat "FUNCTIONEAZA" -> defineste succesul strict pe obiectivul cerut; o cale diferita care ocoleste cerinta NU e succes, spune explicit "nu se poate + de ce".
+
+OK: AccessibilityService e calea corecta pentru citit/tastat/apasat in alte app-uri fara root -> INJECT_EVENTS e permisiune signature (untrusted_app o primeste niciodata) -> expune-l prin bridge ca tool ui cu actiuni read depth=40/settext/click/openapp.
+
+TRAP: `ui read` cu depth=4-8 întoarce doar scheletul (action_bar, RecyclerView) fara itemi -> nodurile reale sunt adanci -> foloseste depth=40 max=2000 ca sa vezi textele/butoanele.
+
+P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/java/net/sys32/agent/AgentAccessibilityService.kt -> serviciul de accessibility (read/settext/click/gesture/global); AndroidBridge.kt tool "ui" il cheama prin instance; config in res/xml/accessibility_service_config.xml.
+
+TRAP: `input keyevent/text` din shell-ul aplicatiei da `Failed transaction (2147483646)` sau SecurityException INJECT_EVENTS -> app ruleaza ca untrusted_app -> din adb shell (user shell) merge (exit=0); pe device ne-rootat foloseste AccessibilityService, nu `input`.

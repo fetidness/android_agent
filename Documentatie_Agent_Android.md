@@ -13,7 +13,7 @@
 
 1. Prezentare generala
 2. Arhitectura
-3. Componentele aplicatiei
+3. Componentele aplicatiei (3.1-3.6: UI, Bridge, Reflection, Agent, AgentService, Accessibility)
 4. Cum functioneaza Python pe Android
 5. Pasii dezvoltarii de la 0 (etape 1-20)
 6. Probleme intalnite si solutii
@@ -92,6 +92,34 @@ Componenta 2 ruleaza ca PROCES SEPARAT (libpyexec.so agent.py).
 - Comenzi slash (a se vedea sectiunea 9)
 
 ---
+
+### 3.5 AgentService (foreground service)
+Tine procesul Python viu in BACKGROUND, ca agentul sa poata lucra si cind aplicatia
+e minimizata (ex. cind umbla prin alte aplicatii).
+- notificare persistenta (canal "agent_bg", id 4711) -> procesul nu mai e candidat la kill
+- PARTIAL_WAKE_LOCK -> CPU-ul nu adoarme in timpul unui task lung
+- START_STICKY + onTaskRemoved -> serviciul revine daca sistemul il omoara (sau la swipe din recents)
+- onDestroy-ul MainActivity NU mai omoara Python/bridge-ul cit timp serviciul ruleaza
+- manifest: foregroundServiceType="specialUse", stopWithTask="false"
+
+### 3.6 AgentAccessibilityService (vedere + control UI)
+Da agentului VEDERE si CONTROL asupra oricarei alte aplicatii, FARA root.
+Android interzice injectarea de input aplicatiilor normale (INJECT_EVENTS e o
+permisiune de SEMNATURA - doar system apps o pot avea). AccessibilityService e
+calea oficiala si singura viabila pentru un app normal.
+Capabilitati expuse prin bridge (tool `ui`):
+- read       - citeste arborele UI al oricarei aplicatii (text, id, bounds, clickable, editable)
+- settext    - scrie text (ACTION_SET_TEXT) in cimpul cautat / focalizat / primul editabil
+- click      - apasa un nod (dupa text/id) sau un punct (x,y)
+- tap/swipe  - gesturi reale prin dispatchGesture
+- scroll     - scroll pe nod sau swipe pe ecran
+- back/home/recents/notifications/quicksettings/screenshot/lockscreen - performGlobalAction
+- openapp    - deschide orice aplicatie dupa pachet
+- windows    - listeaza ferestrele vizibile
+
+Config: res/xml/accessibility_service_config.xml (canRetrieveWindowContent=true,
+canPerformGestures=true, flagReportViewIds, flagRetrieveInteractiveWindows).
+Serviciul se activeaza de UTILIZATOR din Settings > Accessibility (vezi sec. 9).
 
 ## 4. CUM FUNCTIONEAZA PYTHON PE ANDROID
 
@@ -274,6 +302,30 @@ NU exista pip; agentul stie exact ce are si ca nu poate instala altceva.
 - iconita profesionala (prompt de terminal, SVG -> toate densitatile)
 - repo git + push pe GitHub (SSH)
 
+### Etapa 21 - Background: agentul lucreaza la minimizare (foreground service)
+Problema: cind aplicatia era minimizata, Android suspenda/omoara procesul Python, deci
+agentul nu mai putea continua un task (critic cind trebuie sa umble prin alte aplicatii).
+Solutie: AgentService (foreground) + PARTIAL_WAKE_LOCK + START_STICKY + onTaskRemoved.
+Verificat pe Samsung SM-A366B: proces viu >25s in background, bridge 16/16 tool-uri,
+supravietuieste la am send-trim-memory RUNNING_CRITICAL, repornire curata dupa force-stop.
+
+### Etapa 22 - Fix senzori (registerListener fara Handler)
+Problema: TOTI senzorii returnau "no data from accelerometer" desi existau.
+Cauza: registerListener era apelat din thread-ul de socket, care NU are Looper;
+fara un Handler explicit, onSensorChanged nu se declanseaza NICIODATA.
+Fix: sensorHandler = Handler(Looper.getMainLooper()) ca al 4-lea argument la toate
+cele 3 apeluri (read/stream/collect). Verificat: 8/8 senzori live (light 287 lx,
+proximity 5cm, gravity 9.80 m/s^2, accelerometru, magnetic, giroscop, pedometru).
+
+### Etapa 23 - Tastare si control in ALTE aplicatii (AccessibilityService)
+Problema: agentul nu putea tasta/apasa butoane in alte aplicatii. Reflection
+injectInputEvent -> SecurityException INJECT_EVENTS (permisiune de semnatura).
+Shell `input` din app (untrusted_app) -> "Failed transaction". Ambele imposibile fara root.
+Solutie: AgentAccessibilityService (vedere + control UI, fara root).
+Verificat end-to-end pe telefon: am deschis Settings, am apasat "Search settings",
+am TASTAT "bluetooth" in cimpul de cautare si am citit rezultatele ("Results (27)").
+
+
 ## 6. PROBLEME INTALNITE SI SOLUTII
 
 1. SSL pe Android: URLError b'' la api.deepseek.com
@@ -375,6 +427,28 @@ La dezinstalare, aceste fisiere SUPRAVIETUIESC.
 
 ---
 
+### Activare AccessibilityService (o singura data, de catre utilizator)
+
+Ca agentul sa poata citi ecranul / tasta / apasa in ALTE aplicatii, serviciul de
+accessibility trebuie activat manual (Android cere asta din motive de securitate):
+
+1. **Settings > Accessibility > Installed apps / Downloaded apps**
+   (pe Samsung: Settings > Accessibility > Installed applications)
+2. Gaseste **"Agent (control ecran)"** si porneste comutatorul
+3. Apare un dialog de avertizare cu datele pe care le poate accesa -> **Allow / OK**
+4. Butonul devine verde (ON) -> serviciul e activ
+
+Verificare ca e activ (din chat, tool `android`):
+    android(tool="ui", action="status")   ->  {"ok":true,"enabled":true}
+
+Verificare rapida cu adb (util dupa reinstalare, se pierde la update):
+    adb shell settings put secure enabled_accessibility_services \
+        net.sys32.agent/net.sys32.agent.AgentAccessibilityService
+    adb shell settings put secure accessibility_enabled 1
+
+Nota: la fiecare REINSTALARE a APK, Android dezactiveaza serviciul -> re-activeaza-l
+din Settings (sau cu cele 2 comenzi adb de mai sus).
+
 ## 10. TOOL-URI SI ACCESUL LA SISTEM
 
 ### Tool-uri principale
@@ -382,10 +456,12 @@ La dezinstalare, aceste fisiere SUPRAVIETUIESC.
 - bash     - executa comenzi shell (sh -c pe Android; NU e bash)
 - smart    - router automat (alege python vs bash)
 - look     - analizeaza o imagine cu vision
-- android  - acces la SDK Android (reflection + shortcut-uri native)
+- android  - acces la SDK Android (reflection + shortcut-uri native + tool `ui` pentru
+             citirea ecranului, tastare, click, gesturi in ORICE aplicatie - vezi 3.6)
 - read     - citeste un FISIER de la un offset, cu limita (paginare) - pentru fisiere mari/log-uri
 
 ### Actiuni ale tool-ului android
+ui (read/settext/click/tap/swipe/scroll/back/home/recents/notifications/openapp/windows),
 sensors (list/read/stream/all), camera, location (last/current/fresh),
 battery (get/full), clipboard, notify, vibrate, tts, volume, wifi, device,
 apps, intent, settings, system (get/full), storage, processes, network,
@@ -479,6 +555,8 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - 4 primitive reflection: proxy, referinte de obiecte, await/events, subclass (DexMaker)
 - 25+ actiuni native (sensors, camera, location, battery, system, storage, network, display,
   audio, telephony, nfc, usb, appinfo, processes, ...)
+- tool `ui` (AccessibilityService): citirea ecranului, TASTARE, CLICK, gesturi, scroll,
+  navigare, deschidere app-uri - in ORICE alta aplicatie, fara root
 - 13 biblioteci Python pre-instalate (pure): requests, bs4, dateutil, yaml, toml, packaging...
 - Acces la hardware si sistem (maxim posibil fara root)
 - Memorie persistenta cu auto-invatare (filtrata pe relevanta + mediu)
@@ -487,6 +565,10 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - Interfata terminal in engleza, raspuns in limba operatorului, auto-scroll corect,
   stop generare, fara tabele pe ecran mic
 - Iconita profesionala
+- Ruleaza in BACKGROUND (foreground service): agentul isi continua taskul cind app-ul e
+  minimizat, inclusiv in timp ce lucreaza in alte aplicatii
+- Senzori functionali (fix registerListener + Handler mainLooper)
+- Vedere + control asupra altor aplicatii (AccessibilityService, fara root)
 - Repo git cu push pe GitHub
 
 ### De facut la final (cind codul e stabil)
