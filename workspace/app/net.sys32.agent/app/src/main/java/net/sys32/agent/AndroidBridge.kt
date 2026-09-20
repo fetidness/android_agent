@@ -58,6 +58,7 @@ class AndroidBridge(
 
     @Volatile private var running = false
     private var server: ServerSocket? = null
+    private val sensorHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var thread: Thread? = null
 
     fun start() {
@@ -208,7 +209,7 @@ class AndroidBridge(
                     override fun onSensorChanged(e: SensorEvent) { last = e.values.copyOf() }
                     override fun onAccuracyChanged(s: Sensor?, a: Int) {}
                 }
-                sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_GAME)
+                sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_GAME, sensorHandler)
                 Thread { try { latch.await((secs * 1000).toLong(), TimeUnit.MILLISECONDS) } catch (_: Exception) {} }.start()
                 Thread.sleep((secs * 1000).toLong())
                 sm.unregisterListener(lis)
@@ -240,7 +241,7 @@ class AndroidBridge(
                         }
                         override fun onAccuracyChanged(s: Sensor?, a: Int) {}
                     }
-                    sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_GAME)
+                    sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_GAME, sensorHandler)
                     listeners.add(lis)
                     data.put(nm, JSONObject().put("unit", sensorUnit(nm)).put("samples", samples))
                 }
@@ -265,7 +266,7 @@ class AndroidBridge(
                             override fun onSensorChanged(e: SensorEvent) { lastVals[e.sensor.type] = e.values.copyOf() }
                             override fun onAccuracyChanged(s: Sensor?, a: Int) {}
                         }
-                        sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_FASTEST)
+                        sm.registerListener(lis, s, SensorManager.SENSOR_DELAY_FASTEST, sensorHandler)
                         listeners.add(s to lis)
                     } catch (_: Exception) {}
                 }

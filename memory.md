@@ -242,3 +242,13 @@ TRAP: atribuire `APITIMEOUT=...` intr-o functie fara `global` -> Python il face 
 P: /home/gab/Desktop/agent/agent.py -> agentul Linux care ruleaza ACUM (eu); backup-uri: agent.py.broken (versiunea rupta)",
 
 OK: /proc/<pid>/syscall arata exact syscall-ul (230=nanosleep, 202=futex) -> util sa distingi 'doarme normal' de 'blocat in I/O' fara root",
+
+TRAP: `run-as <pkg> /data/local/tmp/script.sh` da "Permission denied" (SELinux interzice exec din /data/local/tmp) -> copiaza wrapper-ul in filesDir/ al aplicatiei si ruleaza-l de acolo.
+
+TRAP: reinstalarea unui APK (adb install -r) schimba hash-ul din calea /data/app/~~XXXX==/pkg-YYYY==/lib/<abi>/ -> calea libpyexec.so memorata devine invalida -> reciteste-o cu `dumpsys package <pkg> | grep codePath` inainte de a relansa Python.
+
+TRAP: SensorManager.registerListener fara Handler, apelat din thread fara Looper (socket/worker) -> onSensorChanged nu se declanseaza NICIODATA desi getDefaultSensor gaseste senzorul -> livreaza `new Handler(Looper.getMainLooper())` ca 4-lea argument.
+
+TRAP: bridge-ul Android cu tool-urile native asteapta `{"tool":..,"action":..,"params":{..}}` (cheia `name` la senzori, `field` la eval-get) -> cererea `{"op":..}` raspunde "unknown tool:" -> nu confunda eroarea de protocol cu bridge mort.
+
+TRAP: `LLM import al agent.py` pe device agata (n-are `if __name__` guard, ruleaza bucla cu input() la nivel modul) -> nu-l importa; extrage functia cu regex intre `def X(` si urmatorul `\ndef ` si exec-o izolat.
