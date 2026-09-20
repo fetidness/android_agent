@@ -517,6 +517,36 @@ Verificare rapida cu adb (util dupa reinstalare, se pierde la update):
 Nota: la fiecare REINSTALARE a APK, Android dezactiveaza serviciul -> re-activeaza-l
 din Settings (sau cu cele 2 comenzi adb de mai sus).
 
+### Etapa 26 - Fix memorie: limita 300 -> 500 si taiere la granita de propozitie
+Problema (observata in memoria de pe telefon): lectiile erau TRUNCHIATE la mijloc.
+Dovada: din 55 de lectii, 5 se opreau fix la 299-300 chars, la mijloc de propozitie
+(ex. "...pentru a verifica daca un app e semnat de" - fix-ul era taiat!).
+Cauza: in auto_learn_check() linia `if len(_ln) > 300: _ln = _ln[:300].rstrip()`
+MUTILA lectia in loc sa o respinga. Necorelare in 3 locuri: promptul cerea "max 300
+chars", mem_lint avertiza la 300, dar auto_learn_check TAIA la 300. O lectie
+`TRAP: situatie -> cauza -> fix` nu incape in 300 de caractere.
+Fix (aplicat in TOATE cele 3 fisiere: desktop agent-original.py, device
+files/python/agent.py, assets/python/agent.py):
+- limita ridicata la 500 (prompt + mem_lint MAXLINE + trunchiere)
+- taiere doar la GRANITA DE PROPOZITIE (` -> `, `. `, `; `, `, `), niciodata la
+  mijloc de cuvant; daca nu gaseste separator, pastreaza tot
+- scoate separatorul `->` ramas suspendat la coada
+Cod nou:
+    if len(_ln) > 500:
+        _cut = _ln[:500]
+        for _sep in (" -> ", ". ", "; ", ", "):
+            _p = _cut.rfind(_sep)
+            if _p > 200: _cut = _cut[:_p+len(_sep)]; break
+        _ln = _cut.rstrip(" ,;-")
+        while _ln.endswith("->"): _ln = _ln[:-2].rstrip(" ,;-")
+Verificat pe device (Samsung A36), 4 cazuri:
+  lectie 296 chars -> INTREAGA (inainte s-ar fi taiat)
+  lectie 396 chars -> INTREAGA
+  lectie 496 chars -> INTREAGA
+  lectie 705 chars -> taiata la 286, la granita de propozitie, fara cuvant rupt
+Nota: lectiile VECHI din memorie ramin trunchiate (fix-ul previne doar de acum inainte).
+Deploy: assets v51 -> v52, rebuild (BUILD SUCCESSFUL), reinstall, reactivare accessibility.
+
 ### Baterie: exclude agentul de la optimizare (pentru rulare pe ecran stins)
 
 Ca agentul sa ramina VIU cu ecranul stins/blocat (Doze), exclude-l de la optimizarea bateriei:

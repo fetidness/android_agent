@@ -368,7 +368,7 @@ def mem_lint(txt):
     - section heading present and well formed.
     Read-only: it NEVER edits or truncates the file. Returns (warnings, lessons)."""
     import re as _re
-    MAXLINE = 300
+    MAXLINE = 500
     FORBID = [
         (r"\b(am citit|am rulat|am apelat|am folosit tool|tool call)\b", "narration/tool-call"),
         (r"\b(operatorul|utilizatorul a spus|buna seara)\b", "operator dialogue"),
@@ -795,7 +795,7 @@ def mstats(s):
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 AUTOLEARN={"on":True,"min_steps":5}   # auto-learn after a finished task: ON by default, disable via /auto-learn off
-AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running INSIDE an Android app on a real phone (Samsung SM-A366B, Android 16, no root). You talk to the device through the android tool (reflection + native shortcuts, socket bridge to Kotlin) and through a POSIX shell (sh -c). Look at the task that just finished above and decide whether it taught you a REUSABLE fact about THIS PHONE. A lesson qualifies ONLY if it is BOTH (1) about the Android device itself - its services, APIs, permissions, reflection quirks, sensors, storage layout, SELinux limits, shell behaviour on this phone - AND (2) likely to change how you act on a FUTURE task here, not just describe what happened. Typical valid lessons: an API call that needs [\"ref\",\"ctx\"] or fails with a specific exception; an abstract class that must be subclassed via op=subclass; a service that returns null / a value that is misleading without root; an exact working chain of reflection calls; a feature PROVEN impossible for a normal app; a permission/SELinux boundary. NEVER save: generic software/desktop knowledge (bash vs bash -lc, BusyBox, OpenRouter, claude CLI, Gradle, systemd, Windows, other tools), paraphrases of the task, trivia about one specific device you scanned, or anything already in your memory snapshot. If the lesson would be equally true on a Linux desktop, or is not about interacting with THIS phone, it does NOT qualify. REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). Do NOT pad - a weak or obvious line is worse than none.    - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 300 chars, no quotes, no markdown. Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time; skip obvious facts and one-off task artefacts.   - If there is genuinely NOTHING reusable or it is not Android-specific: reply with the single word: NO.")
+AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running INSIDE an Android app on a real phone (Samsung SM-A366B, Android 16, no root). You talk to the device through the android tool (reflection + native shortcuts, socket bridge to Kotlin) and through a POSIX shell (sh -c). Look at the task that just finished above and decide whether it taught you a REUSABLE fact about THIS PHONE. A lesson qualifies ONLY if it is BOTH (1) about the Android device itself - its services, APIs, permissions, reflection quirks, sensors, storage layout, SELinux limits, shell behaviour on this phone - AND (2) likely to change how you act on a FUTURE task here, not just describe what happened. Typical valid lessons: an API call that needs [\"ref\",\"ctx\"] or fails with a specific exception; an abstract class that must be subclassed via op=subclass; a service that returns null / a value that is misleading without root; an exact working chain of reflection calls; a feature PROVEN impossible for a normal app; a permission/SELinux boundary. NEVER save: generic software/desktop knowledge (bash vs bash -lc, BusyBox, OpenRouter, claude CLI, Gradle, systemd, Windows, other tools), paraphrases of the task, trivia about one specific device you scanned, or anything already in your memory snapshot. If the lesson would be equally true on a Linux desktop, or is not about interacting with THIS phone, it does NOT qualify. REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). Do NOT pad - a weak or obvious line is worse than none.    - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 500 chars, no quotes, no markdown. Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time; skip obvious facts and one-off task artefacts.   - If there is genuinely NOTHING reusable or it is not Android-specific: reply with the single word: NO.")
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -1376,7 +1376,15 @@ def auto_learn_check(task_steps, had_error):
         _ln = " ".join(_ln.split())                      # colapseaza spatiile din interior
         if not _ln: continue
         if _ln.upper() == "NO": continue
-        if len(_ln) > 300: _ln = _ln[:300].rstrip()
+        # Limita 500: o lectie utila (TRAP cu cauza+fix) nu incape in 300. NU o mutila la
+        # mijloc de cuvant - taie doar la granita de propozitie, altfel pastreaza tot.
+        if len(_ln) > 500:
+            _cut = _ln[:500]
+            for _sep in (" -> ", ". ", "; ", ", "):
+                _p = _cut.rfind(_sep)
+                if _p > 200: _cut = _cut[:_p+len(_sep)]; break
+            _ln = _cut.rstrip(" ,;-")
+            while _ln.endswith("->"): _ln = _ln[:-2].rstrip(" ,;-")
         if _ln.upper().startswith(tuple(k.upper() for k in _KEYS)):
             _cand.append(_ln)
     if not _cand:

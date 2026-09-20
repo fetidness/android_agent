@@ -308,3 +308,11 @@ TRAP: `adb shell input text 'fraza cu spatii'` se opreste la primul spatiu -> sc
 TRAP: `adb shell input tap X Y` rateaza butonul daca textul multi-linie din EditText rearanjeaza layout-ul (butonul s-a mutat de la y=2211 la y=1509) -> reia `uiautomator dump` si recalculeaza bounds inainte de fiecare tap.
 
 TRAP: `/reset` in agentul Android (comanda in app) goleste context.json dar PASTREAZA memory.md -> calea corecta de a da un task curat fara sa pierzi lectiile invatate.
+
+TRAP: after editing assets/*.py on disk, the installed APK still serves the old copy -> app only re-extracts when the `.assets_vN` marker in app filesDir is bumped -> increment the marker in MainActivity AND rebuild/install, otherwise `adb push` to files/python/ is lost on next extract
+
+DEAD: `adb shell run-as <pkg> cat <file>` drops the final trailing newline -> byte count is off by 1 vs the real file -> compare with `run-as md5sum <file>`, not with cat output
+
+TRAP: `adb shell run-as <pkg> <script>` fails "Permission denied" for scripts in /data/local/tmp (SELinux) -> copy the wrapper into the app filesDir first and exec it from there
+
+TRAP: `joblib` `libpyexec.so` gives "library libpython3.14.so not found" or "Failed to import encodings" without the full env -> must set LD_LIBRARY_PATH=<nativeLibraryDir> PYTHONHOME=files/pyhome HOME=files/home, not PYTHONHOME=files/python

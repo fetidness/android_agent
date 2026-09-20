@@ -288,7 +288,7 @@ def mem_lint(txt):
     - section heading present and well formed.
     Read-only: it NEVER edits or truncates the file. Returns (warnings, lessons)."""
     import re as _re
-    MAXLINE = 300
+    MAXLINE = 500
     FORBID = [
         (r"\b(am citit|am rulat|am apelat|am folosit tool|tool call)\b", "narration/tool-call"),
         (r"\b(operatorul|utilizatorul a spus|buna seara)\b", "operator dialogue"),
@@ -692,7 +692,7 @@ AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a L
  "Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). "
  "Do NOT pad - a weak or obvious line is worse than none. "
  "  - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax "
- "`KEY: what -> cause -> fix/verify`, KEY one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 300 chars, no markdown, no quotes. "
+ "`KEY: what -> cause -> fix/verify`, KEY one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 500 chars, no markdown, no quotes. "
  "Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time. "
  "  - If there is genuinely NOTHING reusable or it is not about this machine: reply with the single word: NO.")
 HINT_LINE="tip: /help shows every command"
@@ -1120,7 +1120,15 @@ def auto_learn_check(task_steps, had_error):
         _ln = " ".join(_ln.split())                      # colapseaza spatiile din interior
         if not _ln: continue
         if _ln.upper() == "NO": continue
-        if len(_ln) > 300: _ln = _ln[:300].rstrip()
+        # Limita 500: o lectie utila (TRAP cu cauza+fix) nu incape in 300. NU o mutila la
+        # mijloc de cuvant - taie doar la granita de propozitie, altfel pastreaza tot.
+        if len(_ln) > 500:
+            _cut = _ln[:500]
+            for _sep in (" -> ", ". ", "; ", ", "):
+                _p = _cut.rfind(_sep)
+                if _p > 200: _cut = _cut[:_p+len(_sep)]; break
+            _ln = _cut.rstrip(" ,;-")
+            while _ln.endswith("->"): _ln = _ln[:-2].rstrip(" ,;-")
         if _ln.upper().startswith(tuple(k.upper() for k in _KEYS)):
             _cand.append(_ln)
     if not _cand:
