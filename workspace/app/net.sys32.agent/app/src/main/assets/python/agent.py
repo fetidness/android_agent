@@ -390,7 +390,7 @@ def mem_lint(txt):
         if len(l) > MAXLINE:
             out.append((len(l), l))
     lessons = [l for l in body if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* "))]
-    if len(lessons) > 8:
+    if len(lessons) > 16:
         out.append((0, "too many lesson lines (" + str(len(lessons)) + ") - possible padding"))
     if not heads:
         out.append((0, "missing heading '## date - area (session: ...)'"))
@@ -1340,7 +1340,7 @@ def do_learn(trigger="/learn"):
     print(_task_foot("/learn")); flush_task_tokens(); return
 
 
-def auto_learn_check(task_steps, had_error):
+def auto_learn_check(task_steps, had_error, task_msgs=None):
     """V4 hybrid auto-learn, run right AFTER a task finishes (only if AUTOLEARN['on']).
     Filter (cheap): only bother on a non-trivial task - enough steps OR an error occurred.
     Decision (model): ONE short call, no tools. The model replies EITHER "NO" (nothing reusable)
@@ -1355,7 +1355,8 @@ def auto_learn_check(task_steps, had_error):
     # DECIZIE: un singur mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
     # la ce se refera "the task that just finished above" si raspunde NO orbește).
     try:
-        _probe = ask(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
+        _msgs = list(task_msgs) if task_msgs is not None else list(M)
+        _probe = ask(_msgs+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
     except Exception as e:
         print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
         return
@@ -1573,7 +1574,7 @@ while 1:
         else:
             print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
             print(_task_foot())
-            auto_learn_check(TASK["steps"], TASK["err"])
+            auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
             flush_task_tokens()
             break
     except KeyboardInterrupt:

@@ -324,3 +324,5 @@ TRAP: calea libdir din `dumpsys package | grep codePath` nu contine ABI -> `lib/
 TRAP: `run-as <pkg> cat fisier` pierde newline-ul final -> md5 diferit fata de original (113545 vs 113546) desi continutul e identic -> verifica identitatea cu `run-as pkg md5sum fisier` pe device, nu prin cat.
 
 TRAP: lansarea Python din app cere PYTHONHOME=files/pyhome (nu files/python) si LD_LIBRARY_PATH=nativeLibraryDir -> altfel "Fatal Python error: Failed to import encodings module" -> copiaza exact env-ul din ProcessBuilder (PYTHONHOME, HOME, PATH, AGENT_HOME) in wrapper.
+
+TRAP: cheia API era urcata in git in 3 locatii (key.txt root, assets/python/key.txt, ~/.deepseek_agent_key) desi doar ultima e citita de agentul desktop -> `git ls-files | grep -i key` arata ce e urmarit -> dupa expunere scoate din tracking cu `git rm --cached` SI adauga in .gitignore, altfel cheia ramane in istoric (git log --all -S'<cheie>' gaseste commit-ul) si doar revocarea ei la provider te mai salveaza.

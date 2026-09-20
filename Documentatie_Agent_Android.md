@@ -547,6 +547,58 @@ Verificat pe device (Samsung A36), 4 cazuri:
 Nota: lectiile VECHI din memorie ramin trunchiate (fix-ul previne doar de acum inainte).
 Deploy: assets v51 -> v52, rebuild (BUILD SUCCESSFUL), reinstall, reactivare accessibility.
 
+### Etapa 27 - Fix auto-learning: doar ULTIMUL task (nu toata sesiunea)
+
+**Problema (raportata de operator):** dupa fiecare task, auto-learning-ul
+analiza TOATA sesiunea in loc de ultimul task. Rezultatul: agentul isi nota
+mereu aceleasi lectii (reformulate), iar sistemul de dedup nu le prindea
+(acelasi fapt, cuvinte diferite). Memoria se umplea artificial.
+
+**Cauza:** in `auto_learn_check()`, apelul de decizie trimitea la model
+`list(M)` = TOATA lista de mesaje acumulata in sesiune:
+```python
+_probe = ask(list(M)+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
+```
+Desi promptul zicea "Look at the task that just finished above", contextul
+trimis continea de fapt zeci de task-uri anterioare -> modelul re-analiza tot.
+
+**Fix (2 schimbari):**
+
+1. `auto_learn_check` primeste acum `task_msgs` (mesajele ULTIMULUI task):
+```python
+def auto_learn_check(task_steps, had_error, task_msgs=None):
+    ...
+    _msgs = list(task_msgs) if task_msgs is not None else list(M)
+    _probe = ask(_msgs+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
+```
+   Iar la apel, din bucla principala, se trimite `M[mark:]` (`mark=len(M)`
+   este setat chiar la inceputul taskului, deci `M[mark:]` = doar taskul curent):
+```python
+auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
+```
+
+2. **Limita de lectii per fisier dublata: 8 -> 16** (`mem_lint`):
+```python
+if len(lessons) > 16:   # era > 8
+    out.append((0, "too many lesson lines ... - possible padding"))
+```
+
+**Test functional (izolat, cu spy pe ask):** cu o sesiune veche de 40 de
+mesaje `STS-VECHI-*` si un task curent de 3 mesaje:
+```
+mesaje trimise la model: 4
+   - TASK-CURENT: deschide whatsapp
+   - ok
+   - {"ok":true}
+   - PROMPT-TEST
+CONTINE SESIUNEA VECHE? False   <- FIX CONFIRMAT
+CONTINE TASKUL CURENT? True
+```
+
+**Efect:** lectiile se scriu acum DOAR din ultimul task -> fara re-analiza
+sesiunii, fara duplicare prin reformulare. Aplicat pe Android (device +
+assets) si pe desktop (`agent-original.py`).
+
 ### Baterie: exclude agentul de la optimizare (pentru rulare pe ecran stins)
 
 Ca agentul sa ramina VIU cu ecranul stins/blocat (Doze), exclude-l de la optimizarea bateriei:
