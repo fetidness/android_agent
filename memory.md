@@ -182,3 +182,9 @@ OK: `find / -name '*.conf'` as non-root floods stderr with permission-denied noi
 P: pipe/exec tool output may be truncated with no error -> verify by counting lines or grepping expected markers -> re-run with narrower scope if missing.
 
 TRAP: `snap list` / `snap info` on classic distros without snapd installed returns empty or not-found, misleading you into thinking a package isn't available -> verify `which snap` or `dpkg -l snapd` first
+
+TRAP: git log --oneline without a ref/path in a repo where HEAD is detached or on an empty branch -> prints nothing or "fatal", not the branch history -> always pass an explicit branch/path, e.g. git log --oneline <branch> -- <path>.
+
+TRAP: bare `grep`/`find` style discovery commands can return empty without root or params on this system -> wrong "nothing exists" conclusion -> always re-run with explicit path/params or sudo before concluding absence.
+
+OK: ipex-llm conda env setup -> `conda create -n ipex python=3.11` then `pip install ipex-llm[cpu]` works but pip resolves slow; use `pip install --extra-index-url https://pytorch-ipex.github.io/whl/cpu ipex-llm` for faster reliable install.

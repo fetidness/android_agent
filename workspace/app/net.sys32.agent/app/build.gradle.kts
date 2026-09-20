@@ -34,4 +34,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // DexMaker: genereaza clase la runtime (subclasare de clase abstracte)
+    implementation("com.linkedin.dexmaker:dexmaker:2.28.3")
 }

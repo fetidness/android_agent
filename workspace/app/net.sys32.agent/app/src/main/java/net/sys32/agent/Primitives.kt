@@ -35,8 +35,8 @@ class Primitives(private val ctx: Context, private val objects: ConcurrentHashMa
     /** evenimentele capturate de fiecare proxy, in ordine, cu coada blocanta pt await */
     private class Sink {
         val queue = LinkedBlockingQueue<JSONObject>()
-        val seen = ArrayList<JSONObject>()
-        var calls = 0
+        val seen = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+        @Volatile var calls = 0
     }
 
     private val sinks = ConcurrentHashMap<String, Sink>()
@@ -96,7 +96,7 @@ class Primitives(private val ctx: Context, private val objects: ConcurrentHashMa
     fun events(id: String): JSONObject {
         val s = sinks[id] ?: return err("unknown sink/proxy id: $id")
         val a = JSONArray()
-        synchronized(s.seen) { for (e in s.seen) a.put(e) }
+        for (e in s.seen) { try { a.put(e) } catch (_: Throwable) {} }
         return ok(JSONObject().put("id", id).put("calls", s.calls).put("events", a))
     }
 
@@ -117,6 +117,52 @@ class Primitives(private val ctx: Context, private val objects: ConcurrentHashMa
                 .put("pending", s.queue.size))
         }
         return ok(a)
+    }
+
+
+    /**
+     * SUBCLASARE la runtime prin DexMaker: creeaza o subclasa CONCRETA a oricarei clase
+     * (inclusiv abstracte, ex. ScanCallback, BroadcastReceiver). Fiecare metoda
+     * suprascrisa este DELEGATA catre un "event" in acelasi sink ca la proxy, apoi
+     * returneaza valoarea implicita (void/false/0/null).
+     *
+     * Rezultatul e un obiect real, pasabil oriunde (obj:<id>).
+     */
+    fun makeSubclass(parentName: String): String {
+        val parent = Class.forName(parentName, false, ctx.classLoader)
+        val sink = Sink()
+        val id = nextId()
+        sinks[id] = sink
+
+        // DexMaker ProxyBuilder: intercepteaza TOATE metodele si le deleaga catre handler
+        val handler = java.lang.reflect.InvocationHandler { proxy, method, args ->
+            if (method.declaringClass == Any::class.java) {
+                // equals/hashCode/toString - comportament implicit
+                when (method.name) {
+                    "hashCode" -> return@InvocationHandler System.identityHashCode(proxy)
+                    "equals" -> return@InvocationHandler proxy === args?.get(0)
+                    "toString" -> return@InvocationHandler "subclass(${parentName})"
+                }
+            }
+            try {
+                val ev = JSONObject()
+                ev.put("event", "call")
+                ev.put("method", method.name)
+                ev.put("iface", parentName)
+                ev.put("args", serArgs(args))
+                sink.calls++
+                sink.seen.add(ev)
+                sink.queue.offer(ev)
+            } catch (_: Throwable) {}
+            defaultReturn(method)
+        }
+
+        val builder = com.android.dx.stock.ProxyBuilder.forClass(parent)
+            .handler(handler)
+            .dexCache(ctx.cacheDir)
+        val proxy = builder.build()
+        objects[id] = proxy
+        return id
     }
 
     // ---------- helpers ----------

@@ -422,6 +422,20 @@ class Reflection(private val ctx: Context) {
                         .put("iface", iface)
                         .put("note", "proxy created; every interface call is recorded as an event - use op=await to receive them"))
                 }
+                // op=subclass: genereaza o SUBCLASA CONCRETA a oricarei clase (chiar abstracte)
+                // prin DexMaker (dex la runtime). Metodele suprascrise sunt inregistrate ca
+                // evenimente, la fel ca la proxy. Util pentru ScanCallback, BroadcastReceiver...
+                //   {"op":"subclass","parent":"android.bluetooth.le.ScanCallback"} -> {"id":"s1",...}
+                "subclass" -> {
+                    val parent = req.optString("parent")
+                    if (parent.isBlank()) err("subclass: 'parent' required (fully qualified class name)")
+                    else try {
+                        ok(JSONObject().put("id", prim.makeSubclass(parent)).put("parent", parent)
+                            .put("note", "concrete subclass created; every override is recorded as an event - use op=await to receive them"))
+                    } catch (e: Throwable) {
+                        err("subclass of $parent failed: " + (e.message ?: e.toString()) + " (DexMaker may be unavailable on this ART; fallback: use an interface + op=proxy, or a native shortcut)")
+                    }
+                }
                 "await" -> prim.await(req.optString("id").ifBlank { null }, req.optLong("timeout_ms", 10000))
                 "events" -> prim.events(req.optString("id"))
                 "drain" -> prim.drain(req.optString("id"))
@@ -460,7 +474,7 @@ class Reflection(private val ctx: Context) {
             if (v is JSONArray && v.length() == 2 && (v.get(0) as? String) in listOf("svc","obj","class","str","int","long","double","bool","new","ref","ctx","app")) {
                 // argument cu tip: [tip, valoare]  ex ["svc","sensor"]
                 resolveArg(v.getString(0), v.get(1))
-            } else v
+            } else if (v === JSONObject.NULL) null else v
         }
         val m = findMethod(cls, method, args)
             ?: return err("method not found: ${cls.name}.$method/" + args.size +
