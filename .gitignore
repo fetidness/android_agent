@@ -48,3 +48,5 @@ workspace/app/net.sys32.agent/gradlew.bat
 
 # dump-uri de analiza locale (conversatii extrase de pe device)
 workspace/samsung_dump/
+# fisiere temporare de test
+temp/
