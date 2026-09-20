@@ -252,3 +252,13 @@ TRAP: SensorManager.registerListener fara Handler, apelat din thread fara Looper
 TRAP: bridge-ul Android cu tool-urile native asteapta `{"tool":..,"action":..,"params":{..}}` (cheia `name` la senzori, `field` la eval-get) -> cererea `{"op":..}` raspunde "unknown tool:" -> nu confunda eroarea de protocol cu bridge mort.
 
 TRAP: `LLM import al agent.py` pe device agata (n-are `if __name__` guard, ruleaza bucla cu input() la nivel modul) -> nu-l importa; extrage functia cu regex intre `def X(` si urmatorul `\ndef ` si exec-o izolat.
+
+TRAP: `adb shell uiautomator dump /sdcard/ui.xml` esueaza silentios (scoped storage, "No such file") -> scrie dump-ul in /data/local/tmp/ui.xml si citeste-l cu cat de acolo.
+
+TRAP: dupa `adb install -r` hash-ul din calea /data/app/~~XXX==/pkg-YYY==/lib/<abi>/ se schimba -> calea libpyexec.so/LD_LIBRARY_PATH devine invalida -> reciteste-o cu `dumpsys package <pkg> | grep codePath`.
+
+OK: `run-as <pkg> <script.sh>` nu poate executa din /data/local/tmp (SELinux Permission denied) -> copiaza scriptul in filesDir/ al aplicatiei si ruleaza-l de acolo cu `run-as <pkg> sh /data/data/<pkg>/files/x.sh`.
+
+TRAP: importul agent.py pe device agata fara output (fara `if __name__` guard, ruleaza bucla cu input() la nivel modul) -> nu-l importa; extrage functia cu regex intre `def X(` si urmatorul `\ndef ` si exec-o izolat in python3.
+
+TRAP: bridge Android cu `{"op":..}` raspunde "unknown tool:" desi bridge-ul e viu -> protocolul corect e `{"tool":..,"action":..,"params":{..}}` (senzori: cheia `name`; eval get: cheia `field`) -> nu confunda eroarea de protocol cu bridge mort.

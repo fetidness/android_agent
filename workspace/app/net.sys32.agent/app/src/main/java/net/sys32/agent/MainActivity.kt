@@ -1,6 +1,7 @@
 package net.sys32.agent
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -234,6 +235,22 @@ class MainActivity : AppCompatActivity() {
             bridge!!.start()
         } catch (e: Exception) { appendAnsi("\n[bridge error] $e\n") }
         startPython()
+        startAgentService()
+    }
+
+    /** Porneste AgentService (foreground) ca procesul sa supravietuiasca in background. */
+    private fun startAgentService() {
+        try {
+            val i = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_START)
+            if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
+        } catch (e: Exception) { appendAnsi("\n[service error] $e\n") }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // daca utilizatorul a iesit din aplicatie, ne asiguram ca serviciul foreground ruleaza
+        // (agentul continua sa lucreze prin alte aplicatii)
+        startAgentService()
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -493,7 +510,12 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
 
     override fun onDestroy() {
         super.onDestroy()
-        try { pyProc?.destroy() } catch (_: Exception) {}
-        try { bridge?.stop() } catch (_: Exception) {}
+        // IMPORTANT: NU omoram procesul Python si bridge-ul daca AgentService ruleaza in
+        // foreground. Altfel agentul moare la minimizare si nu mai poate lucra prin alte
+        // aplicatii. Le oprim doar cand serviciul a fost oprit explicit (butonul /stop).
+        if (!AgentService.running) {
+            try { pyProc?.destroy() } catch (_: Exception) {}
+            try { bridge?.stop() } catch (_: Exception) {}
+        }
     }
 }

@@ -154,5 +154,15 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true"/>
 
+
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Personal AI agent that executes long-running tasks and controls the device while the app is in background"/>
+        </service>
     </application>
 </manifest>
