@@ -15,7 +15,7 @@
 2. Arhitectura
 3. Componentele aplicatiei
 4. Cum functioneaza Python pe Android
-5. Pasii dezvoltarii de la 0 (etape 1-14)
+5. Pasii dezvoltarii de la 0 (etape 1-20)
 6. Probleme intalnite si solutii
 7. Structura de fisiere a aplicatiei
 8. Structura pe dispozitiv (in rulare)
@@ -225,6 +225,55 @@ nu sub "shell" (uid 2000). De aceea "dumpsys battery" returneaza
 
 ---
 
+### Etapa 15 - Primitive generale de reflection (agent suprem)
+Problema: reflection-ul pur nu putea implementa interfețe Java (ScanCallback, listeners),
+nu putea pasa Context ca argument si nu putea astepta callbacks asincrone. Adaugat 4 primitive
+generale in Reflection.kt + Primitives.kt:
+- `op=proxy` - proxy de interfețe Java (java.lang.reflect.Proxy); fiecare apel devine un eveniment
+- referințe de obiecte ca argumente: `["ref","ctx"]`, `["ref","obj:o5"]`, `["ref","svc:sensor"]`
+- `op=await` / `op=events` / `op=sinks` - evenimente asincrone de la callback-uri
+- `op=subclass` - SUBCLASARE LA RUNTIME prin DexMaker (genereaza o clasa reala care
+  extinde orice clasa abstracta: ScanCallback, BroadcastReceiver etc.)
+Rezultat: scanare BLE reala cu ScanCallback (11 dispozitive detectate), imposibil inainte.
+
+### Etapa 16 - Biblioteci Python (Nivel 1)
+Adaugate in assets/python/Lib/site-packages/ ~13 pachete PURE Python (fara cod nativ):
+requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve,
+python-dateutil, six, pyyaml, toml, packaging, typing-extensions (~3.1 MB).
+Toate testate pe device (requests -> HTTP 200 real, bs4 -> parse HTML, yaml/toml -> round-trip).
+NU exista pip; agentul stie exact ce are si ca nu poate instala altceva.
+
+### Etapa 17 - Bug-uri de ambalare stdlib pe Android
+- AAPT2 IGNORA folderele care incep cu `_` in assets (fisierele .py merg, folderele NU).
+  zipfile/_path/ nu ajungea in APK -> livrat ca zipfile/_path.py (fisier simplu, glob inline).
+- six.py (fisier la radacina wheel-ului) era sarit de scriptul de copiere (copia doar foldere).
+- pyhome nu se actualiza (stdlib copiat o singura data) -> se sterge la re-extragere.
+
+### Etapa 18 - Sistem de memorie si auto-learn
+- memory.md pe termen lung, incarcat o singura data la start (snapshot in system prompt)
+- auto-learn: la finalul unui task (>=5 pasi SAU eroare) extrage lectii reutilizabile
+- filtru de VALOARE (_lesson_value): scor 0-10; taie banalitatile si observatiile fara consecinta
+- filtru de mediu: respinge lectiile de developer/desktop (nu-s despre acest telefon)
+- extractie multipla: pana la N lectii valide per task (nu doar una)
+- linter (mem_lint): valideaza formatul, duplicatul, lungimea
+
+### Etapa 19 - UI: streaming, scroll, comenzi
+- comanda /run <script.py> [args]: ruleaza orice script Python din workspace, direct din chat,
+  cu output STREAMING in timp real (linie cu linie) + salvare automata la output lung
+- scroll: derulezi sus -> ramai sus (nu te mai arunca jos la generare); revii jos -> auto-follow
+- buton STOP (SIGINT) in randul de input, langa send
+- Enter de pe tastatura virtuala (Gboard) trimite taskul (TextWatcher pe newline)
+- caseta de scris: creste corect pe mai multe randuri, nu mai taie ultima linie
+- banner curat, aliniat la stanga; cuvantul AGENT rosu
+- agentul raspunde in LIMBA operatorului (nu fortat romana)
+- INTERZIS tabele pe ecran mic: prompt dur + conversie automata tabel->lista la afisare
+
+### Etapa 20 - Workspace vizibil si git
+- workspace mutat in /sdcard/Download/Agent/ (memorie + context) si workspace/ (tot ce genereaza)
+- comanda /where arata unde e totul
+- iconita profesionala (prompt de terminal, SVG -> toate densitatile)
+- repo git + push pe GitHub (SSH)
+
 ## 6. PROBLEME INTALNITE SI SOLUTII
 
 1. SSL pe Android: URLError b'' la api.deepseek.com
@@ -268,16 +317,19 @@ nu sub "shell" (uid 2000). De aceea "dumpsys battery" returneaza
     |   |-- java/net/sys32/agent/
     |   |   |-- MainActivity.kt          (UI, pornire Python, input)
     |   |   |-- AndroidBridge.kt         (server TCP, tool-uri native)
-    |   |   |-- Reflection.kt            (reflection SDK)
+    |   |   |-- Reflection.kt            (reflection SDK + primitive: proxy, ref, await, subclass)
+    |   |   |-- Primitives.kt            (proxy de interfete, subclasare DexMaker, evenimente)
     |   |   |-- Ansi.kt                  (SGR -> Spannable)
     |   |   |-- Components.kt            (componente UI refolosibile)
     |   |   `-- CameraActivity.kt        (captura foto)
     |   |-- assets/python/
     |   |   |-- agent.py                 (creierul)
     |   |   |-- android_bridge.py        (client bridge)
-    |   |   |-- memory.md                (memorie initiala)
+    |   |   |-- memory.md                (schelet de memorie initiala)
     |   |   |-- libdynload/              (module .so pe arhitecturi)
     |   |   `-- Lib/                     (biblioteca standard Python)
+    |   |       |-- zipfile/_path.py     (livrat ca fisier, folderul _path/ e ignorat de AAPT)
+    |   |       `-- site-packages/       (13 pachete pure: requests, bs4, yaml, toml, ...)
     |   |-- res/mipmap-*/                (iconite toate densitatile)
     |   `-- lib/{arm64-v8a,x86_64}/      (libpython, libssl, libcrypto)
     `-- build.gradle.kts
@@ -317,6 +369,7 @@ La dezinstalare, aceste fisiere SUPRAVIETUIESC.
     /verbose            comuta afisarea completa a codului/output-ului
     /nospin             fara linia live (scrollback curat)
     /where              arata unde traieste totul
+    /run <script.py> [args]   ruleaza un script Python din workspace, cu output STREAMING
     /reset              sterge istoricul conversatiei
     /exit, /quit        iese
 
@@ -325,11 +378,12 @@ La dezinstalare, aceste fisiere SUPRAVIETUIESC.
 ## 10. TOOL-URI SI ACCESUL LA SISTEM
 
 ### Tool-uri principale
-- python   - executa cod Python
-- bash     - executa comenzi shell (sh -c pe Android)
+- python   - executa cod Python (stdlib complet + 13 pachete pre-instalate)
+- bash     - executa comenzi shell (sh -c pe Android; NU e bash)
 - smart    - router automat (alege python vs bash)
 - look     - analizeaza o imagine cu vision
 - android  - acces la SDK Android (reflection + shortcut-uri native)
+- read     - citeste un FISIER de la un offset, cu limita (paginare) - pentru fisiere mari/log-uri
 
 ### Actiuni ale tool-ului android
 sensors (list/read/stream/all), camera, location (last/current/fresh),
@@ -337,8 +391,27 @@ battery (get/full), clipboard, notify, vibrate, tts, volume, wifi, device,
 apps, intent, settings, system (get/full), storage, processes, network,
 display, audio, telephony, nfc, usb, appinfo, eval (reflection)
 
-### Operatii reflection
+### Operatii reflection (Reflection.kt)
 call, new, get, set, info, services, objs, free
++ PRIMITIVE GENERALE (agent suprem):
+  - proxy    - creeaza o instanta a oricarei INTERFETE Java (fiecare apel = eveniment)
+  - subclass - creeaza o SUBCLASA LA RUNTIME a oricarei clase abstracte (DexMaker)
+  - await    - asteapta un eveniment (callback) de la un proxy/subclasa
+  - events   - toate evenimentele capturate
+  - sinks    - proxy-urile/subclasele active
+
+### Referinte de obiecte ca argumente
+Orice argument poate fi ["ref", <valoare>]:
+  ["ref","ctx"]         - Context-ul aplicatiei
+  ["ref","app"]         - Application context
+  ["ref","obj:o5"]      - obiect pastrat dintr-un apel anterior
+  ["ref","svc:sensor"]  - un serviciu de sistem
+Merge la op=call SI la op=new (constructori).
+
+### Biblioteci Python pre-instalate (pure)
+requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve,
+python-dateutil, six, pyyaml, toml, packaging, typing-extensions.
+NU exista pip; NU se pot instala altele. numpy/pandas/cryptography NU sunt disponibile.
 
 ---
 
@@ -356,6 +429,21 @@ Ce POATE (cu permisiunile din manifest):
 - reflection pe orice clasa publica a SDK-ului
 - storage extern complet, contacte, SMS, telefon, calendar
 
+Ce NU se poate rula din exterior:
+- Python-ul agentului NU poate fi rulat direct din adb/Termux: files/python/
+  are permisiuni restrinse (drwx------) si run-as nu poate intra in subdirectoare.
+  De aceea exista comanda /run (ruleaza scriptul in sandbox-ul aplicatiei).
+
+Ce NU se poate instala:
+- NU exista pip/ensurepip -> zero pachete noi. Doar cele 13 pre-incluse in APK.
+- numpy/pandas/cryptography/scipy necesita cod C compilat pentru arm64 -> excluse.
+  Alternativa: array + statistics (pentru calcule), sqlite3 (baze de date).
+
+Capcane AAPT2 la ambalare assets:
+- folderele care incep cu "_" sunt IGNORATE (fisierele .py merg, folderele NU).
+  Ex: zipfile/_path/ a trebuit livrat ca zipfile/_path.py.
+- fisierele simple .py la radacina unui wheel (ex. six.py) trebuie copiate explicit.
+
 Aceste limitari NU se rezolva din permisiuni - doar cu root.
 
 ---
@@ -369,19 +457,37 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
    si tot am calcat pe ea.
 4. Portabilitate prin API, nu hardcodare. Caile din Environment, nu constante.
 5. Fallback mereu. Daca storage-ul extern nu e scriibil, cade in sandbox.
+6. Reflexia nu ajunge pentru callback-uri. Am pierdut 3 sesiuni pe BLE pina am
+   adaugat primitivele generale (proxy + subclass/DexMaker). Lectia: nu "muri in
+   gura" (retete), ci UNELTE GENERALE pe masa - agentul decide singur cum le foloseste.
+7. Documenteaza API-ul, nu comportamentul. Agentul a ghicit 9 sintaxe greșite de
+   referinta pentru ca nu erau in ghid. Un tool cu sintaxa nedocumentata e inutilizabil.
+8. Verifica ce CITESTE modelul, nu doar ce ii scrii. auto-learn raspundea "NO" pentru
+   ca primea doar promptul, fara istoricul taskului (ask(list(M)+[prompt]) lipsea).
+9. Cache-urile de build mint. Gradle a servit un manifest vechi (30/105 permisiuni)
+   si un APK cu _path/ lipsa; doar ./gradlew clean a rezolvat.
+10. AAPT2 ignora folderele cu "_". Fisierele .py merg, folderele NU -> livrate ca .py.
 
 ---
 
 ## 13. STAREA FINALA SI PASII URMATORI
 
 ### Stare finala
-- APK 31 MB (debug, neprotejat, arm64 + x86_64)
+- APK ~34 MB (debug, neprotejat, arm64 + x86_64)
 - Kotlin + CPython 3.14 compilat
+- 6 tool-uri: python, bash, smart, look, android, read
+- 4 primitive reflection: proxy, referinte de obiecte, await/events, subclass (DexMaker)
+- 25+ actiuni native (sensors, camera, location, battery, system, storage, network, display,
+  audio, telephony, nfc, usb, appinfo, processes, ...)
+- 13 biblioteci Python pre-instalate (pure): requests, bs4, dateutil, yaml, toml, packaging...
 - Acces la hardware si sistem (maxim posibil fara root)
-- Memorie persistenta cu auto-invatare
-- Workspace vizibil: /sdcard/Download/Agent/
-- Interfata terminal in engleza, auto-scroll, stop generare
+- Memorie persistenta cu auto-invatare (filtrata pe relevanta + mediu)
+- Workspace vizibil: /sdcard/Download/Agent/ (memorie, context) + workspace/
+- Comenzi: /help /learn /mem /ctx /where /run /reset /compact /verbose /nospin /exit
+- Interfata terminal in engleza, raspuns in limba operatorului, auto-scroll corect,
+  stop generare, fara tabele pe ecran mic
 - Iconita profesionala
+- Repo git cu push pe GitHub
 
 ### De facut la final (cind codul e stabil)
 - R8/ProGuard pe build release (reduce + obfuscare Kotlin)
