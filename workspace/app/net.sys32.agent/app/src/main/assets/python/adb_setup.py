@@ -40,19 +40,19 @@ def ensure_libs():
 def ensure_key():
     # ★ 1. daca exista in /sdcard -> o folosesc (persistenta!)
     if os.path.exists(KEY) and os.path.exists(PUBC):
-        log("cheie PERSISTENTA gasita in /sdcard")
+        log("PERSISTENT key found in /sdcard")
         shutil.copy2(KEY, LKEY); shutil.copy2(PUBC, LPUBC)
         return True
     # 2. daca exista local (din sesiune) -> o promovez in /sdcard
     if os.path.exists(LKEY) and os.path.exists(LPUBC):
-        log("promovez cheia locala in /sdcard")
+        log("promoting local key to /sdcard")
         try:
             shutil.copy2(LKEY, KEY); shutil.copy2(LPUBC, PUBC)
         except Exception as e:
-            log("nu pot salva in /sdcard: " + str(e)[:50])
+            log("cannot save to /sdcard: " + str(e)[:50])
         return True
     # 3. generez noua
-    log("generez cheie RSA 2048...")
+    log("generating RSA 2048 key...")
     c = ctypes.CDLL(LIB + "/libcrypto.so", mode=ctypes.RTLD_GLOBAL)
     def S(n,a,r):
         f = getattr(c,n); f.argtypes = a; f.restype = r
@@ -84,16 +84,16 @@ def ensure_key():
     # ★ salvez in /sdcard (persistent!)
     try:
         shutil.copy2(LKEY, KEY); shutil.copy2(LPUBC, PUBC)
-        log("cheie NOUA + salvata in /sdcard (persistenta)")
+        log("NEW key + saved to /sdcard (persistent)")
     except Exception as ex:
-        log("atentie: nu pot salva in /sdcard: " + str(ex)[:50])
+        log("warning: cannot save to /sdcard: " + str(ex)[:50])
     return True
 
 # ---------------- 3. CERT ----------------
 def ensure_cert():
     if os.path.exists(CERT) and os.path.exists(TLSK):
-        log("cert existent"); return True
-    log("generez certificat...")
+        log("certificate exists"); return True
+    log("generating certificate...")
     c = ctypes.CDLL(LIB + "/libcrypto.so", mode=ctypes.RTLD_GLOBAL)
     def S(n,a,r):
         f = getattr(c,n); f.argtypes = a; f.restype = r
@@ -111,7 +111,7 @@ def ensure_cert():
     S("PEM_write_bio_X509",[ctypes.c_void_p,ctypes.c_void_p],ctypes.c_int)
     b = c.BIO_new_file(LKEY.encode(), b"r")
     pk = c.PEM_read_bio_PrivateKey(b, None, None, None); c.BIO_free(b)
-    if not pk: log("EROARE cheie"); return False
+    if not pk: log("ERROR key"); return False
     x = c.X509_new(); c.X509_set_version(x,2)
     c.ASN1_INTEGER_set(c.X509_get_serialNumber(x),1)
     c.X509_gmtime_adj(c.X509_getm_notBefore(x),0); c.X509_gmtime_adj(c.X509_getm_notAfter(x),10*365*24*3600)
@@ -119,16 +119,16 @@ def ensure_cert():
     nm = c.X509_get_subject_name(x)
     c.X509_NAME_add_entry_by_txt(nm,b"CN",0x1000|1,b"adb",-1,-1,0)
     c.X509_set_issuer_name(x,nm)
-    if c.X509_sign(x,pk,c.EVP_sha256()) <= 0: log("EROARE sign"); return False
+    if c.X509_sign(x,pk,c.EVP_sha256()) <= 0: log("ERROR sign"); return False
     b2 = c.BIO_new_file(CERT.encode(),b"w"); c.PEM_write_bio_X509(b2,x); c.BIO_free(b2)
     shutil.copy2(LKEY, TLSK)
     return True
 
 if __name__ == "__main__":
-    log("=== SETUP ADB (cheie persistenta) ===")
+    log("=== ADB SETUP (persistent key) ===")
     ensure_dirs()
     ok1 = ensure_libs()
     ok2 = ensure_key() if ok1 else False
     ok3 = ensure_cert() if ok2 else False
-    log("libs=%s cheie=%s cert=%s" % (ok1, ok2, ok3))
-    log("cheie persistenta: " + (PERSIST if os.path.exists(KEY) else "NU (in files/)"))
+    log("libs=%s key=%s cert=%s" % (ok1, ok2, ok3))
+    log("persistent key: " + (PERSIST if os.path.exists(KEY) else "NO (in files/)"))

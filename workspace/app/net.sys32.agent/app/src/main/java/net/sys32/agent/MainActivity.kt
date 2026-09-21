@@ -245,13 +245,10 @@ class MainActivity : AppCompatActivity() {
         // requestAllPermissions) s-a închis si activitatea e iar in fata.
         // Altfel dialogul de runtime e acoperit de Settings si se pierde.
         requestAllPermissions()
-        try { extractAssets() } catch (e: Exception) { appendAnsi("\n[extract error] $e\n") }
-        try {
-            bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
-            bridge!!.start()
-        } catch (e: Exception) { appendAnsi("\n[bridge error] $e\n") }
-        startPython()
-        startAgentService()
+        // ★ STARTUP-ul mutat in onRequestPermissionsResult (dupa ce permisiunile sunt acordate)
+        // altfel extractAssets/startPython ruleaza cu permisiunile inca needate -> eroare
+        if (allEssentialPermsGranted()) startCore()
+        else requestAllPermissions()
         // Cere o singura data excluderea de la optimizarea bateriei (ca sa nu moara in Doze).
         requestIgnoreBatteryOptimizations()
     }
@@ -308,7 +305,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun appendAnsi(s: String) {
+    /** ★ Inlocuieste ULTIMA linie din terminal (pentru countdown-uri). */
+    private fun lastLine(s: String) {
+        val cur = output.text.toString()
+        val idx = cur.lastIndexOf("\n")
+        val head = if (idx >= 0) cur.substring(0, idx + 1) else ""
+        output.text = Ansi.toSpannable(head + s)
+        scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
+    }
+
+    fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
 
         // butonul STOP: il ascund cand taskul s-a terminat
@@ -407,6 +413,8 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, need.toTypedArray(), 1)
             return
         }
+        // ★ toate permisiunile esentiale deja acordate -> pornesc motorul direct
+        root.postDelayed({ startCore() }, 200)
         requestAllFilesAccess()
     }
 
@@ -421,6 +429,103 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (_: Exception) {}
         }
+    }
+
+    private var coreStarted = false
+
+    /** ★ SETUP-ul se face DOAR LA PRIMA INSTALARE (flag persistent pe disc). */
+    private fun setupDone(): Boolean = File(filesDir, ".setup_done").exists()
+    private fun markSetupDone() {
+        try { File(filesDir, ".setup_done").writeText("ok") } catch (_: Exception) {}
+    }
+    /** countdown-ul ruleaza doar la prima configurare. */
+    private var firstConfig = false
+
+    /** ★ Dupa ce userul se intoarce din ecranele de permisiuni (Settings), verificam
+     *  si pornim motorul. Asa nu mai depindem doar de callback-ul de permisiuni. */
+    override fun onResume() {
+        super.onResume()
+        if (!coreStarted && allEssentialPermsGranted()) {
+            root.postDelayed({ startCore() }, 800)
+        }
+    }
+
+    private fun allEssentialPermsGranted(): Boolean {
+        val ess = arrayOf(
+            Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.READ_CONTACTS,
+            Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.POST_NOTIFICATIONS
+        )
+        return ess.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+    }
+
+    /** Porneste efectiv motorul: assets, bridge, python, serviciu. O SINGURA DATA. */
+    private fun startCore() {
+        if (coreStarted) return
+        coreStarted = true
+
+        // ★ daca setup-ul s-a facut deja -> pornesc DIRECT, fara mesaje/countdown
+        if (setupDone()) {
+            Thread {
+                try { extractAssets() } catch (_: Exception) {}
+                runOnUiThread {
+                    try {
+                        bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
+                        bridge!!.start()
+                    } catch (_: Exception) {}
+                    startPython()
+                    startAgentService()
+                }
+            }.start()
+            return
+        }
+        firstConfig = true
+
+        // ★ COOLDOWN 30s: countdown real prin Handler (nu Thread.sleep -> UI se blocheaza).
+        val RED = "\u001b[38;5;203m"
+        val NRM = "\u001b[0m"
+        appendAnsi("\n" + RED + "AGENT CONFIGURATION IN PROGRESS..." + NRM + "\n"
+            + RED + "Preparing keys, libraries and environment." + NRM + "\n"
+            + RED + "Do not close the app." + NRM + "\n")
+        // linia de countdown (o adaug o data, apoi o inlocuiesc)
+        appendAnsi(RED + "Configuring... 30 seconds remaining" + NRM)
+
+        var s = 30
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                if (s > 1) {
+                    s--
+                    lastLine(RED + "Configuring... " + s + " seconds remaining" + NRM)
+                    handler.postDelayed(this, 1000)
+                } else {
+                    lastLine(RED + "Configuring... DONE" + NRM)
+                    handler.postDelayed({ runSetup() }, 1500)
+                }
+            }
+        }
+        handler.postDelayed(tick, 1000)
+    }
+
+    /** Configurarea reala (dupa countdown): extract + bridge + python + serviciu. */
+    private fun runSetup() {
+        val RED = "\u001b[38;5;203m"
+        val NRM = "\u001b[0m"
+        appendAnsi("\n" + RED + "Finalizing configuration..." + NRM + "\n")
+        Thread {
+            try { extractAssets() } catch (e: Exception) {
+                runOnUiThread { appendAnsi(RED + "Extract error: $e" + NRM + "\n") }
+            }
+            runOnUiThread {
+                try {
+                    bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
+                    bridge!!.start()
+                } catch (e: Exception) { appendAnsi(RED + "Bridge error: $e" + NRM + "\n") }
+                startPython()
+                startAgentService()
+                requestIgnoreBatteryOptimizations()
+            }
+        }.start()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -446,7 +551,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v56")
+        val stamp = File(filesDir, ".assets_v57")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -507,7 +612,16 @@ class MainActivity : AppCompatActivity() {
                     val sp = setup.start()
                     val sout = sp.inputStream.bufferedReader().readText()
                     sp.waitFor()
-                    if (sout.isNotEmpty()) runOnUiThread { appendAnsi("\n[setup] " + sout.takeLast(400) + "\n") }
+                    // ★ afisez TOATE liniile de setup, apoi mesajul final (in ordine!)
+                    val wasFirst = !setupDone()
+                    markSetupDone()   // ★ setup-ul s-a terminat -> nu se mai repeta
+                    runOnUiThread {
+                        // ★ afisez setup-ul + mesajul final DOAR la prima configurare
+                        if (wasFirst) {
+                            if (sout.isNotEmpty()) appendAnsi("\n[setup] " + sout.trim() + "\n")
+                            appendAnsi("\n" + "\u001b[38;5;203m" + "AGENT FULLY CONFIGURED AND OPERATIONAL" + "\u001b[0m" + "\n\n")
+                        }
+                    }
                 } catch (_: Exception) {}
 
                 val pb = ProcessBuilder(py.absolutePath, "agent.py")

@@ -582,3 +582,45 @@ OK: Android app's own dirs live under /data/data/<pkg>/files and are fully reada
 P: native libdir path embeds the install hash (/data/app/~~<hash>==/<pkg>-<hash>==/lib/arm64) and CHANGES on every reinstall -> never hardcode it; re-read with `adb shell dumpsys package <pkg> | grep codePath` and append /lib/arm64, or exec fails with "No such file or directory
 
 DEAD: launching an exec:ed .so with the wrong LD_LIBRARY_PATH fails as `libpyexec.so: No such file or directory` even though the file exists -> the error is from the dynamic loader, not from a missing file
+
+OK: adb tcpip 5555 on Android + self-generated adbkey.pub in app files dir -> adb connect 127.0.0.1:5555 gets authorized -> run-as app sh with LD_LIBRARY_PATH=<codePath>/lib/arm64 libpyexec.so script.py works for testing
+
+DEAD: Android accessibility_enabled resets to 0 after am force-stop of the accessibility service app -> re-enable with settings put secure enabled_accessibility_services <pkg>/<Service> then accessibility_enabled 1, verify via ui service json accessibility field
+
+TRAP: uiautomator dump reads app terminal as a single multiline text node with &#10; entities -> parse text and unescape &#10;/&amp; to see full output, and empty=agent died before printing (check ps -A)
+
+P: Android MainActivity permisiuni runtime sunt asincrone -> requestPermissions nu blocheaza, codul de dupa ruleaza imediat cu permisiuni needate -> muta tot startup-ul (extractAssets/startPython/service) in onRequestPermissionsResult, cu flag coreStarted, si porneste direct daca allEssentialPermsGranted() e deja true la onCreate.
+
+OK: Android app data/assets dir exact paths on device RZGL102X5AT: /data/data/net.sys32.agent/files/ (run-as net.sys32.agent ls) and /data/data/<pkg>/files/assets/ -> use these to verify first-run state before app has run
+
+OK: /sdcard/Download/Agent/memory.md on phone persists across app uninstall (pm uninstall keeps /sdcard) -> back up via adb shell cat before uninstalling app to avoid losing agent memory
+
+TRAP: uiautomator dump XML wraps long terminal text with &#10; entities and blank text nodes appear for EditText/scrollable views -> replace &#10; with \n and filter nodes by (y2-y1)>300 to find real content, else you get empty-looking dumps
+
+TRAP: ADB uninstall/install nu readuce app-ul in foreground -> dumpsys window mCurrentFocus poate arata com.android.settings (dialog permisiuni), nu app-ul -> verifica cu uiautomator dump, nu presupune ca app-ul ruleaza.
+
+OK: adb install -r pe net.sys32.agent nu aplică APK-ul nou dacă procesul vechi rulează -> ecranul arată codul VECHI chiar dacă sursa și APK-ul sunt noi -> verifică `dumpsys package <pkg> | grep lastUpdateTime` vs mtime APK și fă uninstall+install curat, apoi am force-stop + am start.
+
+OK: uiautomator dump pe Android scrie implicit /sdcard/window_dump.xml, nu /data/local/tmp -> `cat /data/local/tmp/xxx.xml` returnează gol -> scrie explicit `uiautomator dump /data/local/tmp/x.xml` înainte de cat.
+
+TRAP: assets_vNN din MainActivity.kt controlează re-extracția assets la pornire -> dacă nu incrementezi, modificările din assets nu ajung pe device -> incrementează .assets_vNN la fiecare schimbare de assets.
+
+DEAD: runOnUiThread in a Thread loop renders all iterations at once because UI thread batches late -> countdown appears instant -> use android.os.Handler(Looper.getMainLooper()).postDelayed for real 1s ticks
+
+P: adb package install/uninstall for net.sys32.agent at /home/gab/android/platform-tools/adb -s RZGL102X5AT; APK output at workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk -> adb install -r can hit version-conflict; do uninstall+install for fresh state
+
+P: MainActivity.kt calls startPython() async (Thread) so any UI message printed from runSetup appears BEFORE Python setup output -> to order output after [setup] lines, print from inside startPython after sp.waitFor(), not from runSetup
+
+OK: ADB device serial for the net.sys32.agent test phone is RZGL102X5AT; adb at /home/gab/android/platform-tools/adb -> use -s RZGL102X5AT for all adb shell/dumpsys/uiautomator commands.
+
+OK: read Android app UI screen text headlessly via `adb -s SERIAL shell "uiautomator dump /data/local/tmp/x.xml >/dev/null 2>&1; cat /data/local/tmp/x.xml"` then regex text="..." on nodes with bounds height>300 -> reliable way to assert on-screen state without a GUI.
+
+OK: inspect app-private files on non-rooted Android via `adb shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/` -> works without root for debuggable apps and is how to verify a persistence marker file was written.
+
+OK: adb shell uid 2000 (shell) is reachable on this desktop via /home/gab/android/platform-tools/adb -s RZGL102X5AT without root; grants dumpsys, /proc/net/tcp, logcat -d, pm list packages, appops get, settings put/delete, input keyevent, screencap, uiautomator dump -> use it for privileged Android inspection/automation instead of assuming root-only.
+
+DEAD: adb shell uid 2000 cannot read /data/data or run su -> for app-private data next time use `run-as <pkg>` only on debuggable apps, never expect plain shell access.
+
+P: agent context for a run is persisted at /sdcard/Download/Agent/context.json on device RZGL102X5AT, pullable via `adb -s RZGL102X5AT shell cat` -> read it to recover the full tool/assistant transcript of prior steps.
+
+DEAD: adb tcpip port must be exactly 5555; a typo like 5555->55555 reads back in getprop service.adb.tcp.port and adbd listens on 55555, so client connecting 127.0.0.1:5555 gets ECONNREFUSED -> after adb tcpip, verify with `getprop service.adb.tcp.port` equals 5555 before expecting adbsh to work.
