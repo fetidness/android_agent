@@ -824,6 +824,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control. Only on the Android build. Includes the 'ui' tool: SEE and CONTROL other apps. Actions: read (returns a COMPACT text list, ~10x smaller than JSON; params: max, depth, textonly), find (SEARCH a node by text WITHOUT reading the whole screen - USE THIS FIRST when looking for a contact/button/field; returns matches with center coordinates), settext (type into a field), click, tap, swipe, scroll, back/home/recents, openapp, windows, wake (keep screen on for UI work), sleep (release), service (status). Also FULL generic SDK access via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
+   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell with uid=2000(shell) on this very phone, run FROM the app with no PC. Only on the Android build. Runs a raw shell command as the privileged shell user, which app code cannot: pm grant/revoke runtime permissions, appops set, settings put secure/global, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop/setprop (read), svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as on debuggable apps, ifconfig/ip, cat /proc/net/*. This bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing. Runs the command and returns stdout+stderr. Prefer ONE command per call; combine with && if needed.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
@@ -1168,6 +1169,49 @@ def _looks_like_error(o):
     if re.search(r"\b(error|exception|failed|non-zero exit status|command not found|no such file)\b", lo): return True
     return False
 
+_ADBCLI=None
+def run_adbsh_tool(cmd, timeout=20):
+    """SUPER PUTERI: ruleaza o comanda shell ca user 'shell' (uid=2000) folosind
+    clientul ADB scris in Python (adb_client.py), conectat la adbd pe 127.0.0.1:5555.
+    Fara PC, fara root. Da acces la: pm grant, dumpsys, settings put, input, screencap, etc."""
+    import importlib.util as _iu
+    global _ADBCLI
+    try:
+        _ADBCLI
+    except NameError:
+        _ADBCLI=None
+    if _ADBCLI is None:
+        here=os.path.dirname(os.path.abspath(__file__))
+        try:
+            sp=_iu.spec_from_file_location("adb_client", os.path.join(here,"adb_client.py"))
+            _ADBCLI=_iu.module_from_spec(sp); sp.loader.exec_module(_ADBCLI)
+        except Exception as e:
+            _ADBCLI=False
+            _err="adbsh unavailable: "+str(e)
+    if not _ADBCLI:
+        o=_err if isinstance(_err,str) else "adbsh unavailable"
+        _show_step("adbsh", o, TASK["steps"]); return o
+    dsc="adbsh: "+cmd[:60]
+    def _run():
+        try:
+            import signal as _sig
+            def _to(s,f): raise TimeoutError("adbsh timeout")
+            old=_sig.signal(_sig.SIGALRM,_to); _sig.alarm(min(int(timeout),60))
+            try:
+                a=_ADBCLI.Adb(); a.connect()
+                return a.shell(cmd, timeout=min(int(timeout),60))
+            finally:
+                _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
+        except Exception as e:
+            return "adbsh error: "+str(e)
+    try:
+        o=_spin(_run, phase="tool", desc=dsc, col=HCLR[sum(map(ord,dsc))%len(HCLR)])
+    except Exception as e:
+        o="adbsh error: "+str(e)
+    TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o))
+    _show_step(dsc, o, TASK["steps"])
+    return o
+
 def run_android_tool(tool, action, params):
     """Ruleaza un tool nativ Android prin bridge-ul Kotlin (socket local).
     Intoarce textul (JSON compact) trimis modelului, cu acelasi contor de pasi."""
@@ -1232,6 +1276,8 @@ def call_tool(c):
         return run_tool(code) if code.strip() else run_bash_tool(cmd)
     if fn=="android":
         return run_android_tool(a.get("tool",""), a.get("action",""), a.get("params",{}) or {})
+    if fn=="adbsh":
+        return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
     return run_tool(a.get("code",""))
 def ask(messages=None, tools=None):
     _msgs = M if messages is None else messages

@@ -384,7 +384,7 @@ DURW=7   # widest _dur() value: "1:00:00" (7 chars)
 REFW=10  # widest log file name in the step line (longer names end with …)
 SZW=8    # width of the output-size box (and of the phase box in the live line)
 TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","1800"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
-CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","120000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
+CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","1000000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
 CTXKEEP=24         # how many recent messages are never compressed
 LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted between sessions)
 ARCH=os.path.join(WORK,"archive")     # COMPLETE snapshots of the history, before every compression

@@ -326,3 +326,259 @@ TRAP: `run-as <pkg> cat fisier` pierde newline-ul final -> md5 diferit fata de o
 TRAP: lansarea Python din app cere PYTHONHOME=files/pyhome (nu files/python) si LD_LIBRARY_PATH=nativeLibraryDir -> altfel "Fatal Python error: Failed to import encodings module" -> copiaza exact env-ul din ProcessBuilder (PYTHONHOME, HOME, PATH, AGENT_HOME) in wrapper.
 
 TRAP: cheia API era urcata in git in 3 locatii (key.txt root, assets/python/key.txt, ~/.deepseek_agent_key) desi doar ultima e citita de agentul desktop -> `git ls-files | grep -i key` arata ce e urmarit -> dupa expunere scoate din tracking cu `git rm --cached` SI adauga in .gitignore, altfel cheia ramane in istoric (git log --all -S'<cheie>' gaseste commit-ul) si doar revocarea ei la provider te mai salveaza.
+
+OK: adb -s RZGL102X5AT exec-out run-as net.sys32.agent cat <path> -> extracts app-private files on this device; /data/data/net.sys32.agent/files/context.json is empty (2 bytes) but the real context lives at /sdcard/Download/Agent/context.json readable via plain exec-out cat, no run-as needed.
+
+DEAD: connecting app->adbd from inside Android via SPAKE2/TLS pairing -> stops at internal AOSP PEER_INFO framing and adb_keys in /data/misc/adb is unreadable without root; ADB must come from outside (laptop) as uid shell 2000, never self-promote.
+
+P: ADB wireless debugging state on this Android (RZGL102X5AT) is live: adbd listens on TCP port 6100 (0x17D4) uid=1000, laptop 10.0.0.2 already ESTABLISHED -> connect adb to 10.188.228.103:6100 instead of assuming USB-only.
+
+OK: /data/local/tmp/adbkey.pub on this device is world-readable (mode 666) and readable by an app via adb shell run-as -> the public key can be read from an app, but the PRIVATE key ~/.android/adbkey stays on the laptop, so an app cannot self-authenticate to adbd; ADB must come from outside.
+
+OK: adb reverse tcp:9500 tcp:9500 works over UsbFfs on this device -> any privileged command can be tunneled to an app on 127.0.0.1:9500, giving uid=shell (2000) rights (pm grant, dumpsys, input, settings put, run-as all confirmed working) without root.
+
+TRAP: `adb shell run-as <pkg> env ... <path-in-filesDir>.py` -> SELinux denies exec of scripts in app filesDir ("Permission denied") -> run the script via `run-as <pkg> sh -c 'export ...; exec $LIBDIR/libpyexec.so $F/script.py'` instead.
+
+TRAP: `adb -s <serial> reverse --list` can print `UsbFfs tcp:N tcp:N` (device<->host reverse) while a same-port entry also shows in device `/proc/net/tcp` LISTEN, so port collisions with planned adb-reverse ports (e.g. 9500) must be checked via `adb reverse --list` AND `adb shell cat /proc/net/tcp | grep <hex>` before hardcoding one.
+
+OK: AOSP adb sources are at android.googlesource.com/platform/packages/modules/adb (NOT platform/system/core which lacks adb/) -> cloned dir at /tmp/adbsrc has client/ + adb_wifi.cpp for wireless support.
+
+P: use_version_lib and Android.bp Soong build mean adb cannot be built with plain make -> need repo+Soong (long) or hand-written CMakeLists with NDK arm64 toolchain.
+
+DEAD: git ls-remote against android.googlesource.com timed out/empty -> use curl to check AOSP availability, but full git clone works fine.
+
+DEAD: adb protocol on Android 11+/16 adbd (this device SDK 36) requires STLS + full TLS handshake + SPAKE2 pairing before CNXN; raw CNXN/STLS packets over TCP give silent timeout, not error -> do not attempt pure-Python ADB client (option A) without implementing TLS+SPAKE2; use real adb binary or adb reverse instead.
+
+P: on this device adbd wireless listen is 127.0.0.1:6100 (hex 17D4, uid 1000) and reachable via TCP from app uid, but /dev/socket/adbd is permission-denied -> connect via TCP loopback, not the unix socket.
+
+OK: AOSP adb protocol source cloned at /tmp/adbsrc (types.h struct amessage, adb.h command consts, adb.cpp handshake logic) -> use /tmp/adbsrc as reference for ADB packet layout (cmd,arg0,arg1,datalen,checksum,magic=cmd^0xffffffff).
+
+TRAP: bash heredoc `cat > file << EOF` inside the python tool failed silently leaving no file (adb push then errored "cannot stat") -> write scripts with python open().write() instead of heredocs, and verify file exists before push.
+
+OK: pypi spake2 0.9 e pur Python (py3-none-any, zero .so) iar cryptography e folosit DOAR pentru HKDF-SHA256 in groups.py -> se porteză pe ARM inlocuind HKDF cu hmac+hashlib stdlib (~10 linii) -> a rulat pe device Android cu chei identice, deci SPAKE2 nu necesita compilare C
+
+TRAP: parsarea "dumpsys package <pkg> | grep codePath" cu split("=")[-1] da cale goala daca nu tai prefixul "codePath=" -> folosesc raw.split("codePath=")[-1].strip() altfel libpyexec.so "inaccessible or not found
+
+TRAP: adb -s <serial> shell 'run-as <pkg> cd files/...' esueaza cu "No such file or directory" pentru ca cd nu e in PATH-ul run-as -> folosesc cai absolute /data/data/<pkg>/files/... si run-as <pkg> mkdir -p / cp / tar direct
+
+TRAP: running adb from subprocess with short timeouts leaves hung python processes on device that block adbd's shell service -> adb devices stays "device" but adb shell hangs forever -> before killing adb, pkill -9 -f libpyexec on device (or reboot phone / toggle wireless debugging) to free adbd shell channel
+
+P: adb shell blocks and cannot be recovered from the host once the shell service is stuck; getprop/devices/get-state still work but shell commands all TIMEOUT -> budget generous timeouts (60s+) for tests that spawn device-side processes, and always build self-terminating timeouts into the device script itself so no orphan process is left
+
+DEAD: adb shell pe device prin adbd la 127.0.0.1:5555 -> dupa multe conexiuni shell Python libpyexec lăsate deschise, canalul shell al adbd se blocheaza si adb devices ramane 'device' dar adb shell da TIMEOUT -> dupa orice shell Python prin adb inchide canalul (CLSE) si omoara procesul; daca totusi se blocheaza, repornește Wireless debugging sau telefonul.
+
+P: ADB auth pe 127.0.0.1:5555 din app Android -> adbd autorizeaza automat conexiunile localhost fara dialog -> nu e nevoie de adbkey pre-autorizat pe device pentru shell uid=2000 din app.
+
+TRAP: adb shell '<cmd>' cu comenzi multiple secventiale (peste ~6-8) -> depaseste timeout-ul si lasa procese libpyexec agatate care blocheaza adbd -> ruleaza comenzi adb shell scurte, una-doua per apel, cu timeout explicit.
+
+TRAP: `adb shell <cmd>` pe dispozitiv cu shell-ul adbd blocat (procese client agățate) -> toate comenzile adb shell returnează TIMEOUT, inclusiv `echo`/`dumpsys`, nu doar cele grele -> verifică mai întâi cu `adb devices` și un `echo PING`, nu lansa secvențe de diagnostice care se agață.
+
+OK: `python3 subprocess.run(..., timeout=N)` NU omoară procesul adb copil la TimeoutExpired -> procesele adb rămân agățate și blochează serviciul shell al adbd pentru sesiuni viitoare -> folosește `signal.alarm` sau `subprocess` cu kill explicit (`start_new_session` + os.killpg) ca să nu lași adb orfan.
+
+P: uid Android `u0_aNNN` = uid (NNN+10000); `u0_a327`=uid 10327 e ALTĂ aplicație, nu cea instalată de tine -> cheile „user keys" autorizate nu se șterg din „Paired devices" (acolo sunt doar pairing-uri wireless) ci doar prin Developer options -> Revoke USB debugging authorizations sau rm /data/misc/adb/adb_keys (root).
+
+DEAD: Android adbd pe acest device rulează ca uid=shell (nu root) și după restart repornește în mod wireless/TLS -> socket TCP către 127.0.0.1:5555 și :6100 se conectează dar recv dă TimeoutError (adbd așteaptă TLS/SPAKE2 pairing, nu protocol ADB clasic) -> nu relua implementarea client ADB clasic; adb tcpip 5555 nu readuce adbd în mod clasic aici, verifică mai întâi modul adbd sau implementează TLS+SPAKE2.
+
+OK: dumpsys adb pe device arată în debugging_manager cheile autorizate (user_keys) și last_key_received ca SHA256 fingerprint -> folosește-l pentru a confirma dacă cheia proprie a ajuns la adbd în loc să ghicești.
+
+TRAP: `bash -lc "grep -n ... file"` returned empty intermittently in this session while the file existed and had content -> output flushed empty for no error -> re-verify with python open()+read() or rerun before concluding a pattern/path is absent.
+
+PREVENT: agent.py Python test scripts on the phone leave the adb shell permanently hung (adb shell/get-state return empty, output-less) -> always wrap on-device python runs with a hard timeout (signal.alarm) and kill leftover processes; if hung, toggle Wireless debugging / force-stop Agent / reboot to recover.
+
+OK: Android device pairing libraries live at /apex/com.android.adbd/lib64/ (libadb_pairing_auth.so, libadb_pairing_connection.so with pairing_connection_client_new/start, libcrypto.so) -> load via ctypes instead of reimplementing SPAKE2/TLS/PEER_INFO framing; exported symbols listed in the matching .map.txt files under /tmp/adbsrc/pairing_connection/.
+
+TRAP: running a .py directly from /data/data/<pkg>/files on Android gives "Permission denied" (SELinux blocks exec from filesDir) -> pass the script as an ARGUMENT to libpyexec.so: run-as <pkg> env PYTHONHOME=... LD_LIBRARY_PATH=... <libdir>/libpyexec.so /path/script.py.
+
+OK: adb shell prin subprocess.run([ADB,"-s","SERIAL","shell",...]) e fiabil, dar apele adb din tool-ul bash returneaza des gol fara eroare -> foloseste python subprocess cu capture_output pentru adb -s SERIAL shell.
+
+TRAP: adbd pairing_connection callback is void (*)(const PeerInfo*, int, void*) where the int is the SOCKET FD, not an error code; success = peer pointer != NULL (NotifyResult(&their_info_)), failure = NotifyResult(nullptr) -> don't interpret n==4 as an error.
+
+DEAD: adb "adb -s RZGL102X5AT shell logcat -d" and "dmesg" return empty on this device -> no world-readable pair/adbd logs -> don't rely on logcat to debug pairing; instead instrument inside the app process (run-as net.sys32.agent) and print to stdout.
+
+P: Android toybox awk has no strtonum() -> /proc/net/tcp6 parsing fails -> parse ports with grep/hex via printf "%d 0x..." or use netstat instead.
+
+OK: on this device the app-private dir /data/data/net.sys32.agent/files holds libs/, python/, home/, pyhome/ and pair.crt/pair.key/adbkey.pub, runnable via run-as net.sys32.agent sh -c 'cd files/python && HOME=files/home PYTHONHOME=files/pyhome LD_LIBRARY_PATH=<lib_arm64> libpyexec.so script.py' -> this exact invocation is the working way to run arbitrary Python+ctypes against the app's bundled libcrypto/libadb_pairing_*.
+
+P: adb pairing code expires in ~30-60s and each pairing attempt consumes it (dialog self-closes) -> a second/2nd-minute attempt returns peer=NULL indistinguishable from a wrong-code failure -> always request a fresh code immediately before running the pairing script.
+
+DEAD: ctypes calling pairing_auth_get_spake2_msg(ctx) as returning pointer segfaults the process -> real signature is void pairing_auth_get_spake2_msg(PairingAuthCtx*, uint8_t* out_buf), buffer size from pairing_auth_msg_size(ctx) -> always grep the AOSP header in /tmp/adbsrc/<module>/include/... for the exact prototype before ctypes-restype/argtypes.
+
+OK: verifying a C shared lib symbol with ctypes is fastest by calling a self-contained client+server pair in one process (pairing_auth_client_new + pairing_auth_server_new with same password, exchange msgs via pairing_auth_init_cipher) -> both rc=1 proves the whole crypto path works and isolates external failures.
+
+TRAP: ctypes callback pentru pairing_connection_start poate aborta procesul cu fdsan ("attempted to close file descriptor ... actually owned by unique_fd") chiar DUPĂ un pairing reușit -> apel libc.android_fdsan_set_error_level(0) înainte, sau os._exit(0) la final ca să sari peste cleanup
+
+DEAD: adb connect pe portul de pairing (ex. 37167) NU realizează pairing -> pair-ul trebuie făcut prin protocol TLS+SPAKE2; pairing-ul e valabil doar ~1-2 min, după care peer=NULL fără eroare explicită
+
+DEAD: ADB wireless pairing from an app (untrusted_app) to adbd's pairing port -> adbd never answers TLS at all (raw ClientHello times out, pairing_connection_start gives peer=NULL even with a fully valid X.509 cert incl. basicConstraints/keyUsage/SKI) -> don't retry app-side pairing; use `adb tcpip 5555` instead, which already yielded uid=2000(shell).
+
+OK: reading adbd logs on this device -> `adb -s RZGL102X5AT logcat -d -t 300 -s adbd:*` works from the laptop shell (via adb logcat, NOT `adb shell logcat`); `adb shell logcat` returned empty because uid shell lacks read access.
+
+P: this machine's ~/android/platform-tools/adb is the only working ADB to the phone at 192.168.0.215:5555; after phone reboot the TCP listener dies -> re-run `adb -s RZGL102X5AT tcpip 5555` from USB to restore.
+
+TRAP: adb devices can list a device as "device" while adb tcpip/other adb subcommands still fail with "device not found" during/after phone reboot -> adbd briefly drops -> retry the adb command after the device line stabilizes, don't assume the first failure is fatal.
+
+TRAP: phone adbd over localhost does NOT auto-approve when you reply to AUTH_TOKEN with AUTH_SIGNATURE (RSA signature) -> infinite AUTH loop, adbd never registers the key -> send AUTH_RSAPUBLICKEY (the .pub file) directly on the first AUTH_TOKEN; it authorizes instantly with no on-screen dialog and no key persistence.
+
+P: phone TCP-ADB reachable from the phone itself at 127.0.0.1:5555 when netstat shows adbd LISTEN on [::]:5555 -> proves port 5555 is the working entry point; verify reachability with netstat under adb shell, not just host-side adb devices.
+
+PREVENT: adb tcpip does NOT persist across phone reboot (after restart the 5555 listener is gone, only 6100 remains) -> re-run adb tcpip 5555 over USB after every phone restart before any TCP-ADB work.
+
+P: adb_client.py (client ADB in Python pur, files/python) permite shell uid=2000 pe telefonul local prin 127.0.0.1:5555 -> deblocheaza pm grant/dumpsys/input/screencap/settings put fara PC sau root; require adb tcpip 5555 o data dupa fiecare reinstall/restart al adbd.
+
+P: linker-ul Android refuza dlopen pe /apex/com.android.adbd/lib64/*.so -> copiaza libcrypto.so+libadb_pairing_*.so in files/libs/ la runtime si incarca de acolo; pe PC Linux libcrypto se incarca direct din /usr/lib.
+
+TRAP: pe PC-ul asta adb run-as <pkg> cp/cat din /data/data esueaza silentios pe unele cai -> extrage fisiere cu: adb exec-out run-as <pkg> cat <path> > local (nu pull, nu run-as cp).
+
+TRAP: libdir real al APK-ului se schimba la fiecare reinstalare (hash in /data/app/~~X==/pkg-Y==/lib/arm64) -> reciteste-l mereu cu: adb shell dumpsys package <pkg> | grep codePath, apoi append /lib/arm64; calea veche da "inaccessible or not found".
+
+P: pentru a testa o functie izolata din agent.py fara a rula bucla, exec pe fragmentul de cod cu namespace care include "__file__": <path>, _show_step, _spin, HCLR, TASK, TN -> altfel NameError: __file__ is not defined.
+
+OK: adbd on Android auto-accepts loopback (uid=2000) adb connections WITHOUT saving key to adb_keys/user_keys, so dumpsys adb user_keys will never contain the local agent key -> do not treat absence as auth failure; verify by running adbsh and checking "AUTORIZAT"/uid instead.
+
+TRAP: reading adbkey.pub via shell 'cat' appended filename text (" adbkey") making the key 363 chars/corrupt and silently invalid -> always check length ~356-524 and final base64 ...AQAB; regenerate from adbkey PEM via libcrypto RSA_get0_key.
+
+P: adb shell pe Android via /home/gab/android/platform-tools/adb -s RZGL102X5AT: conexiunile adb repetate de pe laptop re-declanșează dialogul "Allow USB debugging?" (UsbDebuggingActivity) și pot agăța temporar adbd-ul (settings get / echo dau timeout) -> la shell-uri blocate intermitent, verifică mai întâi mCurrentFocus pentru UsbDebuggingActivity și închide dialogul (input tap pe Allow/Cancel sau keyevent 4) înainte de a reîncerca comanda.
+
+P: Android adb install -r dezactivează AccessibilityService (enabled_accessibility_services se golește) -> după fiecare rebuild/reinstall de APK, reactivează cu: settings put secure enabled_accessibility_services <pkg>/<pkg>.AgentAccessibilityService ; settings put secure accessibility_enabled 1 ; verifică cu ui service -> accessibility:true.
+
+TRAP: `dumpsys adb | grep 'user_keys='` prints the raw keystore blob with base64 padding and embedded spaces which breaks naive regex but IS the authoritative list of authorized keys -> count `QAAAAB` (keystore/laptop keys) vs `AAEAAL` (adb pubkey/agent keys) separately; a key only in `lastConnection` is NOT authorized, only keys in `user_keys` count -> to verify authorization, compare both lists, not lastConnection.
+
+P: on this machine every `adb -s RZGL102X5AT shell ...` call restarts the USB adb connection and re-triggers the Android "Allow USB debugging" dialog, so testing via adb from the laptop keeps the dialog in an infinite loop -> when a device-side dialog must be approved, approve it ONCE with the checkbox verified checked=true then stop issuing adb commands, or disconnect USB before approving.
+
+TRAP: `uiautomator dump` returns empty text (no <node> entries) when the focused window is still loading (e.g. Settings SubSettings) -> never conclude the screen is blank from an empty dump; re-dump after delay or check `dumpsys window | grep mCurrentFocus` first.
+
+TRAP: verificarea amprentei ADB pt aprobare telefon trebuie facuta in ambele parti - `dumpsys adb | grep last_key_received` pe device vs amprenta cheii laptop; daca nu corespund, adbd cere mereu aprobare -> fix: `Revoke USB debugging authorizations` pe telefon, apoi reaproba.
+
+TRAP: daca ~/.android/adbkey.pub lipseste, NU sterge adbkey privat ca sa-l regenerezi - adb NU regenereaza .pub singur si cheia se schimba -> fix: fa backup si regenereaza .pub manual.
+
+TRAP: openssl rsa -in ~/.android/adbkey -pubout -outform DER returneaza 0 bytes pe acest sistem -> foloseste `openssl rsa -noout -text` si parseaza modulus/publicExponent in schimb.
+
+DEAD: python cryptography nu e instalat pe acest Linux (ImportError) -> nu te baza pe el pt operatii chei RSA; foloseste openssl.
+
+OK: adb server (this machine) autorizează per public-key fingerprint, nu per device -> cheia generată de o altă aplicație/agent (alt fingerprint) declanșează din nou dialogul Allow USB debugging chiar dacă laptopul e deja autorizat; verifică cu `dumpsys adb | grep last_key_received` și compară amprenta SHA256 a cheii trimise.
+
+TRAP: `adb shell run-as <pkg> ls -la <dir>/prefix*` nu expandează glob (nu e shell interactiv) -> întoarce "No such file"; verifică existența fișierelor cu `run-as <pkg> ls <full-path>` per fișier sau `ls <dir>/` fără wildcard.
+
+DEAD: adb USB-authorization for an unauthorized device cannot be bypassed from an app on the phone itself (dumpsys adb shows user_keys holds only the laptop key; app-process adbd is sandboxed SELinux and adbd refuses its key) -> don't retry adb shell am start / libadb_pairing_connection tricks to become authorized; the only path is the Wireless debugging pairing-code flow, which needs a live 6-digit code from the on-screen dialog.
+
+OK: /home/gab/android/platform-tools/adb is the working adb binary on this box; device serial RZGL102X5AT is reachable via adb -s -> use it directly instead of hunting for adb elsewhere.
+
+OK: on-device Python/ctypes runs via HOME=/data/data/net.sys32.agent/files/home PYTHONHOME=.../pyhome LD_LIBRARY_PATH=<pkg>/lib/arm64 <pkg>/lib/arm64/libpyexec.so script.py under run-as -> exact invocation to execute a pushed script inside the agent app context.
+
+P: adb wireless adbd listens as uid 2000 (shell) on a random port shown in dumpsys adb / netstat, NOT 5555; /proc/net/tcp6 local_address is hex little-endian port -> decode hex to find the real pairing/connect port instead of assuming 5555.
+
+TRAP: adb pairing always uses a fresh 6-digit code from the "Pair device with pairing code" dialog, valid ~30-60s -> never cache or reuse an old code; request a new one and run pairing immediately.
+
+P: Android linker on this device resolves NEEDED .so by soname from default_library_paths (/system/lib64, /apex/.../bionic) BEFORE any LD_LIBRARY_PATH dir -> a bundled libcrypto.so in a private dir is silently ignored in favor of the older /system/lib64/libcrypto.so -> prefix LD_LIBRARY_PATH with the private libs dir first (LD_LIBRARY_PATH=/data/data/<pkg>/files/libs:<nativeLibDir>) so the correct version wins; verify with ctypes.CDLL of the .so that previously failed on a missing bssl symbol.
+
+OK: /apex/com.android.adbd/lib64/libadb_pairing_connection.so has BoringSSL statically linked and does NOT need libssl.so; loading a libssl.so from /apex/com.android.conscrypt/lib64 segfaults (exit 139) against adbd's libcrypto -> do not bundle libssl for ADB pairing, only libcrypto + libadb_pairing_auth + libadb_pairing_connection.
+
+DEAD: running the ADB pairing connection client and server in the SAME python process deadlocks the TLS handshake (both ends block on recv, pairing_connection_start returns 1 then no callback) -> local loopback testing of adbd pairing is unrepresentative; test only against the real adbd process.
+
+TRAP: `run-as <pkg> cp /apex/com.android.adbd/lib64/<lib>.so` can fail silently (verified: liblog.so not copied, ls showed no file, rc not checked) -> /apex adbd libs are not always readable by run-as; always verify with ls after cp and fall back to /system/lib64 copies only if version-compatible.
+
+P: Android agent on net.sys32.agent runs its python tool in-process (subprocess.Popen([sys.executable]+argv) where sys.executable=libpyexec.so), so a task sent to the agent can execute arbitrary Python with the agent's already-configured LD_LIBRARY_PATH/PYTHONHOME without needing a shell wrapper.
+
+P: adb pairing libs live at /data/data/net.sys32.agent/files/libs (libcrypto.so, libadb_pairing_auth.so, libadb_pairing_connection.so) and must be loaded via ctypes.CDLL with RTLD_GLOBAL in order crypto -> auth -> connection before use.
+
+P: adb shell command that returns empty intermittently for the same query -> retry or switch to `adb exec-out run-as <pkg> cat <file>` piped to host; grep-through-shell is the flaky path, exec-out cat is the reliable one.
+
+P: Android pairing_crypto pairing_connection_start preia ownership fd (unique_fd) -> Python socket.fileno() cauzeaza dubla proprietate -> fdsan abort() ucide procesul inainte ca callback-ul sa returneze peer_info, aparent peer=NULL; fix libc.android_fdsan_set_error_level(0) inainte de pairing (nu doar LD_LIBRARY_PATH)
+
+OK: build adb pairing pe Android ne-rootat -> libs native trebuie puse in files/libs si LD_LIBRARY_PATH sa inceapa cu files/libs (nu libdir din lib/arm64) altfel libpymodules/libpython se incarca gresit
+
+PREVENT: la pairing wireless adb codul expira in ~30-60s -> re-deschide dialogul si extrage port+cod proaspat dupa fiecare rulare esuata
+
+TRAP: adb pairing TLS needs CLIENT cert (mTLS) -> plain ssl wrap closes connection instantly with SSLZeroReturnError -> always load_cert_chain(pair.crt, pair.key) BEFORE wrap_socket on the pairing port.
+
+DEAD: Samsung adbd on-device wireless pairing (pairing_auth SPAKE2 via libpyexec) completes full PEER_INFO exchange (8208B both ways, type=1) but never persists the key to dumpsys user_keys -> pairing alone can't grant adb shell on this A36; only laptop `adb tcpip 5555` produces a usable uid=2000 shell.
+
+P: dumpsys adb user_keys shows ONLY the keystore-encoded QAAAAB laptop key (524B: 4B len=64 + 64B hash + rest), format differs from raw AAABA adb pubkey -> comparing q[5:]==our_pubkey fails; the on-device adbkey is NOT a byte copy of the laptop's authorized key.
+
+TRAP: `run-as net.sys32.agent` python needs LD_LIBRARY_PATH=$F/libs:$libdir AND LD_LIBRARY_PATH set inside `sh -c` for adbd .so ctypes loads -> libdir is read from $F/libdir.txt (run-as ... cat); without it ctypes.CDLL of libadb_pairing_auth.so / libcrypto.so fails.
+
+OK: `adb` regenerates a valid `~/.android/adbkey.pub` (537 bytes, prefix `40000000`) on `kill-server; start-server` -> a hand-built/wrong pub (356 bytes) gives unauthorized forever -> delete both adbkey+adbkey.pub then restart adb so it recreates them correctly
+
+OK: `dumpsys adb` field `last_key_received=<fp>` shows the device SAW the agent's key; `user_keys=` lists only saved keys -> if last_key_received updates but user_keys stays 1 key and adbsh times out, the key is NOT persisted (localhost TCP auth doesn't save to keystore on this Samsung) -> use a key already in user_keys
+
+DEAD: Android adbd on Samsung refuses repeated TCP auth attempts (timeout, no response) even with correct key -> triggers rate-limit/brute-force protection after several tries -> wait 2-3min before retrying, do a single clean auth attempt, close the "Allow USB debugging?" dialog first.
+
+P: adb shell over the local adb server (/home/gab/android/platform-tools/adb -s RZGL102X5AT) hangs with <<TIMEOUT>> whenever any command runs while the on-screen UsbDebugging "Allow" dialog is open -> adbd blocks on the pending auth -> before any bulk adb-shell scripting, check dumpsys window | grep mCurrentFocus for UsbDebugging and dismiss/approve via input keyevent, then retry.
+
+P: adb "always allow" key persists in `dumpsys adb | grep user_keys=` on the phone (format QAAAA...); a fresh RSA pubkey must match byte-for-byte or adbd silently never answers the AUTH signature packet -> regenerate key with no trailing username field, exactly 700-char base64 body, use recv_exact() loop for 24-byte adb packets or short TCP reads desync the whole handshake.
+
+TRAP: after many failed adb auth attempts adbd on port 5555 stops replying entirely (silent timeout, no dialog) -> rate-limited/blocked, not a key problem -> restart adbd via `settings put global adb_wifi_enabled 0` then `1` then `adb tcpip 5555`, wait ~3s, retry; verify with `netstat -tln | grep 5555`.
+
+DEAD: `adb connect 127.0.0.1:5555` from this Linux host to a phone-side loopback listener is always "Connection refused" because tcpip 5555 binds phone loopback only -> test the adb client from ON the phone via run-as, not from the laptop.
+
+DEAD: `adb -s <serial> connect <wifi-ip>:5555` to a phone on the same LAN fails with "Connection refused" when adbd was started via `adb tcpip 5555` -> that port only binds on the device loopback/[::] for the USB-tunnelled adb, not the phone's wifi IP -> to reach it use `adb forward`/`adb reverse` through the USB serial instead of connecting to the phone's wlan IP.
+
+OK: `adb shell dumpsys adb` shows `user_keys=` (authorized pubkeys) and `last_key_received=<sha256-fingerprint>` in the debugging_manager block -> use these two fields to tell whether a client key is truly authorized and whether adbd actually processed a new key -> if last_key_received does not change after an auth attempt, adbd rejected before registering the key.
+
+TRAP: /data/local/tmp/*.pub and /sdcard/Download/Agent/adbkey.pub are NOT the keys adb actually uses -> adb daemon reads /data/misc/adb/adb_keys (root) or the app's own dir (run-as net.sys32.agent) -> when hunting "which key is authorized" on this device, cat /data/misc/adb/adb_keys via run-as/root, not sdcard or /data/local/tmp copies.
+
+OK: net.sys32.agent private files are readable with `adb shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files` -> app runs debuggable so run-as works without root -> use run-as for any per-app file inspection on this device instead of requesting root.
+
+TRAP: local ADB wireless on 6100 was already occupied by the laptop's own adb connection -> an app/agent connecting to 127.0.0.1:6100 silently fails while the PC holds the port -> before pointing a new client at the wireless pair port, disconnect this host first (`adb disconnect`) or use 5555.
+
+TRAP: `adb shell netstat -tln | grep <port>` pe device arată porturi LISTEN/ESTABLISHED dar NU dezvăluie cine e peer-ul când IP-ul remote nu e în subnetul local -> verifică `dumpsys adb` pentru last_key_received/user_keys și `adb -s <serial> disconnect` apoi re-check netstat ca să vezi dacă revine (persistent=alt client, dispare=clientul tău)
+
+OK: adb -s <serial> kill-server kills the whole adb server on this desktop, not just that device -> after it the daemon restarts at tcp:5037 and any existing wireless-debug ESTABLISHED sockets on the phone side persist untouched -> to actually drop phone-side 6100/6101 connections you must toggle Wireless debugging OFF and/or reboot the device, not rely on kill-server.
+
+P: /home/gab/android/platform-tools/adb is the adb binary path on this desktop; adb is not on PATH -> invoke it by absolute path or define ADB=/home/gab/android/platform-tools/adb in every script.
+
+TRAP: Android `netstat -tn` shows remote 10.x.x.x:7777/7778 pairs as ESTABLISHED on ports 6100/6101 even when settings global adb_wifi_enabled=0 -> this is normal adbd wireless-debug listener behaviour, NOT proof of an intrusion -> verify by checking whether the remote IP matches this laptop's own IP before flagging a security incident.
+
+TRAP: resolving a device's own mobile IP with `ip route get <remote>` returns "via 192.168.3.1 dev wlan0 table 1045" -> table 1045 is the Android per-network routing table for the rmnet/mobile data interface, not a sign the traffic is spoofed -> interpret table 104x as mobile-data route, not anomaly.
+
+TRAP: `adb -s <serial> exec-out run-as <pkg> cat <file>` intoarce 0 bytes desi fisierul exista -> exec-out+run-as+cat e fragil pe Samsung -> foloseste `adb shell run-as <pkg> cat <file>` sau `head -25`/`grep -n` in loc de cat.
+
+DEAD: `adb shell run-as <pkg> grep -n '...' <file>` cu pattern-uri multi-alternativa intoarce gol desi `head` pe acelasi fisier arata continut -> grep+run-as pe Android e nesigur -> verifica cu `head`/`sed` direct.
+
+P: /home/gab/android/platform-tools/adb este binarul adb folosit pe acest desktop (nu `adb` din PATH) -> foloseste calea absoluta in scripturi.
+
+TRAP: cand USB-ul e instabil, `adb -s <serial>` da "device not found" si apoi "unauthorized" -> repornirea adbd/Telefon re-apare cu "device" dupa ~25s -> pune retry cu poll pe `adb devices` inainte sa conchizi ca tool-ul nu merge.
+
+DEAD: adb wireless debugging port 6100 stays ESTABLISHED to remote 10.0.0.2 and survives even `adb kill-server` + `settings put global adb_wifi_enabled 0` -> not the local host's own adb; to free the port requires phone reboot or revoking debug authorizations, agent can't kill it via shell.
+
+TRAP: pe acest telefon porturile wireless ADB sunt fix 6100 (TLS/listen) și 6101 (pairing), iar conexiunea ESTABLISHED cu IP-ul PC-ului rămâne agățată după ce UI-ul arată OFF → `adb kill-server` pe PC nu eliberează; doar restart telefon sau reconnect din UI eliberează.
+
+DEAD: adb shell cat on /sdcard/Download/Agent/context.json works without root, but run-as net.sys32.agent fails ("files/context.json: No such file or directory") because the app's private dir is not at files/context.json remotely -> read agent state from /sdcard/Download/Agent/context.json via plain adb shell cat, not run-as.
+
+OK: adb -s RZGL102X5AT shell for SM-A366B (Android 16) works headless from this Linux box with /home/gab/android/platform-tools/adb binary -> use that absolute path and -s RZGL102X5AT for all device commands.
+
+TRAP: adb `android.settings.WIRELESS_DEBUGGING_SETTINGS` intent returns "unable to resolve" on this Samsung Android device -> use `am start -a android.settings.SETTINGS` then tap "Wireless debugging" via accessibility bridge instead.
+
+OK: adb pairing connection flow proven working via libadb_pairing_auth.so: TLS1.3 mTLS with tls.crt/tls.key -> SPAKE2 (pairing_auth_client_new/get_spake2_msg/init_cipher returns 1) -> PEER_INFO encrypted, but final decrypt returns 0 -> pairing code pair is valid only ~60s, old codes give init_cipher=1 but decrypt=0.
+
+DEAD: adb wireless (TLS A_STLS) on Samsung SM-A366B - ports from Settings "IP address & Port" (6100, 33827, 32813) accept TCP but never reply to TLS or A_AUTH (EOF/timeout) -> only service.adb.tcp.port 5555 speaks A_AUTH and works; do not bother retrying wireless TLS, use 5555.
+
+TRAP: `ip -4 -br addr` on this laptop shows only enp2s0 192.168.1.136 (no 192.168.3.x) -> laptop and phone are on DIFFERENT subnets, so any 10.0.0.2 / 192.168.3.75 seen in phone netstat is NOT this laptop; verify with `ip route get <ip>` before assuming a device is you.
+
+OK: check which uid owns an ADB listen port on the phone via getprop/adb shell `/proc/net/tcp6` + `netstat -tln` -> uid=2000 (shell) means adbd legacy A_AUTH, not a wireless TLS service; distinguishes usable ports without guessing.
+
+DEAD: Wireshark on this Linux desktop cannot capture the Android USB/adb tcp:5555 loopback traffic -> loopback iface and Android-internal sockets are not visible to host capture -> use `adb -s RZGL102X5AT shell` / dumpsys directly instead of host packet capture.
+
+OK: real adbd process state on Android is readable via `adb shell ps -A | grep adbd` and `adb shell getprop service.adb.*` -> adb forward/connect output is stale -> always confirm with ps/getprop before believing port state.
+
+P: /home/gab/android/platform-tools/adb is the working adb binary and device serial RZGL102X5AT is the connected Android device here -> adb from PATH may differ -> always call the absolute path with `-s RZGL102X5AT`.
+
+DEAD: Python ssl module on this Linux desktop (and Android python build) does not expose SSL_export_keying_material, so ADB wireless TLS pairing cannot be completed from Python alone -> SPAKE2 key derivation needs TLS ExportKeyingMaterial(64) appended to the code -> use libadb_pairing_connection.so or a real PC adb pair client instead of hand-rolling pairing in Python.
+
+DEAD: android adb wireless pairing from Python fails: ssl module lacks TLS ExportKeyingMaterial -> cannot do pairing code path -> fall back to USB `adb tcpip 5555` once, then connect 127.0.0.1:5555.
+
+OK: pull Linux->device via adb push to /data/local/tmp then run-as <pkg> cp to app-private dir; run-as can read/write but push cannot target private paths directly.
+
+P: On this machine `run-as <pkg> sh -c '...'` needs the whole command single-quoted; nested " and $ inside get mangled -> prefer writing a script file and executing it instead of long inline sh -c.
+
+OK: adb exec-out run-as net.sys32.agent cat <file> -> read app-private files without root; run-as fails silently on non-debuggable apps -> prefer this over su for net.sys32.agent paths.
+
+P: agent tool descriptions bundle DECISION RULES inline ("use adbsh ONLY for pm/appops/settings put, NOT for screen reads") -> the LLM picks native android/python/bash first and adbsh last -> put per-tool when-to-use rules in the description field, not just the system prompt.
+
+TRAP: adb shell rm -f /sdcard/Download/Agent/context.json then am start -> app replays old context unless force-stop precedes rm -> always am force-stop net.sys32.agent, then rm context.json, then am start.
+
+OK: Android app's own dirs live under /data/data/<pkg>/files and are fully readable/writable from shell via `adb shell run-as <pkg> sh -c '...'` (also cat/ls/rm) -> use run-as to inspect/generate/delete app-private files without root, e.g. run-as net.sys32.agent rm -f files/adbkey
+
+P: native libdir path embeds the install hash (/data/app/~~<hash>==/<pkg>-<hash>==/lib/arm64) and CHANGES on every reinstall -> never hardcode it; re-read with `adb shell dumpsys package <pkg> | grep codePath` and append /lib/arm64, or exec fails with "No such file or directory
+
+DEAD: launching an exec:ed .so with the wrong LD_LIBRARY_PATH fails as `libpyexec.so: No such file or directory` even though the file exists -> the error is from the dynamic loader, not from a missing file

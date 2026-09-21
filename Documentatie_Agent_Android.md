@@ -751,6 +751,117 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - Reducere dimensiune: split ABI (arm64-only ~18MB), scoatere _testcapi
 - Eventual: descoperire SD card extern
 
+
+---
+
+### Etapa 28 - SUPER-PUTERI: ADB shell uid=2000 (fara root, fara PC)
+
+**Obiectiv:** agentul sa aiba acces la comenzi de sistem (uid=2000 shell), nu doar la ce poate app-ul (uid 10362).
+
+**Descoperirea cheie:**
+- app-ul se poate autentifica la adbd-ul LOCAL (127.0.0.1:5555) prin protocolul ADB clasic
+- cheia trebuie sa fie in formatul corect (`QAAAA...`, ~700 chars, FARA username)
+- adbd accepta cheia de pe localhost dupa o singura aprobare "Allow"
+
+**Ce poate face agentul acum (dovedit, 7/7):**
+    adbsh id                                  -> uid=2000(shell), groups include input/adb/inet
+    adbsh 'pm list packages -3 | wc -l'       -> numarul de app-uri third-party
+    adbsh 'dumpsys battery | grep level'      -> bateria
+    adbsh 'settings get global airplane_mode_on' -> setari (citire + scriere)
+    adbsh 'screencap -p /sdcard/x.png'        -> screenshot
+    adbsh 'input keyevent 3'                  -> UI automation FARA accessibility
+    adbsh 'getprop ro.product.model'          -> proprietati sistem
+
+**Ce deblocheaza (ce app code NU poate):**
+    pm grant/revoke (permisiuni runtime)   appops set
+    settings put secure/global             dumpsys complet
+    input tap/text/keyevent                run-as pe alte app-uri
+    screencap, uiautomator dump            logcat, svc, wm size/density
+
+---
+
+#### 28.1 - AUTO-SETUP la prima pornire (`adb_setup.py`)
+
+Integrat in MainActivity: ruleaza inainte de `agent.py`, o singura data.
+
+    1. LIBS: copiaza libcrypto.so, libssl.so, libadb_pairing_auth.so,
+             libadb_pairing_connection.so din /apex/com.android.adbd/lib64
+             (si /apex/com.android.conscrypt) in files/libs/
+    2. CHEIE: genereaza RSA 2048 -> adbkey (privata) + adbkey.pub (format ADB)
+              ★ SALVATA in /sdcard/Download/Agent/ (PERSISTENTA, supravietuieste
+                reinstalarilor si "Clear data"!)
+    3. CERT: genereaza X.509 self-signed din cheie (tls.crt + tls.key)
+
+**Idempotent:** daca cheia exista in /sdcard, o refoloseste (nu regenereaza!).
+
+---
+
+#### 28.2 - Tool nou: `adbsh`
+
+    adbsh(cmd="pm grant net.sys32.agent CAMERA")   comanda shell ca uid=2000
+    adbsh(cmd="dumpsys battery")                    output complet
+    adbsh(cmd="input tap 540 1200")                 UI automation
+
+Client: `adb_client.py` (protocol ADB pur Python: CNXN/AUTH/OPEN/WRTE).
+Auth: RSAPUBLICKEY direct (adbd auto-aproba pe localhost).
+
+**Formatul cheii (critic!):**
+    - `adbkey.pub` = [4B len_modulus][modulus][4B len_exponent][exponent], base64
+    - ~700 chars pentru RSA 2048
+    - NICIODATA cu username lipit (a cauzat bucla de "Allow USB debugging")
+
+---
+
+#### 28.3 - CHOICE: agentul decide INTELIGENT ce tool foloseste
+
+Adaugat in system prompt (ANDROID_GUIDE) reguli explicite:
+
+    (1) ECRAN (read/tap/text)      -> android ui (nativ, instant, 0 auth)
+    (2) SENZORI/CAMERA/BATTERIE    -> android (nativ, instant)
+    (3) REFLECTION SDK             -> android eval
+    (4) FISIERE/VISION             -> python, bash, read, look
+    (5) SUPER-PUTERI (uid=2000)    -> adbsh DOAR cand app code NU poate:
+                                      permisiuni, settings put, dumpsys, input fara a11y
+
+**Test live (dovedit):** la 5 intrebari, agentul a ales:
+    1. app pe ecran       -> android ui read   (motiv: nativ, 10x mai rapid)
+    2. nr app-uri         -> adbsh (pm list -3 | wc -l)  (motiv: nevoie de pipeline shell)
+    3. bateria            -> android battery get (motiv: nativ instant)
+    4. senzor lumina      -> android sensor (motiv: instant)
+    5. mod avion          -> android settings get (motiv: citirea e permisa nativ)
+
+**Rezultat:** 4/5 native (rapide), 1/5 super-puteri (unde era nevoie). Ales corect + constient.
+
+---
+
+#### 28.4 - CE NU SE POATE (limite reale Android)
+
+1. `adb tcpip 5555` - NU poate fi rulat de app (necesita permisiune de sistem/root)
+   => o data dupa restart telefon, de pe laptop (5 secunde)
+2. Aprobarea "Allow USB debugging" - dialog de sistem, o singura data
+   => DAR cu cheia persistenta in /sdcard, tine pentru TOTDEAUNA (nu la reinstalare)
+3. PAIRING WIRELESS (SPAKE2+TLS) - NU functioneaza din app:
+   - protocolul e implementat corect (TLS+SPAKE2+PEER_INFO toate OK)
+   - dar decrypt-ul final esueaza: parola SPAKE2 = cod + TLS ExportKeyingMaterial(64)
+   - Python ssl NU expune export_keying_material => mismatch de chei
+   - libadb_pairing_connection.so ar face export-ul, dar da fdsan/peer=NULL pe Samsung
+   => singura cale wireless: client ADB extern (PC) cu `adb pair`
+
+---
+
+#### 28.5 - REZUMAT: ce are agentul suprem
+
+    android      bridge Kotlin: senzori, camera, reflection SDK, ui (accessibility)
+    ui           vede + controleaza alte app-uri (read/find/click/settext)
+    adbsh        SUPER-PUTERI uid=2000: pm, dumpsys, settings, input, screencap...
+    python       stdlib + pachete pure-Python
+    bash         shell in sandbox-ul app-ului
+    smart        auto-router python/bash
+    read/look    fisiere mari + analiza imagini
+
+**Autonomie:** instalezi APK-ul -> isi genereaza cheia + certul + libs SINGUR.
+Singura intervenție: `adb tcpip 5555` + "Allow" o data (dupa restart).
+
 ---
 
 ## ANEXA A - PALETA DE CULORI

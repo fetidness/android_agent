@@ -446,7 +446,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v53")
+        val stamp = File(filesDir, ".assets_v56")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -495,6 +495,20 @@ class MainActivity : AppCompatActivity() {
                     val dynSrc = File(scripts, "libdynload/$abiTag")
                     if (dynSrc.exists()) dynSrc.copyRecursively(dynDst, overwrite = true)
                 }
+
+                // ★ SETUP ADB AUTOMAT: genereaza cheia + cert + libs la prima pornire
+                try {
+                    val setup = ProcessBuilder(py.absolutePath, "adb_setup.py")
+                    setup.directory(scripts)
+                    setup.environment()["LD_LIBRARY_PATH"] = applicationInfo.nativeLibraryDir + ":" + File(filesDir,"libs").absolutePath
+                    setup.environment()["PYTHONHOME"] = pyHome.absolutePath
+                    setup.environment()["HOME"] = home.absolutePath
+                    setup.environment()["PATH"] = "/system/bin:/vendor/bin"
+                    val sp = setup.start()
+                    val sout = sp.inputStream.bufferedReader().readText()
+                    sp.waitFor()
+                    if (sout.isNotEmpty()) runOnUiThread { appendAnsi("\n[setup] " + sout.takeLast(400) + "\n") }
+                } catch (_: Exception) {}
 
                 val pb = ProcessBuilder(py.absolutePath, "agent.py")
                 pb.directory(scripts)
