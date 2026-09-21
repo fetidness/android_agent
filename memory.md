@@ -648,3 +648,5 @@ OK: adb device serial RZGL102X5AT is the connected Android phone -> all adb call
 OK: Android APK audit on this machine -> unzip -l on app-debug.apk lists assets/python/ and lib/arm64-v8a/ contents -> use to verify packaging without installing
 
 P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/ holds the Android agent project -> main sources under app/src/main/{java/net/sys32/agent,assets/python,jniLibs} -> use these absolute paths next time
+
+OK: `git add -A` + `git commit` in /home/gab/Desktop/agent works from bash tool and pushes to github.com:fetidness/android_agent.git master -> use it for committing repo changes there.

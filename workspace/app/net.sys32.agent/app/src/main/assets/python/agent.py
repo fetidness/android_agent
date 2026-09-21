@@ -1198,11 +1198,45 @@ def run_adbsh_tool(cmd, timeout=20):
             def _to(s,f): raise TimeoutError("adbsh timeout")
             old=_sig.signal(_sig.SIGALRM,_to); _sig.alarm(min(int(timeout),60))
             try:
-                a=_ADBCLI.Adb(); a.connect()
-                return a.shell(cmd, timeout=min(int(timeout),60))
+                # ★ CONEXIUNE PERSISTENTA: refolosim ACELASI obiect Adb intre comenzi.
+                # adbd cere confirmare (fereastra "Allow USB debugging") doar la conexiuni NOI;
+                # daca tinem socket-ul deschis nu mai apare niciun prompt.
+                global _ADBCONN
+                try:
+                    _ADBCONN
+                except NameError:
+                    _ADBCONN=None
+                if _ADBCONN is None:
+                    _ADBCONN=_ADBCLI.Adb(); _ADBCONN.connect()
+                else:
+                    # verificam daca socket-ul e inca viu; reconectam DOAR daca a murit
+                    doomed=False
+                    try:
+                        _s=_ADBCONN.s
+                        if _s is None:
+                            doomed=True
+                        else:
+                            import select as _sel
+                            r,_,_=_sel.select([_s],[],[],0)
+                            if r:
+                                peek=_s.recv(1, 0x02)  # MSG_PEEK
+                                if peek==b"":
+                                    doomed=True
+                    except Exception:
+                        doomed=True
+                    if doomed:
+                        try: _ADBCONN.close()
+                        except Exception: pass
+                        _ADBCONN=_ADBCLI.Adb(); _ADBCONN.connect()
+                return _ADBCONN.shell(cmd, timeout=min(int(timeout),60))
             finally:
                 _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
         except Exception as e:
+            # la eroare de conexiune: aruncam obiectul ca sa reconecteze curat la urmatorul apel
+            try:
+                globals()["_ADBCONN"]=None
+            except Exception:
+                pass
             return "adbsh error: "+str(e)
     try:
         o=_spin(_run, phase="tool", desc=dsc, col=HCLR[sum(map(ord,dsc))%len(HCLR)])
