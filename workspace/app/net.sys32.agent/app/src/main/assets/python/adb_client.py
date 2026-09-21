@@ -35,7 +35,27 @@ def _alarm(s,f): print("[TIMEOUT 40s]",flush=True); os._exit(2)
 signal.signal(signal.SIGALRM, _alarm); signal.alarm(40)
 
 class Adb:
-    def __init__(self, host="127.0.0.1", port=5555):
+    def __init__(self, host="127.0.0.1", port=None):
+        # ★ AUTO-DETECTIE PORT: citesc service.adb.tcp.port (orice port foloseste adbd)
+        if port is None:
+            port = 5555
+            try:
+                import subprocess as _sp
+                out = _sp.run(["getprop", "service.adb.tcp.port"], capture_output=True, text=True, timeout=5).stdout.strip()
+                if out.isdigit() and int(out) > 0:
+                    port = int(out)
+                else:
+                    # fallback: caut porturi adbd active
+                    for p in (5555, 55555, 5556):
+                        try:
+                            import socket as _s
+                            t = _s.socket(); t.settimeout(0.5); t.connect(("127.0.0.1", p)); t.close()
+                            port = p; break
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            print("[adb] port detectat: " + str(port), flush=True)
         self.host, self.port = host, port; self.s=None; self.banner=""; self.lid=0
     def _send(self, cmd, a0, a1, data=b""):
         h = struct.pack("<6I", cmd, a0, a1, len(data), sum(data)&0xffffffff, cmd ^ 0xffffffff)

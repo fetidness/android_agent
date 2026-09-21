@@ -624,3 +624,11 @@ DEAD: adb shell uid 2000 cannot read /data/data or run su -> for app-private dat
 P: agent context for a run is persisted at /sdcard/Download/Agent/context.json on device RZGL102X5AT, pullable via `adb -s RZGL102X5AT shell cat` -> read it to recover the full tool/assistant transcript of prior steps.
 
 DEAD: adb tcpip port must be exactly 5555; a typo like 5555->55555 reads back in getprop service.adb.tcp.port and adbd listens on 55555, so client connecting 127.0.0.1:5555 gets ECONNREFUSED -> after adb tcpip, verify with `getprop service.adb.tcp.port` equals 5555 before expecting adbsh to work.
+
+P: `adb tcpip <port>` setter must match the hardcoded port in the app's adb client (`adb_client.py` `port=5555`); setting `adb tcpip 55555` leaves port 5555 refused and adbsh times out -> always `adb tcpip 5555` and verify with `adb shell getprop service.adb.tcp.port` returning 5555.
+
+P: On this headless Linux box `adb` lives at `/home/gab/android/platform-tools/adb` (platform-tools only, ~11MB `adb` binary); no Android Studio/SDK needed -> invoke that absolute path, no PATH setup required.
+
+P: Running Python inside the app's sandbox from this desktop shell works via `run-as net.sys32.agent sh -c 'cd .../files/python && HOME=.../home PYTHONHOME=.../pyhome LD_LIBRARY_PATH=.../libs:<codePath>/lib/arm64 timeout N <libdir>/libpyexec.so script.py'` -> `run-as net.sys32.agent` alone cannot exec the bundled interpreter; libdir from `dumpsys package net.sys32.agent | grep codePath`.
+
+TRAP: Two different adbd listens can coexist conceptually but only one port actually answers; testing both ports (`socket.connect` to 5555 vs 55555) shows 5555 REFUSED / 55555 CONNECTED depending on the last `adb tcpip` -> never assume from a previous successful test; re-check the live port each session.

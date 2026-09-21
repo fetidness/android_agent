@@ -91,22 +91,24 @@ Rezultat: "restarting in TCP mode port: 5555"
 
 ---
 
-## ⚠️ NOTA IMPORTANTA DESPRE PORT
+## ℹ️ NOTA DESPRE PORT (auto-detectie)
 
-**Portul este `5555`** (patru de 5). NU confunda cu `55555` (cinci).
+**Poti folosi ORICE port** — aplicatia il detecteaza singura!
 
-Comanda corecta:
 ```
-adb tcpip 5555
+adb tcpip 5555      # merge
+adb tcpip 55555     # merge
+adb tcpip 5556      # merge
 ```
 
-Aplicatia are portul `5555` **hardcodat** in clientul ADB intern.
-Daca setezi alt port (ex. `55555`), agentul NU se va putea conecta
-(el cauta exact `5555`).
+Agentul citeste automat `service.adb.tcp.port` si se conecteaza pe acel port.
+Daca nu-l gaseste, incearca 5555, 55555, 5556.
+
+**Recomandat:** `adb tcpip 5555` (standard, usor de tinut minte).
 
 Verificare:
 ```
-adb shell getprop service.adb.tcp.port     -> trebuie "5555"
+adb shell getprop service.adb.tcp.port     -> portul activ al adbd
 ```
 
 
