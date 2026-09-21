@@ -1,5 +1,154 @@
 # Agent Android (net.sys32.agent)
 
+## ⚡ START RAPID — CITESTE ASTA PRIMUL
+
+**Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
+
+### Ce esti
+Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
+(Samsung SM-A366B, Android 16), compilat de la zero cu:
+- **Python 3.14.7** compilat pentru ARM64 (in APK, ca `libpyexec.so`)
+- **Kotlin** pentru UI + bridge + accessibility
+- **DeepSeek API** pentru creier
+
+### Ce poti face (8 tool-uri)
+
+| Tool | Ce face | Uid |
+|------|---------|-----|
+| `android` | bridge Kotlin: senzori, camera, reflection SDK, sub-toolui `ui` | 10362 (app) |
+| `ui` | VEDE + CONTROLEAZA alte app-uri (read/find/click/settext/tap) | 10362 |
+| **`adbsh`** | **SUPER-PUTERI: shell ca uid=2000 (pm grant, dumpsys, settings, input, screencap)** | **2000 (shell!)** |
+| `python` | stdlib + pachete pure-Python | 10362 |
+| `bash` | shell in sandbox-ul app | 10362 |
+| `smart` | auto-router python/bash | 10362 |
+| `read` | citeste fisiere mari (paginat) | 10362 |
+| `look` | analiza imagini (vision) | — |
+
+### REGULA DE AURENTRU ALEGEREA TOOL-URILOR
+1. **Ecran** (citire/tap/text) → `android ui` (nativ, instant, 0 auth)
+2. **Senzori/camera/baterie** → `android` (nativ, instant)
+3. **Reflection SDK** → `android eval`
+4. **Fisiere/imagini** → `python`, `bash`, `read`, `look`
+5. **Super-puteri** (uid=2000) → `adbsh` **DOAR** cand app-ul NU poate:
+   permisiuni (`pm grant`), `settings put`, `dumpsys`, `input` fara accessibility,
+   `run-as` alte app-uri, `screencap`, `logcat`
+
+> **NU folosi `adbsh` pentru ce face `android`/`python`** — e 10x mai lent si poate rate-limita.
+
+### Unde sunt fisierele (pe device)
+```
+/data/data/net.sys32.agent/files/
+  python/          agent.py, adb_client.py, adb_setup.py, android_bridge.py, Lib/, libdynload/
+  adbkey           cheia RSA privata (auto-generata)
+  adbkey.pub       cheia publica (format ADB)
+  tls.crt/key      certificat X.509
+  libs/            libcrypto, libssl, pairing_auth, pairing_connection (din /apex)
+  home/, pyhome/   HOME + PYTHONHOME
+  libdir.txt       calea catre libpyexec.so (SE SCHIMBA la reinstalare!)
+  bridge.port      portul bridge-ului Kotlin
+/sdcard/Download/Agent/
+  adbkey, adbkey.pub   ★ CHEIA PERSISTENTA (supravietuieste reinstalarilor)
+  context.json     istoricul conversatiei
+  memory.md        memoria pe termen lung (lectiile)
+  workspace/       fisierele de lucru
+```
+
+### Cum pornesti Python-ul manual (pe device, prin adb)
+```bash
+LIBDIR=$(dumpsys package net.sys32.agent | grep codePath | sed 's/.*codePath=//')/lib/arm64
+run-as net.sys32.agent sh -c "cd /data/data/net.sys32.agent/files/python && \
+  HOME=/data/data/net.sys32.agent/files/home \
+  PYTHONHOME=/data/data/net.sys32.agent/files/pyhome \
+  LD_LIBRARY_PATH=/data/data/net.sys32.agent/files/libs:$LIBDIR \
+  $LIBDIR/libpyexec.so SCRIPT.py"
+```
+
+### Ce NU se poate (limite reale Android — NU incerca degeaba)
+1. **`adb tcpip 5555`** — app-ul NU poate rula asta (necesita sistem/root).
+   Se face O DATA de pe laptop dupa restart telefon.
+2. **Pairing WIRELESS (SPAKE2+TLS)** — NU functioneaza din app:
+   Python `ssl` nu expune `export_keying_material` → mismatch de chei SPAKE2.
+   → wireless ADB real merge DOAR cu client extern (PC).
+3. **Citirea `/data/misc/adb/`** — permission denied (doar root).
+
+### Starea actuala (functionala)
+- ✅ `adbsh` → uid=2000 (cheia auto-generata + persistenta in /sdcard)
+- ✅ Auto-setup la prima pornire (cheie + cert + libs)
+- ✅ Alegere inteligenta a tool-urilor (testat live)
+
+---
+
+oid (net.sys32.agent)
+
+---
+
+
+
+---
+
+### FLOW ZILNIC DE OPERARE (cand telefonul a fost repornit)
+
+    ┌─────────────────────────────────────────────────────────┐
+    │ 1. VERIFICA daca adbsh merge                            │
+    │    adbsh(cmd="id -u")  → trebuie "2000"                 │
+    ├─────────────────────────────────────────────────────────┤
+    │ 2. DACA NU merge (timeout/dialog "Allow"):              │
+    │    a) pe laptop (USB): adb tcpip 5555                   │
+    │    b) pe telefon: apasa "Allow" in dialog (o data)      │
+    │    c) reincearca adbsh(cmd="id -u")                     │
+    ├─────────────────────────────────────────────────────────┤
+    │ 3. DACA merge → continua taskul normal                  │
+    │    foloseste tool-urile dupa REGULA DE AUR             │
+    └─────────────────────────────────────────────────────────┘
+
+**NU e nevoie de altceva.** Cheia e persistenta, libs se copiaza singure.
+
+### REZOLVAREA PROBLEMELOR FRECVENTE
+
+| Simptom | Cauza | Fix |
+|---------|-------|-----|
+| `adbsh` timeout | adbd nu asculta pe 5555 | `adb tcpip 5555` (laptop) |
+| Dialog "Allow USB debugging" reapare | cheia noua / adbd resetat | apasa Allow (o data) |
+| `libpyexec.so: No such file` | libdir.txt vechi | re-citeste cu `dumpsys package ... codePath` |
+| `cannot locate symbol...` (libs) | LD_LIBRARY_PATH gresit | pune `files/libs` PRIMUL in LD_LIBRARY_PATH |
+| `adbsh error: timed out` dupa multe apeluri | adbd rate-limit | asteapta 10s, sau repornire wireless |
+| Libs lipsa dupa update APK | assets re-extrase | app le copiaza automat la pornire (adb_setup.py) |
+
+### CUM REBUILDUIESTI APLICATIA (daca modifici cod)
+```bash
+cd /home/gab/Desktop/agent/workspace/app
+./build_app.sh          # build + install + start (face tot)
+```
+**ATENTIE:**
+- dupa FIECARE modificare de assets → INCREMENTEAZA `.assets_vNN` in MainActivity.kt
+- `adb install -r` DEZACTIVEAZA accessibility → reactiveaza:
+  ```bash
+  adb shell settings put secure enabled_accessibility_services net.sys32.agent/net.sys32.agent.AgentAccessibilityService
+  adb shell settings put secure accessibility_enabled 1
+  ```
+- libdir.txt se schimba la fiecare reinstalare → reciteste-l
+
+### UNDE E CODUL SURSA (pe laptop, pentru dezvoltare)
+```
+/home/gab/Desktop/agent/
+  agent-original.py                              agentul pentru LINUX (desktop)
+  Documentatie_Agent_Android.md                  ACEST document
+  memory.md                                      memoria agentului desktop
+  workspace/app/net.sys32.agent/
+    app/src/main/assets/python/agent.py          agentul ANDROID (Python)
+    app/src/main/assets/python/adb_client.py     client ADB (super-puteri)
+    app/src/main/assets/python/adb_setup.py      auto-setup
+    app/src/main/assets/python/android_bridge.py bridge Python-side
+    app/src/main/java/net/sys32/agent/*.kt       Kotlin (MainActivity, Bridge, Accessibility, Reflection)
+  build/Python-3.14.7/                           sursele Python + cross-build
+```
+
+---
+
+ent Android (net.sys32.agent)
+
+---
+
 ## Documentatie completa de dezvoltare
 
 **Versiune:** 1.0
@@ -899,3 +1048,7 @@ Singura intervenție: `adb tcpip 5555` + "Allow" o data (dupa restart).
 ---
 
 Sfirsitul documentului.
+
+---
+
+
