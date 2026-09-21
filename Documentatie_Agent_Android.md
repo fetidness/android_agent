@@ -75,6 +75,32 @@ run-as net.sys32.agent sh -c "cd /data/data/net.sys32.agent/files/python && \
 - ✅ `adbsh` → uid=2000 (cheia auto-generata + persistenta in /sdcard)
 - ✅ Auto-setup la prima pornire (cheie + cert + libs)
 - ✅ Alegere inteligenta a tool-urilor (testat live)
+- ✅ Auto-detectie port ADB (5555, 55555 sau orice port setat)
+- ✅ Setup o singura data (`.setup_done`; lansarile ulterioare = pornire directa)
+
+### AUTONOMIE: CE E IN APK vs. CE E MANUAL
+
+**IN APK (auto, dupa instalare):**
+- Python 3.14 ARM64 + libpyexec + stdlib + libdynload
+- agent.py, adb_client.py, adb_setup.py, android_bridge.py
+- 9 module Kotlin (UI, bridge, accessibility, reflection, service)
+- memory.md (default), key.txt (API)
+- LA PRIMA PORNIRE se AUTO-GENEREAZA: cheia RSA, certificatul X.509,
+  libs-urile crypto/ssl (copiate din /apex)
+
+**MANUAL (nu se poate automatiza — limitari Android):**
+| Ce | De ce | Cum | Cand |
+|----|-------|-----|------|
+| `adb tcpip <port>` | Android interzice app-ului sa deschida portul adbd TCP | de pe calculator: `adb tcpip 5555` | dupa fiecare RESTART telefon |
+| "Allow USB debugging" | dialog de sistem Android | pe telefon, o data | la prima conectare / cheie noua |
+| Accessibility ON | Android cere activare explicita din Settings | Settings > Accessibility > Agent | dupa fiecare reinstalare APK |
+
+**FARA calculator:** agentul merge cu `android`, `ui`, `python`, `bash`,
+`smart`, `read`, `look` (senzori, camera, GPS, ecran, fisiere, HTTP).
+
+**CU calculator** (+ 30s o data): se deblocheaza `adbsh` (uid=2000):
+`pm grant`, `settings put`, `dumpsys`, `logcat`, `input`, `screencap`,
+`run-as`, `getprop/setprop` — puteri de dezvoltator, fara root.
 
 ---
 
@@ -953,6 +979,12 @@ Integrat in MainActivity: ruleaza inainte de `agent.py`, o singura data.
 
 Client: `adb_client.py` (protocol ADB pur Python: CNXN/AUTH/OPEN/WRTE).
 Auth: RSAPUBLICKEY direct (adbd auto-aproba pe localhost).
+
+**AUTO-DETECTIE PORT (important!):**
+    `Adb()` fara parametru citeste `getprop service.adb.tcp.port` si se
+    conecteaza pe acel port (5555, 55555 SAU ORICE valoare setata de
+    `adb tcpip <port>`). Daca getprop nu raspunde -> fallback: testeaza
+    5555, 55555, 5556. Astfel agentul merge indiferent de portul ales.
 
 **Formatul cheii (critic!):**
     - `adbkey.pub` = [4B len_modulus][modulus][4B len_exponent][exponent], base64

@@ -5,6 +5,55 @@
 
 ---
 
+
+## 0. CE MERGE FARA CALCULATOR vs. CU CALCULATOR
+
+> **Cea mai importanta distinctie din tot ghidul. Citeste-o prima.**
+
+### FARA calculator — merge instant (tool-uri de aplicatie)
+Aplicatia functioneaza SINGURA dupa instalare + permisiuni:
+
+| Tool | Ce face |
+|------|---------|
+| `android` | senzori, camera, GPS, baterie, clipboard, notificari, TTS, WiFi, apps, intents, reflection SDK |
+| `ui` | vede + controleaza alte aplicatii (read/find/click/settext/tap) |
+| `python` / `bash` / `smart` | cod, fisiere, HTTP |
+| `read` / `look` | fisiere mari, analiza imagini |
+
+**Nu ai nevoie de nimic altceva.** Doar instalezi APK-ul + aprobi permisiunile.
+
+### CU calculator — pentru SUPER-PUTERI (uid=2000)
+Tool-ul `adbsh` (comenzi de sistem ca dezvoltator) **NU poate fi activat
+din aplicatie** — Android interzice unei aplicatii sa deschida portul ADB.
+
+Pentru `adbsh` ai nevoie:
+1. **Un calculator** cu `adb` (Android Platform Tools — UN singur binar, ~15 MB)
+2. **Cablu USB** (sau WiFi ADB)
+3. **O comanda**: `adb tcpip 5555`
+4. **O data**: aprobare "Allow USB debugging"
+
+**Frecventa:** comanda `adb tcpip 5555` se ruleaza **din nou dupa fiecare
+RESTART al telefonului** (portul ADB se inchide la reboot).
+
+### Tabel comparativ
+
+| Capacitate | Fara calculator | Cu calculator |
+|------------|-----------------|---------------|
+| Senzori, camera, GPS | ✅ | ✅ |
+| Citire/control ecran (ui) | ✅ | ✅ |
+| Fisiere, Python, HTTP | ✅ | ✅ |
+| **Comenzi sistem (adbsh)** | ❌ | ✅ |
+| `pm grant` (permisiuni altor app) | ❌ | ✅ |
+| `settings put` (setari ascunse) | ❌ | ✅ |
+| `dumpsys` complet, `logcat` | ❌ | ✅ |
+| `input` fara accessibility | ❌ | ✅ |
+| `screencap`, `uiautomator dump` | ⚠️ (prin `ui`) | ✅ |
+
+> **Concluzie:** fara calculator ai un agent bun.
+> Cu calculator (30 secunde o data) ai un agent cu puteri de dezvoltator.
+
+---
+
 ## 1. CE ESTE
 
 Un agent AI autonom care ruleaza DIRECT PE TELEFON (Samsung/Android 8+):

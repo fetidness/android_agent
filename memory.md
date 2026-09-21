@@ -632,3 +632,19 @@ P: On this headless Linux box `adb` lives at `/home/gab/android/platform-tools/a
 P: Running Python inside the app's sandbox from this desktop shell works via `run-as net.sys32.agent sh -c 'cd .../files/python && HOME=.../home PYTHONHOME=.../pyhome LD_LIBRARY_PATH=.../libs:<codePath>/lib/arm64 timeout N <libdir>/libpyexec.so script.py'` -> `run-as net.sys32.agent` alone cannot exec the bundled interpreter; libdir from `dumpsys package net.sys32.agent | grep codePath`.
 
 TRAP: Two different adbd listens can coexist conceptually but only one port actually answers; testing both ports (`socket.connect` to 5555 vs 55555) shows 5555 REFUSED / 55555 CONNECTED depending on the last `adb tcpip` -> never assume from a previous successful test; re-check the live port each session.
+
+OK: `adb -s <serial> shell getprop service.adb.tcp.port` returns the actual TCP port adbd listens on (5555, 55555, or any `adb tcpip <n>` value) -> do not hardcode 5555 in adb clients, read this prop first then fall back to probing 5555/55555/5556 -> verified live: `adb tcpip 55555` starts adbd LISTEN on tcp6 [::]:55555 and rejects 5555.
+
+TRAP: adbd listens on exactly ONE TCP port at a time; `adb tcpip 5555` then `adb tcpip 55555` -> old port stops listening, connections to the stale port fail ConnectionRefusedError -> when a local adb client gets EACCES/refused, re-read getprop service.adb.tcp.port before blaming auth or libs.
+
+P: Android agent adb port auto-detect -> agentul citeste getprop service.adb.tcp.port la runtime -> orice port setat cu `adb tcpip N` (1-65535) e preluat automat, nu hardcoda 5555
+
+TRAP: adb tcpip schimba portul adbd dar si getprop service.adb.tcp.port -> dupa adb tcpip N re-ruleaza `adb shell getprop service.adb.tcp.port` inainte de a te reconecta, altfel crezi ca adbd a picat
+
+OK: testare port adb neobisnuit pe RZGL102X5AT -> `adb -s RZGL102X5AT tcpip 9999` apoi `adb shell getprop service.adb.tcp.port` confirma detectia -> revino la 5555 cu `adb -s RZGL102X5AT tcpip 5555` dupa test
+
+OK: adb device serial RZGL102X5AT is the connected Android phone -> all adb calls need `adb -s RZGL102X5AT` -> use /home/gab/android/platform-tools/adb with that serial
+
+OK: Android APK audit on this machine -> unzip -l on app-debug.apk lists assets/python/ and lib/arm64-v8a/ contents -> use to verify packaging without installing
+
+P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/ holds the Android agent project -> main sources under app/src/main/{java/net/sys32/agent,assets/python,jniLibs} -> use these absolute paths next time
