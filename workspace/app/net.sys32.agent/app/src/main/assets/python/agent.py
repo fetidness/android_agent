@@ -1764,17 +1764,41 @@ def _fix_compression_common():
         purelib = sysconfig.get_paths().get("purelib", "")
         base = os.path.dirname(os.path.abspath(__file__))
         # locul REAL vazut de Python: pyhome/lib/python3.14/compression
-        comp = os.path.join(purelib, "compression") if purelib and os.path.isdir(os.path.join(purelib, "compression")) else os.path.join(base, "Lib", "compression")
+        # compression poate fi in pyhome/lib/pythonX.Y/ (stdlib) SAU in
+        # site-packages SAU in assets Lib/. Cautam in toate.
+        cands = []
+        if purelib: cands.append(os.path.join(os.path.dirname(purelib), "compression"))
+        if purelib: cands.append(os.path.join(purelib, "compression"))
+        cands.append(os.path.join(base, "Lib", "compression"))
+        for d in list(sys.path):
+            if d: cands.append(os.path.join(d, "compression"))
+        comp = ""
+        for c in cands:
+            if os.path.isdir(c) and os.path.exists(os.path.join(c, "_streams_data.py")):
+                comp = c; break
+        if not comp:
+            for c in cands:
+                if os.path.isdir(c): comp = c; break
+        if not comp: return
         common = os.path.join(comp, "_common")
-        if os.path.isdir(common):
-            return
         src_data = os.path.join(comp, "_streams_data.py")
         if not os.path.exists(src_data):
             return
-        os.makedirs(common, exist_ok=True)
-        open(os.path.join(common, "__init__.py"), "w").close()
-        import shutil
-        shutil.copyfile(src_data, os.path.join(common, "_streams.py"))
+        bad = os.path.join(comp, "_common.py")
+        if os.path.isfile(bad):
+            try: os.remove(bad)
+            except Exception: pass
+        if os.path.isfile(common):
+            try: os.remove(common)
+            except Exception: pass
+        if not (os.path.isdir(common) and os.path.exists(os.path.join(common, "_streams.py"))):
+            os.makedirs(common, exist_ok=True)
+            open(os.path.join(common, "__init__.py"), "w").close()
+            import shutil
+            shutil.copyfile(src_data, os.path.join(common, "_streams.py"))
+            import shutil as _sh2
+            _sh2.rmtree(os.path.join(common, "__pycache__"), ignore_errors=True)
+            _sh2.rmtree(os.path.join(comp, "__pycache__"), ignore_errors=True)
     except Exception:
         pass
 

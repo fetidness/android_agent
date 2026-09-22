@@ -710,3 +710,23 @@ OK: adb push toolchain.py to device then run via `run-as net.sys32.agent sh -c '
 TRAP: Termux .deb extraction via pure-python untar loses symlinks (libX.so.N.M.P -> libX.so.N, clang->clang-21, ld->lld, ld.lld->lld, libbz2.so.1.0) -> clang reports "unable to execute command: No such file or directory" on link step -> fix by re-creating all symlinks after extraction; lld needs both `ld` and `ld.lld` names.
 
 TRAP: Android shell has no `strings`/`readelf`/`objdump`/`file` by default -> analysing binaries from adb needs those dumped manually or via python on-device.
+
+TRAP: adb shell commands run from app process (uid=untrusted_app) cannot execute binaries in /data/local/tmp due to SELinux -> compile/run tools must shell out via `adb shell` (uid=2000) instead of subprocess in the app -> route native tool invocations through run_adbsh_tool.
+
+TRAP: on this Android device /sdcard and /storage are mounted noexec -> any compiled binary or script placed there fails with "Permission denied" or "can't execute" -> always put executables in /data/local/tmp and chmod +x there.
+
+P: Android app process (net.sys32.agent, uid 10378) cannot write or read /data/local/tmp directly but shell uid=2000 can -> to stage files into /data/local/tmp from the app, write to /sdcard staging then copy via adb shell (run-as only reaches app-private dirs).
+
+TRAP: AAPT2 silently drops asset directories whose name begins with underscore (e.g. compression/_common/) -> imports like `from compression._common import ...` fail with ModuleNotFoundError at runtime -> deliver the file with a non-underscore name (_streams_data.py) and recreate the underscore package dir at first runtime launch.
+
+TRAP: python tarfile on this Android/Python3.14 build fails when its compression backend (_common) is missing -> implement a minimal pure-Python tar reader (512-byte headers) instead of relying on tarfile for .deb extraction.
+
+TRAP: adb_client.py had a global signal.alarm(40) that aborts long-running adb shell ops with "[TIMEOUT 40s]" -> make the timeout configurable (ADB_GLOBAL_TIMEOUT, default 600s, 0 disables) before running bootstrap/compile that exceed 40s.
+
+DEAD: symlink(.deb typeflag 2) members are skipped by the tar reader -> recreate libX.so.N -> libX.so.N.M and tool aliases (clang/ld/ar) manually via a _fix_symlinks() pass after extraction.
+
+TRAP: `pm uninstall` returning "Failure [DELETE_FAILED_INTERNAL_ERROR]" does NOT mean the app is still installed -> verify with `pm list packages | grep <pkg>` -> package may be already gone; don't retry uninstall endlessly.
+
+TRAP: adb shell run-as <pkg> python import fails with ImportError "cannot import name X from Y" even when the target .py file exists and has correct size -> stale __pycache__/*.pyc left over from an earlier broken state shadows the source -> always "run-as <pkg> rm -rf <dir>/__pycache__ <dir>/_common/__pycache__" before retesting imports; verify with ls -la that the .py is real and then purge caches.
+
+PREVENT: when an agent/script patches a Python package split (e.g. compression._common should be a PACKAGE dir with __init__.py + _streams.py, not a _common.py file) -> a lone _common.py file makes `from compression._common import _streams` fail though os.path.exists is true -> fix must os.remove the _common.py file AND os.makedirs the _common/ dir, guarded by `if os.path.isdir(common) and os.path.exists(common/_streams.py)` not just isdir.

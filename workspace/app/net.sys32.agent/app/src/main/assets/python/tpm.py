@@ -18,6 +18,43 @@ Folosire:
 # ---------------------------------------------------------------------------
 
 
+# AUTO-FIX compression._common (AAPT2 ignora folderele "_") - INAINTE de importuri
+def _ensure_compression():
+    import os, sys
+    if os.environ.get("_TC_FIXED"): return
+    os.environ["_TC_FIXED"] = "1"
+    cands = []
+    try:
+        import sysconfig
+        pl = sysconfig.get_paths().get("purelib", "")
+        if pl:
+            cands.append(os.path.join(os.path.dirname(pl), "compression"))
+            cands.append(os.path.join(pl, "compression"))
+    except Exception: pass
+    for d in sys.path:
+        if d: cands.append(os.path.join(d, "compression"))
+    for c in cands:
+        if os.path.isdir(c) and os.path.exists(os.path.join(c, "_streams_data.py")):
+            common = os.path.join(c, "_common")
+            bad = os.path.join(c, "_common.py")
+            if os.path.isfile(bad):
+                try: os.remove(bad)
+                except Exception: pass
+            if not (os.path.isdir(common) and os.path.exists(os.path.join(common, "_streams.py"))):
+                try:
+                    if os.path.isfile(common): os.remove(common)
+                    os.makedirs(common, exist_ok=True)
+                    open(os.path.join(common, "__init__.py"), "w").close()
+                    import shutil
+                    shutil.copyfile(os.path.join(c, "_streams_data.py"),
+                                    os.path.join(common, "_streams.py"))
+                    import shutil as _sh2
+                    _sh2.rmtree(os.path.join(common, "__pycache__"), ignore_errors=True)
+                    _sh2.rmtree(os.path.join(c, "__pycache__"), ignore_errors=True)
+                except Exception: pass
+            return
+_ensure_compression()
+
 import os
 import sys
 import re

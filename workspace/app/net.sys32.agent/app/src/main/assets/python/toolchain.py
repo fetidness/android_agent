@@ -28,6 +28,50 @@ Folosire (agentul il cheama automat):
 # produs, trebuie sa respecte licentele respective (inclusiv GPL).
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# AUTO-FIX: compression._common (workaround AAPT2 care ignora foldere "_")
+# Trebuie sa ruleze INAINTE de orice import de lzma/gzip/bz2/tarfile.
+# ---------------------------------------------------------------------------
+def _ensure_compression():
+    import os, sys
+    if os.environ.get("_TC_FIXED"):
+        return
+    os.environ["_TC_FIXED"] = "1"
+    cands = []
+    try:
+        import sysconfig
+        pl = sysconfig.get_paths().get("purelib", "")
+        if pl:
+            cands.append(os.path.join(os.path.dirname(pl), "compression"))
+            cands.append(os.path.join(pl, "compression"))
+    except Exception:
+        pass
+    for d in sys.path:
+        if d:
+            cands.append(os.path.join(d, "compression"))
+    for c in cands:
+        if os.path.isdir(c) and os.path.exists(os.path.join(c, "_streams_data.py")):
+            common = os.path.join(c, "_common")
+            # daca exista _common.py (fisier gresit), il stergem
+            bad = os.path.join(c, "_common.py")
+            if os.path.isfile(bad):
+                try: os.remove(bad)
+                except Exception: pass
+            if not (os.path.isdir(common) and os.path.exists(os.path.join(common, "_streams.py"))):
+                try:
+                    if os.path.isfile(common): os.remove(common)
+                    os.makedirs(common, exist_ok=True)
+                    open(os.path.join(common, "__init__.py"), "w").close()
+                    import shutil
+                    shutil.copyfile(os.path.join(c, "_streams_data.py"),
+                                    os.path.join(common, "_streams.py"))
+                    import shutil as _sh2
+                    _sh2.rmtree(os.path.join(common, "__pycache__"), ignore_errors=True)
+                    _sh2.rmtree(os.path.join(c, "__pycache__"), ignore_errors=True)
+                except Exception: pass
+            return
+_ensure_compression()
+
 import os, sys, subprocess, json
 
 F = "/data/data/net.sys32.agent/files"
@@ -259,62 +303,53 @@ def _extract_deb(data, dest):
 
 
 def _fix_symlinks():
-    """Recreeaza TOATE symlink-urile (Termux le are, _untar le rateaza):
-    libX.so.N.M.P -> libX.so.N / libX.so, si binarele uzuale."""
-    bdir = ROOT + "/usr/bin"
-    ldir = ROOT + "/usr/lib"
-    cmds = []
-
-    # 1. libX.so.N.M.P -> libX.so.N + libX.so
+    """Recreeaza symlink-urile prin SHELL (os nu vede /data/local/tmp).
+    Termux are symlink-uri in .deb (typeflag 2) pe care _untar nu le face."""
+    # script shell care:
+    #  1) libX.so.N.M.P -> libX.so.N si libX.so
+    #  2) cazuri speciale (libz.so.1, libbz2.so.1.0, libexpat.so.1...)
+    #  3) binare uzuale (clang, ld, ar, ...)
+    script = r"""
+L="__LIB__"; B="__BIN__"
+# 1. generic: din fiecare libX.so.A.B.C face libX.so.A si libX.so
+for f in "$L"/lib*.so.*; do
+  [ -f "$f" ] || continue
+  n=$(basename "$f")
+  case "$n" in *.so.*.*)
+    base=$(echo "$n" | sed -E 's/(\.so\.[0-9]+)\..*/\1/')
+    [ -e "$L/$base" ] || ln -sf "$n" "$L/$base"
+    short=$(echo "$base" | sed -E 's/\.[0-9]+$//')
+    [ -e "$L/$short" ] || ln -sf "$n" "$L/$short"
+  ;; esac
+done
+# 2. cazuri speciale Termux
+for pair in "libz.so.1.3.2:libz.so.1:libz.so" \
+            "libbz2.so.1.0.8:libbz2.so.1.0:libbz2.so.1:libbz2.so" \
+            "libexpat.so.1.8.0:libexpat.so.1:libexpat.so" \
+            "libandroid-support.so:libandroid-support.so" ; do
+  real=$(echo "$pair" | cut -d: -f1)
+  [ -e "$L/$real" ] || continue
+  for t in $(echo "$pair" | cut -d: -f2- | tr ':' ' '); do
+    [ -e "$L/$t" ] || ln -sf "$real" "$L/$t"
+  done
+done
+# 3. binare uzuale
+for pair in "clang:clang-21" "clang++:clang-21" "cc:clang-21" "c++:clang-21" \
+            "ld:lld" "ld.lld:lld" "ar:llvm-ar" "ranlib:llvm-ranlib" \
+            "nm:llvm-nm" "objdump:llvm-objdump" "strip:llvm-strip" \
+            "readelf:llvm-readelf" "python:python3" "pip:pip3" ; do
+  link=$(echo "$pair" | cut -d: -f1); tgt=$(echo "$pair" | cut -d: -f2)
+  if [ -e "$B/$tgt" ] && [ ! -e "$B/$link" ]; then ln -sf "$tgt" "$B/$link"; fi
+done
+echo SYMLINKS_DONE
+"""
+    script = script.replace("__LIB__", ROOT + "/usr/lib").replace("__BIN__", BIN)
     try:
-        libs = os.listdir(ldir)
-    except Exception:
-        libs = []
-    import re as _re
-    for f in libs:
-        m = _re.match(r"^(lib.+?\.so)\.(\d+)\.\d+(?:\.\d+)*$", f)
-        if not m:
-            continue
-        base, major = m.group(1), m.group(2)
-        for target in (base + "." + major, base):
-            tp = os.path.join(ldir, target)
-            if not os.path.lexists(tp):
-                cmds.append("ln -sf '%s' '%s'" % (f, tp))
-
-    # 2. cazuri speciale (libbz2.so.1.0 etc)
-    specials = [("libbz2.so.1.0.8", ["libbz2.so.1.0", "libbz2.so.1", "libbz2.so"])]
-    for real, links in specials:
-        if os.path.exists(os.path.join(ldir, real)):
-            for l in links:
-                tp = os.path.join(ldir, l)
-                if not os.path.lexists(tp):
-                    cmds.append("ln -sf '%s' '%s'" % (real, l))
-
-    # 3. binare uzuale (Termux symlink-uri)
-    binlinks = {
-        "clang": "clang-21", "clang++": "clang-21", "cc": "clang-21", "c++": "clang-21",
-        "ld": "lld", "ld.lld": "lld", "ar": "llvm-ar", "ranlib": "llvm-ranlib",
-        "nm": "llvm-nm", "objdump": "llvm-objdump", "strip": "llvm-strip",
-        "readelf": "llvm-readelf", "python": "python3", "pip": "pip3",
-    }
-    try:
-        bins = os.listdir(bdir)
-    except Exception:
-        bins = []
-    for link, target in binlinks.items():
-        if target in bins and link not in bins:
-            cmds.append("ln -sf '%s' '%s'" % (target, link))
-    # aarch64-linux-android-* -> binarul real
-    for f in bins:
-        if f.startswith("aarch64-linux-android-"):
-            real = f[len("aarch64-linux-android-"):]
-            if real in bins:
-                cmds.append("ln -sf '%s' '%s'" % (real, f))
-
-    if cmds:
-        # ruleaza in transe (comanda shell prea lunga poate esua)
-        for k in range(0, len(cmds), 40):
-            _sh(" ; ".join(cmds[k:k+40]), 180)
+        out = _sh(script, 240)
+        if "SYMLINKS_DONE" not in out:
+            print("[toolchain] symlinks: partial", out[-200:])
+    except Exception as e:
+        print("[toolchain] symlinks err:", e)
 
 
 def bootstrap_direct(packages=None, progress=None):
