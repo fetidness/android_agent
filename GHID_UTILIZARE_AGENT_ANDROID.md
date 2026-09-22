@@ -328,6 +328,41 @@ binarul -> `6 * 7 = 42`, totul pe telefon, fara PC.
 
 **ATENTIE:** binarele se pun in `/data/local/tmp` (NU `/sdcard` - e noexec).
 
+
+### 9.2 REGULI PENTRU COMPILARE (ce trebuie sa stii)
+
+**1. Totul cu /data/local/tmp trece prin shell (uid=2000), NU prin app.**
+Aplicatia (uid ~10300) nu poate citi/scrie/executa in /data/local/tmp
+(SELinux untrusted_app). Compilarea, copierea, rularea -> prin `adbsh`.
+
+**2. Binarele se pun in /data/local/tmp, NICIOdata in /sdcard.**
+/sdcard e montat `noexec` -> "Permission denied" la rulare.
+Sursa .c/.cpp poate sta in /sdcard; executabilul -> /data/local/tmp.
+
+**3. Symlink-urile se fac singure la bootstrap.**
+Termux are `libz.so.1 -> libz.so.1.3.2`, `clang -> clang-21`,
+`ld -> lld -> ld.lld`. `_fix_symlinks` le recreeaza prin shell automat.
+Daca lipsesc, clang moare cu "library libX not found".
+
+**4. Prima compilare dupa bootstrap poate dura** (clang incarca libLLVM).
+
+**Exemplu complet (ce face agentul automat):**
+```
+1. toolchain action=status          -> vede ce lipseste
+2. toolchain action=bootstrap       -> ~600 MB, 4-6 min, o singura data
+3. scrie prog.c in /sdcard
+4. toolchain action=compile source=/sdcard/prog.c
+5. toolchain action=run source=/data/local/tmp/prog
+```
+
+**DEPANARE rapida:**
+| Simptom | Cauza | Fix |
+|---|---|---|
+| `clang: not found` | symlink lipsa | `toolchain bootstrap` din nou |
+| `library libz.so.1 not found` | symlink .so lipsa | idem |
+| `Permission denied` la rulare | binar in /sdcard | muta in /data/local/tmp |
+| `No module named compression._common` | pachet lipsa | restart app (auto-fix) |
+
 ### LICENTE (important)
 Aplicatia **NU include** niciun binar de compilare. La `bootstrap`, agentul
 **descarca** unelte open-source din **repo-ul public Termux**

@@ -936,6 +936,49 @@ pip_install, tpm, env.
 include binare. Licente: clang=Apache-2.0, python=PSF-2.0, make/cmake=GPL-3.
 
 
+
+### Etapa 31 - REMEDieri dupa testul AUTONOM real (2026-09-22)
+
+Testul suprem: reset complet (fara memorie, fara toolchain), reinstalare,
+task natural "compila un program C care afiseaza 6 ori 7" - FARA indicii
+tehnice. Agentul a REUSIT (6 x 7 = 42) dar a intampinat erori pe care le-a
+ocolit manual. Le-am eliminat din radacina:
+
+**1. compression._common - fisier in loc de pachet**
+Agentul crease `compression/_common.py` (fisier). Dar `lzma.py` face
+`from compression._common import _streams` -> are nevoie de PACHET.
+Fix: sterge `_common.py`, creeaza `_common/__init__.py` + `_common/_streams.py`.
+
+**2. __pycache__ vechi bloca importul**
+Chiar cu `_streams.py` prezent, Python folosea `__pycache__` din versiunea
+goala. Fix: `shutil.rmtree(__pycache__)` dupa fiecare creare de `_common/`.
+
+**3. _fix_symlinks rula in procesul app (nu vede /data/local/tmp)**
+`os.listdir(ROOT+"/usr/lib")` returna gol (SELinux). Deci 0 symlink-uri ->
+`clang` murea: `library "libz.so.1" not found`.
+Fix: rescris complet ca SCRIPT SHELL (ruleaza prin adbsh, uid=2000):
+- generic: libX.so.N.M.P -> libX.so.N si libX.so
+- speciale: libz.so.1, libbz2.so.1.0, libexpat.so.1, libandroid-support.so
+- binare: clang->clang-21, clang++->clang-21, ld->lld, ld.lld->lld,
+  ar->llvm-ar, ranlib->llvm-ranlib, nm/objdump/strip/readelf->llvm-*,
+  python->python3, pip->pip3
+
+**4. app nu poate scrie/executa in /data/local/tmp**
+- scriere: sursa C se scrie in /sdcard (sau files/), compilarea se face
+  prin adbsh in /data/local/tmp
+- executie: binarul se ruleaza prin adbsh (uid=2000), nu din procesul app
+
+**REZULTAT DUPA FIX (testat pe device):**
+```
+bootstrap -> 65 pachete -> symlink-uri automate -> compile -> run
+REZULTAT: 6*7=42   (FARA pasi manuali, FARA erori)
+```
+
+**REGULA DE AUR (de respectat in tot codul care atinge /data/local/tmp):**
+Orice operatie pe fisiere din /data/local/tmp (listdir, stat, mkdir, cp,
+chmod, exec) trebuie facuta PRIN SHELL (adb_client/adbsh uid=2000), NU cu
+`os.*` din procesul aplicatiei (uid ~10300, SELinux untrusted_app).
+
 ## 11. LIMITARI CUNOSCUTE
 
 Un app normal (fara root) NU poate:

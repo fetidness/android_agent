@@ -730,3 +730,9 @@ TRAP: `pm uninstall` returning "Failure [DELETE_FAILED_INTERNAL_ERROR]" does NOT
 TRAP: adb shell run-as <pkg> python import fails with ImportError "cannot import name X from Y" even when the target .py file exists and has correct size -> stale __pycache__/*.pyc left over from an earlier broken state shadows the source -> always "run-as <pkg> rm -rf <dir>/__pycache__ <dir>/_common/__pycache__" before retesting imports; verify with ls -la that the .py is real and then purge caches.
 
 PREVENT: when an agent/script patches a Python package split (e.g. compression._common should be a PACKAGE dir with __init__.py + _streams.py, not a _common.py file) -> a lone _common.py file makes `from compression._common import _streams` fail though os.path.exists is true -> fix must os.remove the _common.py file AND os.makedirs the _common/ dir, guarded by `if os.path.isdir(common) and os.path.exists(common/_streams.py)` not just isdir.
+
+TRAP: Android app process (uid 10381) cannot see or write /data/local/tmp (SELinux) -> os.listdir/open there from app-side Python returns empty or PermissionError silently, producing zero symlinks/artifacts -> do all /data/local/tmp inspection, symlink creation and file writes via adb shell (uid 2000), never from in-app Python os calls.
+
+TRAP: Python imports a stale __pycache__/_common.pyc built from an earlier file layout -> new module files on disk are ignored and import keeps failing with ModuleNotFoundError -> delete __pycache__ dirs after any module-file restructuring before retesting.
+
+OK: Android SDK sidecar build on this machine: bash -lc 'cd /home/gab/Desktop/agent/workspace/app && ./build_app.sh' rebuilds and reinstalls the APK, bumping assets_vN in MainActivity.kt forces asset refresh -> run this exact script after editing assets/python/*.py.
