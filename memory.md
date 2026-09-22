@@ -752,3 +752,45 @@ OK: adb on this headless desktop is /home/gab/android/platform-tools/adb, device
 P: context.json transcript is truncated per-message with marker `[... N chars in the middle, NOT LOST: the complete text in logs/<file>.log ...]` -> those logs/ files are self-referential noise (each log is itself truncated pointing to another), NOT a recoverable full transcript -> analyze the context.json messages directly; do not chase the log chain.
 
 OK: Android agent builds natively on-device into /data/local/tmp/tpm/usr (clang-21, python3.14, lib/ site-packages) -> missing ld.lld/clang symlinks break linking ("unable to execute command: No such file or directory") -> fix with `ln -sf lld $PREFIX/bin/ld.lld` and `ln -sf clang-21 clang` then compile with `-fuse-ld=lld`.
+
+TRAP: bash tool on this machine intermittently returns EMPTY output for heredocs/`cat`/redirected commands (rc reported but no text) -> do not conclude "no output"/"command failed"; re-run the same command through the python tool with subprocess.run(capture_output=True) and decode with errors="replace".
+
+OK: to run a command on the connected Android device and get binary-safe text back, use `adb -s <serial> exec-out cat <path>` via python subprocess -> plain `adb shell cat` mangles non-UTF8 bytes (UnicodeDecodeError on 0xb7 etc), so capture bytes and .decode("utf-8","replace").
+
+TRAP: python f-strings cannot contain C/SQL braces or `{`-heavy heredocs -> SyntaxError "expecting '=' after ':'" -> write the shell/C script to a real file (open().write) and push/run it, never inline braces inside an f-string.
+
+PREVENT: a single python loop doing patchelf/readelf over 200+ files can end in "Segmentation fault" after the work is already done -> always re-verify the RESULT (readelf/grep counts) instead of trusting the tool's exit code or "Segmentation fault" line.
+
+TRAP: adb shell dumpsys/uiautomator dump and screencap can return stale launcher/menu content even when mCurrentFocus names the target app -> you misread screen state -> verify app visibility by running screencap to a file and inspecting the image, not by parsing the ui.xml or dumpsys focus.
+
+OK: adb -s <serial> shell monkey -p <pkg> -c android.intent.category.LAUNCHER 1 reliably relaunches an app that am start reports as already foregrounded.
+
+TRAP: bash tool `adb exec-out screencap -p > file.png` occasionally returns empty/no output while the redirect still creates a 0-byte or missing file -> use `python subprocess.run([ADB,"-s",S,"exec-out","screencap","-p"],capture_output=True).stdout` and write bytes, then verify len>0.
+
+P: check UI dialogs/permissions on Android without tapping blindly -> `adb -s <S> shell uiautomator dump /data/local/tmp/d.xml 2>&1 >/dev/null; cat /data/local/tmp/d.xml` then regex `text="..."` bounds to compute tap center; if a transient dialog is gone, dump returns app text instead and the search yields nothing.
+
+OK: bulk-grant Android runtime permissions non-interactively to skip all dialogs -> `for p in CAMERA RECORD_AUDIO ACCESS_FINE_LOCATION ...; do adb -s <S> shell pm grant <pkg> android.permission.$p; done`; empty stderr = granted.
+
+OK: logcat survives app reinstall but /data/local/tmp is wiped by `rm -rf /data/local/tmp/*` -> re-downloads of large toolchains should stage cache outside /data/local/tmp (e.g. /sdcard/Download/Agent/tc_stage) so cleanup does not destroy 295MB of already-fetched packages.
+
+OK: adb shell uiautomator dump then grep for text/bounds -> bounds of input box collide with STOP/SEND buttons when layout shifts, tapping a stale coordinate hit STOP and killed the task (SIGINT) -> re-dump before every tap and pick the node whose text is '→' (send), never hardcode x,y.
+
+OK: python multi-line scripts with many printf/long lines sent via adb shell get truncated (agent reported 'output decalat', 'comanda multi-linie e trunchiata de adbsh') -> adb shell mangles/has length limits on complex quoting -> write the script to a file and push it, then run, instead of one giant inline command.
+
+TRAP: grep -c 'pattern' on files under /data/data/<pkg> via `adb shell run-as` returned 0 even though the strings were present -> adb shell grep over run-as has quirks/truncation -> pull with `adb exec-out run-as <pkg> cat <file>` and grep locally.
+
+DEAD: `adb shell input text` requires the target EditText to already hold focus -> text lands nowhere if field not tapped first -> tap the input box (found via uiautomator bounds) before `input text`, and replace spaces with %s.
+
+OK: pip/meson builds that need Python.h failed with "Compiler cython cannot compile programs" -> pkg-config .pc files shipped with a Termux prefix (/data/data/com.termux/files/usr) while python3.pc alone was patched -> sed-replace the prefix in ALL $PREFIX/lib/pkgconfig/*.pc and $PREFIX/share/pkgconfig/*.pc, not just python3.pc.
+
+OK: importing C++ extensions (numpy) failed with "cannot locate symbol _ZTVNSt6__ndk1..." -> extension .so lacked NEEDED libc++_shared.so -> run patchelf --add-needed libc++_shared.so on every .so in site-packages (19 fixed) and add -lc++_shared to LDFLAGS.
+
+TRAP: android platform-tools `adb exec-out screencap -p` on Samsung SM-A366B (Android 16) returns a valid PNG that is ONLY the Agent app window when captured via exec-out; `adb shell screencap` variants differ -> always pass `-s <serial>` (RZGL102X5AT) and verify byte size >100KB before trusting the image, otherwise you may read a stale/blank frame.
+
+OK: reading the agent's live terminal on this phone works via `adb -s RZGL102X5AT exec-out screencap -p` saved to /home/gab/Desktop/agent/temp/*.png then the look tool -> avoids needing GUI; polling this every 60s is the reliable progress check, not `ps | grep` (python3.14 compiled builds spawn processes grep misses).
+
+P: numpy compiled natively on this phone lives in /data/local/tmp/tpm/usr with wrapper script /sdcard/Download/Agent/workspace/numpy_build/numpy-env.sh -> use `sh numpy-env.sh -c "..."` to run numpy on-device without re-deriving PATH/LD_LIBRARY_PATH.
+
+OK: verifying a phone-side build from this desktop works with `adb -s RZGL102X5AT shell 'export PATH=/data/local/tmp/tpm/usr/bin:/system/bin LD_LIBRARY_PATH=/data/local/tmp/tpm/usr/lib HOME=/data/local/tmp; /data/local/tmp/tpm/usr/bin/python3.14 -c "import numpy;print(numpy.__version__)"'` -> import test proves binaries actually run, not just that files exist.
+
+TRAP: `ps -A | grep python3.14` on this phone returns 0 even while a compiled python build is actively running (process name/shown args don't match) -> never use ps-grep as liveness proof for the on-device build; poll the agent's terminal screenshot or a logfile instead.

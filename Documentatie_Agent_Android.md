@@ -145,6 +145,12 @@ oid (net.sys32.agent)
 | `undefined symbol ctanl/ccoshl` | clang target android24 ascunde C99 | `--target=aarch64-linux-android<API>` |
 | `cannot locate symbol _ZTVNSt6__ndk1...` | lipseste libc++ la runtime | `LD_PRELOAD=libc++_shared.so` |
 | `undefined symbol` la linkare cu -lm | nu exista libm.so in Termux | `-L/apex/com.android.runtime/lib64/bionic` |
+| nume trunchiate in lib-dynload | tar GNU LongName (`typeflag=L`) ignorat | `_untar()` cu suport L/K/PAX (automat) |
+| `Compiler cython cannot compile programs` | **toate** `.pc` au prefix Termux | `_fix_sysconfig` le rescrie (automat) |
+| `cannot locate symbol _ZTVNSt6__ndk1...` | lipseste `NEEDED libc++_shared` | `_fix_libcxx_needed` + `-lc++_shared` (automat) |
+| 63 scripturi "No such file or directory" | shebang Termux mort | `_fix_wrappers_shebang` (automat) |
+| `python3`/`pip3` negasite | Termux nu face symlink | `_fix_symlinks` (automat) |
+| RUNPATH reapare dupa reinstalare pachet | agentul reinstaleaza .deb-uri | ruleaza `_patch_runpath` din nou (bootstrap) |
 
 ### CUM REBUILDUIESTI APLICATIA (daca modifici cod)
 ```bash
@@ -1281,3 +1287,62 @@ Compilare nativa reala pe ARM64, fara root, fara Termux.
 - patch-ul pe 200+ fisiere intr-o singura bucla Python poate segfaulta la final
   (memorie) - dar lucrarea se face; verifica INTOTDEAUNA rezultatul, nu doar exit code.
 - `chmod u+r` inainte de patchelf: unele binare au mod `--x` si nu pot fi citite.
+
+
+---
+
+## Etapa 33 - OPTIMIZARE COMPLETA (test end-to-end: numpy compilat de la 0)
+
+**Testul:** app resetata complet (zero memorie, zero toolchain), task = "compileaza
+numpy de la 0". **Runda 1** (fara optimizari): ~2h, blocat cu code=127, 6+ erori
+nerezolvate. **Runda 2** (cu fixurile din toolchain.py): **17:54, 103 pasi, SUCCES**
+(numpy 2.5.3 functional: array, matmul, det/inv/eig, FFT, random, SIMD).
+
+### Cauzele REALE gasite (toate inlantuite, fiecare reparata la sursa)
+
+| # | Simptom | Cauza | Fix in cod |
+|---|---------|-------|-----------|
+| 1 | `code=127`, `library libX.so not found` | .deb-urile Termux au RUNPATH hardcodat `/data/data/com.termux/files/usr/lib` (inexistent aici) | `_patch_runpath()` (patchelf pe binare+libs+lib-dynload) |
+| 2 | `ninja: subcommand failed` | ninja din Termux e RUPT (nu executa niciun proces) | `_fix_ninja()` → samu |
+| 3 | `rm: inaccessible or not found` | meson/ninja dau subprocese cu PATH minimal | wrapperele pun `/system/bin` in PATH |
+| 4 | `undeclared function ctanl/ccoshl` | clang target implicit android24 ascunde C99 | `_fix_cc_wrappers()` → `--target=<API real>` |
+| 5 | numele **TRUNCHIATE** in lib-dynload (`.so` dispare) | tar GNU pune numele lungi in `typeflag='L'`, `_untar` il ignora | `_untar()` cu suport `L`/`K` + PAX |
+| 6 | **63 scripturi** moarte | shebang `#!/data/data/com.termux/files/usr/bin/bash` | `_fix_wrappers_shebang()` |
+| 7 | `LIBDIR` = calea Termux (71 variabile!) | `_sysconfigdata` are prefixul de compilare | `_fix_sysconfig()` rescrie prefixul |
+| 8 | `Compiler cython cannot compile programs` | **TOATE** `.pc` au prefix Termux (`pkg-config --cflags python3` → cale moarta) | `_fix_sysconfig()` repara **toate** `.pc` |
+| 9 | `cannot locate symbol _ZTVNSt6__ndk1...` | extensiile C++ n-au `NEEDED libc++_shared.so` | `_fix_libcxx_needed()` + `-lc++_shared` in LDFLAGS |
+| 10 | `CERTIFICATE_VERIFY_FAILED` (pip HTTPS) | Python Termux nu gaseste CA store | `_fix_ca_bundle()` + `SSL_CERT_FILE` |
+| 11 | `python3`/`pip3` lipsesc | Termux nu face symlink-urile | `_fix_symlinks()` |
+| 12 | `pip` = script cu shebang Termux | wrapper, nu binar | `_fix_symlinks()` il rescrie |
+| 13 | `_prepare_dirs()` nedefinita | functie pierduta la un patch | restaurata |
+| 14 | false negative la `check()` | `os.path.exists` **nu vede** `/data/local/tmp` din sandbox | toate verificarile prin `_sh` |
+| 15 | `Module "features" does not exist` | numpy are nevoie de meson-ul propriu (vendored) | documentat (meson-python il foloseste automat) |
+| 16 | linking fara `-lc++_shared` | meson-python nu adauga libc++ | `LDFLAGS` explicit |
+
+### Functii noi in toolchain.py (9 fixuri automate in bootstrap)
+`_prepare_dirs` · `_patch_runpath` · `_fix_ninja` · `_fix_cc_wrappers` ·
+`_fix_symlinks` · `_fix_wrappers_shebang` · `_fix_sysconfig` · `_fix_ca_bundle` ·
+`_fix_libcxx_needed` · `_device_api` · `check()` (functional)
+
+### Mod de operare nou (agent.py)
+- `pip_install` foloseste `_toolchain_exports()` (env complet din `env_vars()`)
+  si apeleaza automat `_fix_libcxx_needed()` dupa instalare
+- `compile` foloseste acelasi env complet
+- `env_vars()`: PATH cu `/system/bin`, `--target`, `-L bionic`, `LD_PRELOAD`,
+  `SSL_CERT_FILE`, `HOME`, `TMPDIR`, `PIP_CACHE_DIR`
+
+### REZULTAT (masurat)
+```
+Runda 1: ~2h, esec (code=127)
+Runda 2: 17:54, 103 pasi, SUCCES
+  numpy 2.5.3 | array, matmul, det, inv, eig, FFT, random, SIMD — toate OK
+```
+Agentul a auto-invatat 4 lectii (identice cu diagnosticul de dezvoltare),
+scrise singur in memory.md.
+
+### CAPCANE DE RETINUT
+- RUNPATH-ul se **pierde** cand agentul reinstaleaza pachete Termux → `_patch_runpath`
+  trebuie re-rulat (bootstrap-ul o face).
+- `patchelf` nu se poate patch-ui pe sine (Text file busy) → copie.
+- patch pe 200+ fisiere intr-o bucla poate da segfault la final, dar munca se face:
+  verifica REZULTATUL (readelf), nu exit code-ul.

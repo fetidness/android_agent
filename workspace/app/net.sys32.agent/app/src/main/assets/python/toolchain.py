@@ -129,9 +129,14 @@ def have(binary):
 
 
 def check():
-    """Returneaza dict cu ce e instalat (o singura comanda ls = robust)."""
+    """Starea toolchain-ului - verificari FUNCTIONALE, nu doar prezenta fisierelor.
+
+    Fiecare test de aici corespunde unei erori REALE intalnite pe device;
+    daca unul e rosu, agentul stie exact ce fix lipseste.
+    """
     out = _sh("ls " + BIN + " 2>/dev/null", 30)
     present = set(out.split())
+    api = _device_api()
     need = {
         "clang": ("clang" in present) or ("clang-21" in present),
         "make": "make" in present,
@@ -139,28 +144,52 @@ def check():
         "pip": ("pip" in present) or ("pip3" in present),
         "cmake": "cmake" in present,
         "ninja": "ninja" in present,
-        "samu": ("samurai" in present) or ("ninja" in present),
+        "samu": "samu" in present,
+        "patchelf": "patchelf" in present,
         "ld": ("ld" in present) or ("lld" in present),
         "ar": ("ar" in present) or ("llvm-ar" in present),
         "git": "git" in present,
         "pkg-config": "pkg-config" in present,
         "rust": "rustc" in present,
-        "patchelf": "patchelf" in present,
-        "samu": "samu" in present,
         "sysroot(crt)": "crtbegin_dynamic.o" in set(
             _sh("ls " + ROOT + "/usr/lib 2>/dev/null", 30).split()),
-        "marker": os.path.exists(MARKER),
+        "marker": "YES" in _sh("test -f " + MARKER + " && echo YES || echo NO", 20),
     }
-    # verificare FUNCTIONALA (nu doar prezenta fisierului): chiar poate compila?
+    # --- verificari FUNCTIONALE (fiecare = o eroare reala de pe device) ---
+    py = BIN + "/python3.14"
+    # 1. compileaza + linkeaza (target API real, nu android24)
     probe = _sh(
         'cd /data/local/tmp 2>/dev/null || cd /tmp; '
         'printf "int main(void){return 0;}" > .tc_probe.c; '
-        'PATH=' + BIN + ':$PATH ' + BIN + '/clang --target=aarch64-linux-android36 '
-        '.tc_probe.c -o .tc_probe 2>&1; echo RC=$?', 120)
+        'PATH=%s:/system/bin:$PATH %s --target=aarch64-linux-android%d '
+        '.tc_probe.c -o .tc_probe 2>&1; echo RC=$?' % (BIN, BIN + "/clang", api), 120)
     need["compile_test"] = "RC=0" in probe
     if not need["compile_test"]:
         need["compile_hint"] = probe.strip()[-200:]
+    # 2. Python + LIBDIR corect (sysconfig patchuit)
+    sc = _sh('%s -c "import sysconfig;print(sysconfig.get_config_var(\'LIBDIR\'))" 2>&1' % py, 60)
+    need["sysconfig_ok"] = ("com.termux" not in sc) and (ROOT + "/usr/lib" in sc)
+    if not need["sysconfig_ok"]:
+        need["sysconfig_hint"] = sc.strip()[-120:]
+    # 3. pip functional cu SSL
+    pv = _sh('PATH=%s:/system/bin:$PATH SSL_CERT_FILE=%s/usr/etc/tls/cert.pem '
+             '%s -m pip --version 2>&1' % (BIN, ROOT, py), 90)
+    need["pip_works"] = "pip" in pv.lower() and "Traceback" not in pv
+    if not need["pip_works"]:
+        need["pip_hint"] = pv.strip()[-150:]
+    # 4. CA bundle prezent (pip HTTPS)
+    need["ca_bundle"] = ("cert.pem" in _sh("ls %s/usr/etc/tls/cert.pem 2>/dev/null" % ROOT, 20))
+    # 5. libc++ preload (extensii C++)
+    need["libc++_shared"] = ("libc++_shared.so" in _sh("ls %s/usr/lib/libc++_shared.so 2>/dev/null" % ROOT, 20))
+    # 6. RUNPATH corectat (0 fisiere cu com.termux)
+    rp = _sh('cd %s && n=0; for f in *; do [ -f "$f" ] && readelf -d "$f" 2>/dev/null '
+             '| grep -q com.termux && n=$((n+1)); done; echo $n' % BIN, 180)
+    need["runpath_ok"] = (rp.strip().split("\n")[-1].strip() == "0")
+    # 7. numpy (daca e cerut explicit)
+    if "numpy" in " ".join(PKGS):
+        need["numpy"] = "numpy" in _sh("ls %s/lib/python3.14/site-packages 2>/dev/null" % ROOT, 30)
     return need
+
 
 # ============================================================
 #  BOOTSTRAP DIRECT (fara tpm.py, fara adb) - rapid si robust
@@ -219,10 +248,23 @@ def _load_index():
 
 
 def _untar(blob, dest):
-    """Parseaza un tar (ustar/gnu) si extrage in dest - pur Python."""
+    """Parseaza un tar (ustar/GNU/PAX) si extrage in dest - pur Python.
+
+    IMPORTANT: arhivele Termux folosesc nume LUNGI (ex.
+    `_asyncio.cpython-314-aarch64-linux-android.so`, peste 100 caractere) si le
+    pun in headere speciale:
+      - typeflag 'L' -> numele real e in BODY-ul urmator (GNU LongName)
+      - typeflag 'K' -> la fel, pentru linkname
+      - typeflag 'x'/'g' -> PAX extended header (cheia 'path=')
+    Fara tratarea lor, numele se TRUNCHIAZA la 100 de caractere si extensia
+    `.so` dispare -> toate modulele C din lib-dynload devin neimportabile
+    (exact eroarea 'pip e afectat de _posixsubprocess lipsa').
+    """
     PREF = ("./data/data/com.termux/files/usr/", "data/data/com.termux/files/usr/")
     off = 0
     n = 0
+    pending_name = None      # numele real din headerul 'L'
+    pending_link = None      # linkname real din headerul 'K'
     while off + 512 <= len(blob):
         hdr = blob[off:off+512]
         if hdr[:1] == b"\x00":
@@ -238,10 +280,35 @@ def _untar(blob, dest):
         off += 512
         data = blob[off:off+size]
         off += (size + 511) // 512 * 512
-        # prefix (ustar)
+
+        # --- header de NUME LUNG (GNU) ---
+        if typeflag == b"L":
+            pending_name = data.split(b"\x00")[0].decode("utf-8", "replace")
+            continue
+        if typeflag == b"K":
+            pending_link = data.split(b"\x00")[0].decode("utf-8", "replace")
+            continue
+        # --- header extins PAX (path= ...) ---
+        if typeflag in (b"x", b"g"):
+            txt = data.decode("utf-8", "replace")
+            for line in txt.split("\n"):
+                if line.startswith("path="):
+                    pending_name = line[5:]
+                elif line.startswith("linkpath="):
+                    pending_link = line[9:]
+            continue
+
+        # prefix (ustar) - se aplica DOAR daca nu avem nume lung
         prefix = hdr[345:500].split(b"\x00")[0].decode("utf-8", "replace")
-        if prefix:
+        if pending_name:
+            name = pending_name
+            pending_name = None
+        elif prefix:
             name = prefix + "/" + name
+        if pending_link:
+            linkname = pending_link
+            pending_link = None
+
         nm = name
         for pref in PREF:
             if nm.startswith(pref):
@@ -256,24 +323,25 @@ def _untar(blob, dest):
             parent = os.path.dirname(out)
             if parent and not os.path.isdir(parent):
                 os.makedirs(parent, exist_ok=True)
-            if typeflag in (b"5",):  # dir
-                os.makedirs(out, exist_ok=True)
-            elif typeflag in (b"2",):  # symlink
-                os.makedirs(os.path.dirname(out), exist_ok=True)
-                if os.path.lexists(out):
-                    os.remove(out)
-                os.symlink(linkname, out)
-            elif typeflag in (b"1",):  # hardlink
-                os.makedirs(os.path.dirname(out), exist_ok=True)
-                src_p = os.path.join(dest, linkname)
-                for pref in PREF:
-                    if linkname.startswith(pref):
-                        src_p = os.path.join(dest, linkname[len(pref):]); break
-                if os.path.exists(src_p):
-                    if os.path.lexists(out): os.remove(out)
-                    os.link(src_p, out)
-            elif typeflag in (b"0", b"\x00", b""):  # file
-                os.makedirs(os.path.dirname(out), exist_ok=True)
+            if typeflag in (b"5", b""):
+                # director (b"" = fara typeflag, dar numele se termina cu /)
+                if name.endswith("/"):
+                    os.makedirs(out, exist_ok=True)
+                    n += 1
+                    continue
+            if typeflag == b"2":
+                # symlink
+                try:
+                    if os.path.lexists(out):
+                        os.remove(out)
+                    os.symlink(linkname, out)
+                    n += 1
+                except Exception:
+                    pass
+            else:
+                # fisier normal
+                if os.path.isdir(out):
+                    continue
                 with open(out, "wb") as w:
                     w.write(data)
                 try:
@@ -282,7 +350,7 @@ def _untar(blob, dest):
                     os.chmod(out, mode | 0o700)
                 except Exception:
                     os.chmod(out, 0o755)
-            n += 1
+                n += 1
         except Exception:
             pass
     return n > 0
@@ -327,7 +395,9 @@ def _patch_runpath():
     'CANNOT LINK EXECUTABLE: library libX.so not found' (exit 127), iar
     ninja/meson raporteaza doar 'subcommand failed'.
     Fix: patch-uim RUNPATH la prefixul nostru real cu patchelf."""
-    if not os.path.exists(BIN + "/patchelf"):
+    # ATENTIE: os.path.exists NU vede /data/local/tmp din sandbox-ul app-ului
+    # (uid ~10384, SELinux) -> verificarea trebuie facuta prin SHELL (uid=2000)
+    if "YES" not in _sh("test -x " + BIN + "/patchelf && echo YES || echo NO", 30):
         print("[toolchain] patchelf lipsa - sar peste fix RUNPATH")
         return
     script = r"""
@@ -361,6 +431,15 @@ for d in "$P"/lib/python3.*/lib-dynload; do
     fi
   done
 done
+# 4. patchelf NU se poate patch-ui pe sine ("Text file busy") -> copie care
+#    patchuieste originalul, apoi se sterge
+if readelf -d "$PE" 2>/dev/null | grep -q com.termux; then
+  cp "$PE" /data/local/tmp/.pf_copy 2>/dev/null && chmod 755 /data/local/tmp/.pf_copy
+  if [ -x /data/local/tmp/.pf_copy ]; then
+    LD_LIBRARY_PATH="$L" /data/local/tmp/.pf_copy --set-rpath "$L" "$PE" 2>/dev/null
+    rm -f /data/local/tmp/.pf_copy
+  fi
+fi
 echo RUNPATH_DONE
 """
     script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
@@ -379,9 +458,9 @@ def _fix_ninja():
     """ninja din Termux e RUPT: nu poate executa NICIUN subproces
     (libandroid-spawn.so la runtime) -> 'ninja: subcommand failed', code=127.
     samurai (samu) face acelasi lucru si merge. Inlocuim ninja cu samu."""
-    n = BIN + "/ninja"
     s = BIN + "/samu"
-    if not os.path.exists(s):
+    # la fel: verificare prin shell, nu os.path (app-ul nu vede /data/local/tmp)
+    if "YES" not in _sh("test -x " + s + " && echo YES || echo NO", 30):
         print("[toolchain] samu lipsa - nu pot inlocui ninja")
         return
     script = r"""
@@ -450,6 +529,192 @@ def _device_api():
     return 36
 
 
+def _fix_wrappers_shebang():
+    """Scripturile din prefix (aarch64-linux-android-clang, clang etc.) au
+    shebang `#!/data/data/com.termux/files/usr/bin/bash` (PREFIXUL TERMUX, mort).
+    Fara fix: "No such file or directory" la orice apel, desi fisierul exista.
+
+    Plus: multe hardcodeaza `--target=aarch64-linux-android24` -> ASCUNDE
+    functiile C99 (complex.h) -> numpy nu compileaza.
+
+    Fix: rescriu shebang -> /system/bin/sh si prefixul Termux -> prefix real,
+    plus forțez target-ul la API-ul device-ului.
+    """
+    api = _device_api()
+    script = r"""
+B="__BIN__"; L="__LIB__"; P="__PREFIX__"; API=__API__; OLD="/data/data/com.termux/files/usr"
+n=0
+for f in "$B"/*; do
+  [ -f "$f" ] || continue
+  head -1 "$f" 2>/dev/null | grep -q '^#!' || continue
+  changed=0
+  # 1. shebang mort -> /system/bin/sh
+  if head -1 "$f" | grep -q "$OLD"; then
+    sed -i '1s|.*|#!/system/bin/sh|' "$f"; changed=1
+  fi
+  # 2. prefix Termux -> prefix real (in tot continutul)
+  if grep -q "$OLD" "$f" 2>/dev/null; then
+    sed -i "s|$OLD|$P|g" "$f"; changed=1
+  fi
+  # 3. target android24 -> API real (altfel functiile C99 sunt ascunse)
+  if grep -q 'target=aarch64-linux-android24' "$f" 2>/dev/null; then
+    sed -i "s|target=aarch64-linux-android24|target=aarch64-linux-android$API|g" "$f"; changed=1
+  fi
+  [ "$changed" = "1" ] && n=$((n+1))
+done
+echo "WRAPPERS_FIXED=$n"
+"""
+    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
+                    .replace("__PREFIX__", ROOT + "/usr").replace("__API__", str(api)))
+    try:
+        out = _sh(script, 300)
+        if "WRAPPERS_FIXED" in out:
+            print("[toolchain] " + out.strip().split("\n")[-1] + " scripturi reparamurate (shebang+prefix+target)")
+    except Exception as e:
+        print("[toolchain] wrappers err:", e)
+
+
+def _fix_sysconfig():
+    """CRITIC pentru pip/meson: _sysconfigdata are PREFIXUL TERMUX hardcodat.
+
+    Python-ul din Termux e compilat cu --prefix=/data/data/com.termux/files/usr.
+    Desi binarul ruleaza din prefixul nostru, `sysconfig` raporteaza calea
+    Termux (71 de variabile!) - inclusiv LIBDIR, BLDSHARED, INCLUDEDIR.
+
+    Consecinta: meson/pip adauga `-I/data/data/com.termux/files/usr/include/py3.14`
+    (inexistent) si link `-L/data/data/com.termux/files/usr/lib` (inexistent)
+    -> `meson test has_header` esueaza si build-ul numpy se opreste.
+
+    Fix: rescriem _sysconfigdata__android_*.py inlocuind calea Termux cu
+    prefixul real (/data/local/tmp/tpm/usr).
+    """
+    script = r"""
+P="__PREFIX__"; OLD="/data/data/com.termux/files/usr"
+found=0; patched=0
+for f in "$P"/lib/python3.*/_sysconfigdata*.py; do
+  [ -f "$f" ] || continue
+  found=$((found+1))
+  if grep -q "$OLD" "$f" 2>/dev/null; then
+    sed -i "s|$OLD|$P|g" "$f"
+    patched=$((patched+1))
+  fi
+done
+# si sysconfig-ul principal (uneori are cai in plus)
+for f in "$P"/lib/python3.*/sysconfig.py; do
+  [ -f "$f" ] || continue
+  if grep -q "$OLD" "$f" 2>/dev/null; then sed -i "s|$OLD|$P|g" "$f"; patched=$((patched+1)); fi
+done
+# .pth / config-uri care indica prefixul vechi
+for f in "$P"/lib/python3.*/config-*/*.mk; do
+  [ -f "$f" ] || continue
+  if grep -q "$OLD" "$f" 2>/dev/null; then sed -i "s|$OLD|$P|g" "$f"; patched=$((patched+1)); fi
+done
+# ★ curata caile MOARTE de build ale Termux (/home/builder/.termux-build/...)
+#   fara asta, LDSHARED/CC din sysconfig trimit linkerul in directoare inexistente
+for f in "$P"/lib/python3.*/_sysconfigdata*.py "$P"/lib/python3.*/sysconfig.py; do
+  [ -f "$f" ] || continue
+  if grep -q '/home/builder' "$f" 2>/dev/null; then
+    sed -i 's|/home/builder/.termux-build/[^ "'"'"']*||g' "$f"
+    patched=$((patched+1))
+  fi
+done
+# ★ TOATE fisierele .pc au prefixul TERMUX in ele -> pkg-config da cai inexistente
+#   (ex. `pkg-config --cflags python3` => -I/data/data/com.termux/.../include/python3.14)
+#   Asta rupe `Compiler cython cannot compile programs` in meson!
+npc=0
+for f in "$P"/lib/pkgconfig/*.pc "$P"/share/pkgconfig/*.pc; do
+  [ -f "$f" ] || continue
+  if grep -q "$OLD" "$f" 2>/dev/null; then
+    sed -i "s|$OLD|$P|g" "$f"
+    npc=$((npc+1))
+  fi
+done
+echo "PC_FIXED=$npc"
+# python3.pc (pkg-config) - meson il foloseste; TREBUIE sa aiba prefixul nostru
+mkdir -p "$P/lib/pkgconfig" 2>/dev/null
+cat > "$P/lib/pkgconfig/python3.pc" <<EOF
+prefix=$P
+exec_prefix=\${prefix}
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: Python
+Description: Python standard library
+Version: 3.14
+Libs: -L\${libdir} -lpython3.14
+Cflags: -I\${includedir}/python3.14
+EOF
+echo "SYSCONFIG_FILES=$found PATCHED=$patched"
+"""
+    script = script.replace("__PREFIX__", ROOT + "/usr")
+    try:
+        out = _sh(script, 240)
+        if "PATCHED" in out:
+            print("[toolchain] sysconfig: " + out.strip().split("\n")[-1])
+    except Exception as e:
+        print("[toolchain] sysconfig err:", e)
+
+
+def _fix_libcxx_needed():
+    """Extensiile C++ (numpy) NU au `NEEDED libc++_shared.so` desi folosesc
+    simboluri din el -> la import: `cannot locate symbol _ZTVNSt6__ndk1...`.
+    Solutia corecta (nu LD_PRELOAD): patchelf --add-needed pe fiecare .so din
+    site-packages. Astfel importul merge fara nicio variabila de mediu."""
+    script = r"""
+B="__BIN__"; L="__LIB__"; P="__PREFIX__"
+PE="$B/patchelf"; [ -x "$PE" ] || { echo NO_PATCHELF; exit 0; }
+export LD_LIBRARY_PATH="$L:$LD_LIBRARY_PATH"
+n=0
+for d in "$P"/lib/python3.*/site-packages; do
+  [ -d "$d" ] || continue
+  for f in $(find "$d" -name '*.so' 2>/dev/null); do
+    if readelf -d "$f" 2>/dev/null | grep -q 'NEEDED.*libc++_shared'; then continue; fi
+    if "$PE" --add-needed libc++_shared.so "$f" 2>/dev/null; then n=$((n+1)); fi
+  done
+done
+echo "LIBCXX_ADDED=$n"
+"""
+    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
+                    .replace("__PREFIX__", ROOT + "/usr"))
+    try:
+        out = _sh(script, 900)
+        if "LIBCXX_ADDED" in out:
+            print("[toolchain] " + out.strip().split("\n")[-1] + " .so legate la libc++_shared")
+    except Exception as e:
+        print("[toolchain] libcxx err:", e)
+
+
+def _fix_ca_bundle():
+    """Python din Termux caută CA in /data/data/com.termux/files/usr/etc/tls/cert.pem
+    (inexistent) -> orice HTTPS (pip!) moare cu CERTIFICATE_VERIFY_FAILED.
+    Construim un bundle real din cacerts-ul Android si setam SSL_CERT_FILE."""
+    script = r"""
+P="__PREFIX__"
+mkdir -p "$P/etc/tls" 2>/dev/null
+OUT="$P/etc/tls/cert.pem"
+if [ -s "$OUT" ]; then echo CA_EXISTS; exit 0; fi
+: > "$OUT"
+for d in /apex/com.android.conscrypt/cacerts /system/etc/security/cacerts; do
+  [ -d "$d" ] || continue
+  for f in "$d"/*; do
+    [ -f "$f" ] || continue
+    if grep -q 'BEGIN CERTIFICATE' "$f" 2>/dev/null; then
+      cat "$f" >> "$OUT"; printf '\n' >> "$OUT"
+    fi
+  done
+done
+sz=$(wc -c < "$OUT" 2>/dev/null || echo 0)
+echo "CA_WRITTEN=$sz"
+"""
+    script = script.replace("__PREFIX__", ROOT + "/usr")
+    try:
+        out = _sh(script, 180)
+        if "CA_WRITTEN" in out or "CA_EXISTS" in out:
+            print("[toolchain] CA bundle pregatit (SSL_CERT_FILE)")
+    except Exception as e:
+        print("[toolchain] CA err:", e)
+
+
 def _fix_symlinks():
     """Recreeaza symlink-urile prin SHELL (os nu vede /data/local/tmp).
     Termux are symlink-uri in .deb (typeflag 2) pe care _untar nu le face."""
@@ -481,14 +746,24 @@ for pair in "libz.so.1.3.2:libz.so.1:libz.so" \
     [ -e "$L/$t" ] || ln -sf "$real" "$L/$t"
   done
 done
-# 3. binare uzuale
+# 3. binare uzuale (inclusiv python3/pip3 - TERMUX NU ARE SYMLINK-UL 'python3'!)
 for pair in "clang:clang-21" "clang++:clang-21" "cc:clang-21" "c++:clang-21" \
             "ld:lld" "ld.lld:lld" "ar:llvm-ar" "ranlib:llvm-ranlib" \
             "nm:llvm-nm" "objdump:llvm-objdump" "strip:llvm-strip" \
-            "readelf:llvm-readelf" "python:python3" "pip:pip3" ; do
+            "readelf:llvm-readelf" \
+            "python3:python3.14" "python:python3.14" "pip3:pip" "pip:python3.14" ; do
   link=$(echo "$pair" | cut -d: -f1); tgt=$(echo "$pair" | cut -d: -f2)
   if [ -e "$B/$tgt" ] && [ ! -e "$B/$link" ]; then ln -sf "$tgt" "$B/$link"; fi
 done
+# pip: daca e script cu shebang Termux, il inlocuim cu un wrapper corect
+if [ -f "$B/pip" ] && head -1 "$B/pip" 2>/dev/null | grep -q 'com.termux'; then
+  printf '#!/system/bin/sh\nexec "$B/python3.14" -m pip "$@"\n' > "$B/pip.new"
+  mv "$B/pip.new" "$B/pip"; chmod 755 "$B/pip"
+fi
+if [ -f "$B/pip3" ] && head -1 "$B/pip3" 2>/dev/null | grep -q 'com.termux'; then
+  printf '#!/system/bin/sh\nexec "$B/python3.14" -m pip "$@"\n' > "$B/pip3.new"
+  mv "$B/pip3.new" "$B/pip3"; chmod 755 "$B/pip3"
+fi
 echo SYMLINKS_DONE
 """
     script = script.replace("__LIB__", ROOT + "/usr/lib").replace("__BIN__", BIN)
@@ -500,9 +775,25 @@ echo SYMLINKS_DONE
         print("[toolchain] symlinks err:", e)
 
 
+def _prepare_dirs():
+    """Creeaza directoarele de lucru (TMPDIR, HOME, cache pip).
+    pip/meson au nevoie de un HOME si TMPDIR scriibile; fara ele: erori obscure."""
+    script = r"""
+mkdir -p /data/local/tmp/tmp __HOME__ __HOME__/.cache/pip 2>/dev/null
+chmod 777 /data/local/tmp/tmp 2>/dev/null
+echo DIRS_OK
+"""
+    script = script.replace("__HOME__", F + "/home")
+    try:
+        _sh(script, 60)
+    except Exception:
+        pass
+
+
 def bootstrap_direct(packages=None, progress=None):
     """Bootstrap COMPLET: descarca .deb, extrage in staging (app),
     apoi copiaza in prefix (/data/local/tmp, prin adbsh)."""
+    _prepare_dirs()
     STAGE = "/sdcard/Download/Agent/tc_stage"
     try:
         os.makedirs(STAGE, exist_ok=True)
@@ -549,19 +840,23 @@ def bootstrap_direct(packages=None, progress=None):
     _sh("mkdir -p '%s/usr' && cp -a '%s/.' '%s/usr/' && chmod -R 755 '%s/usr/bin' '%s/usr/lib' 2>/dev/null; echo COPIED"
         % (ROOT, STAGE, ROOT, ROOT, ROOT), 1800)
 
-    # recreez symlink-urile .so (Termux)
-    print("[toolchain] recreez symlink-uri...")
-    _fix_symlinks()
-
-    # FIXURI OBLIGATORII dupa instalare (altfel compilarea NU merge):
-    #  1. RUNPATH: .deb-urile Termux au calea /data/data/com.termux/... care nu exista
-    #     -> orice subproces moare cu exit 127
-    #  2. ninja: versiunea Termux nu poate spawn-ui procese -> samu
-    print("[toolchain] aplic fixurile (RUNPATH + ninja)...")
+    # FIXURI OBLIGATORII dupa instalare. Fiecare corespunde unei erori REALE:
+    #  1. RUNPATH      - .deb-urile au /data/data/com.termux/... hardcodat
+    #                    (inexistent aici) -> orice subproces moare cu exit 127
+    #  2. ninja        - versiunea Termux nu poate spawn-ui procese -> samu
+    #  3. cc wrappers  - clang default android24 ascunde functiile C99; PATH incomplet
+    #  4. symlinks     - lipsesc python3/pip3 (Termux nu le face)
+    #  5. sysconfig    - 71 de variabile arata prefixul Termux -> meson/pip esueaza
+    #  6. CA bundle    - Python nu gaseste CA store -> pip HTTPS esueaza
+    print("[toolchain] aplic fixurile de mediu (6 pasi)...")
     _patch_runpath()
     _fix_ninja()
     _fix_cc_wrappers()
     _fix_symlinks()
+    _fix_wrappers_shebang()
+    _fix_sysconfig()
+    _fix_ca_bundle()
+    _fix_libcxx_needed()
 
     # verificare
     st = check()
@@ -575,9 +870,26 @@ def bootstrap_direct(packages=None, progress=None):
 
 
 def env_vars():
-    """Variabilele de mediu pentru compilare (PATH, CC, CXX, CFLAGS, LDFLAGS...)."""
+    """Mediul COMPLET de compilare. Folosit de bootstrap, pip_install si compile.
+
+    Toate variabilele de aici au fost adaugate dupa ce lipsa lor a cauzat
+    esecuri reale pe device:
+      CFLAGS/LDFLAGS --target  -> clang default android24 ascunde functiile C99
+      LD_PRELOAD               -> extensiile C++ nu au NEEDED libc++_shared.so
+      LD_LIBRARY_PATH          -> RUNPATH Termux e invalid; libm e in bionic
+      PATH                     -> meson/ninja cheama rm/sh din /system/bin
+      SSL_CERT_FILE            -> Python Termux nu gaseste CA store -> pip HTTPS esueaza
+      HOME/TMPDIR              -> pip are nevoie de cache/scriere
+    """
+    home = F + "/home"
+    pipcache = home + "/.cache/pip"
+    try:
+        os.makedirs(pipcache, exist_ok=True)
+    except Exception:
+        pass
     return {
-        "PATH": BIN + ":" + F + "/python:" + os.environ.get("PATH", ""),
+        "PATH": (BIN + ":/system/bin:/system/xbin:" + F + "/python:"
+                 + os.environ.get("PATH", "")),
         "PREFIX": ROOT + "/usr",
         "TERMUX_PREFIX": ROOT + "/usr",
         "CC": BIN + "/clang",
@@ -585,24 +897,41 @@ def env_vars():
         "AR": BIN + "/ar",
         "RANLIB": BIN + "/ranlib",
         "LD": BIN + "/ld",
-        # API 36 (Android 16) - fara el, clang are target android24 si ASCUNDE
-        # functiile C99 introduse ulterior (ex. ctanl/ccoshl din complex.h)
-        "CFLAGS": "--target=aarch64-linux-android36 -I" + ROOT + "/usr/include",
-        "LDFLAGS": ("--target=aarch64-linux-android36 -L" + ROOT + "/usr/lib"
-                    + " -L" + BIONIC_LIB
-                    + " -Wl,-rpath," + ROOT + "/usr/lib"),
+        "NM": BIN + "/nm",
+        "STRIP": BIN + "/strip",
+        "MAKE": BIN + "/make",
+        "CMAKE": BIN + "/cmake",
+        # ★ API-ul REAL al telefonului (36 = Android 16), nu android24 implicit
+        "CFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include" % (_device_api(), ROOT),
+        "CXXFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include" % (_device_api(), ROOT),
+        # ★ -lc++_shared EXPLICIT: meson-python nu adauga libc++ la linkare,
+        #   iar extensiile C++ (numpy) ramân fara NEEDED libc++_shared.so
+        #   -> la import: "cannot locate symbol _ZTVNSt6__ndk1..."
+        "LDFLAGS": ("--target=aarch64-linux-android%s -L%s/usr/lib -L%s"
+                    " -Wl,-rpath,%s/usr/lib -lc++_shared" % (_device_api(), ROOT, BIONIC_LIB, ROOT)),
         "PKG_CONFIG_PATH": ROOT + "/usr/lib/pkgconfig:" + ROOT + "/usr/share/pkgconfig",
+        "PKG_CONFIG_LIBDIR": ROOT + "/usr/lib/pkgconfig:" + ROOT + "/usr/share/pkgconfig",
         "LD_LIBRARY_PATH": ROOT + "/usr/lib:" + BIONIC_LIB + ":" + F + "/libs",
-        # numpy si alte extensii C++ nu au NEEDED libc++_shared.so dar folosesc
-        # simboluri din el -> fara preload: "cannot locate symbol _ZTVNSt6__ndk1..."
+        # ★ numpy si alte extensii C++ nu au NEEDED libc++_shared.so
         "LD_PRELOAD": ROOT + "/usr/lib/libc++_shared.so",
+        # ★ fara asta pip HTTPS moare cu CERTIFICATE_VERIFY_FAILED
+        "SSL_CERT_FILE": ROOT + "/usr/etc/tls/cert.pem",
+        "SSL_CERT_DIR": ROOT + "/usr/etc/tls",
+        "REQUESTS_CA_BUNDLE": ROOT + "/usr/etc/tls/cert.pem",
+        "CURL_CA_BUNDLE": ROOT + "/usr/etc/tls/cert.pem",
+        "HOME": home,
+        "TMPDIR": "/data/local/tmp/tmp",
+        "PIP_CACHE_DIR": pipcache,
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        "CARGO_HOME": home + "/.cargo",
     }
 
 
 def _enable_pip():
     """Activeaza pip in python3-ul din toolchain (via ensurepip)."""
     py = BIN + "/python3"
-    if not os.path.exists(py):
+    # os.path nu vede /data/local/tmp din sandbox -> verific prin shell
+    if "YES" not in _sh("test -x " + py + " && echo YES || echo NO", 20):
         return
     env = dict(os.environ)
     env["PATH"] = BIN + ":" + env.get("PATH", "")

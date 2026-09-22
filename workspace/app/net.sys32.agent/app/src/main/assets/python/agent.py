@@ -1329,6 +1329,30 @@ def run_toolchain_tool(a):
     ROOT = "/data/local/tmp/tpm"
     BIN = ROOT + "/usr/bin"
 
+    def _toolchain_exports():
+        """Export-uri shell cu mediul COMPLET de compilare, luat din toolchain.py.
+        Sursele Termux au RUNPATH gresit + clang are target android24 implicit ->
+        fara aceste variabile (CFLAGS cu --target, LD_PRELOAD libc++, PATH cu
+        /system/bin) pachetele cu extensii C/C++ (numpy!) NU se compileaza."""
+        e = {}
+        try:
+            import importlib.util as _ilu
+            spec = _ilu.spec_from_file_location("_tc_env", tc)
+            mod = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            e = mod.env_vars()
+        except Exception:
+            pass
+        # fallback daca toolchain.py nu poate fi incarcat
+        e.setdefault("PATH", BIN + ":/system/bin:/system/xbin:" + os.environ.get("PATH", ""))
+        e.setdefault("LD_LIBRARY_PATH", ROOT + "/usr/lib")
+        e.setdefault("PREFIX", ROOT + "/usr")
+        e.setdefault("LD_PRELOAD", ROOT + "/usr/lib/libc++_shared.so")
+        parts = []
+        for k, v in e.items():
+            parts.append("export %s='%s'" % (k, str(v).replace("'", "'\\''")) )
+        return "; ".join(parts) + "; "
+
     def _env():
         e = dict(os.environ)
         e["PATH"] = BIN + ":" + F + "/python:" + e.get("PATH","")
@@ -1366,13 +1390,24 @@ def run_toolchain_tool(a):
     if action == "pip_install":
         pkg = (a.get("package") or "").strip()
         if not pkg: return "lipseste 'package'"
-        pip = BIN + "/pip"
-        if not os.path.exists(pip): pip = "pip"
-        full = ("export PATH=%s:$PATH; export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; "
-                "export PREFIX=%s/usr; "
-                "(python3 -m pip || pip3 || pip) install --no-cache-dir '%s' 2>&1 | tail -25"
-                % (BIN, ROOT + "/usr/lib", ROOT, pkg))
-        return run_adbsh_tool(full, int(a.get("timeout", 1800) or 1800))
+        # mediul COMPLET (target API, LD_PRELOAD, SSL_CERT_FILE, PATH cu /system/bin)
+        # luat din toolchain.env_vars() - fara el pachetele C/C++ nu se compileaza
+        full = (_toolchain_exports()
+                + "(python3 -m pip || pip3 || pip) install --no-cache-dir '%s' 2>&1 | tail -25"
+                % pkg)
+        res = run_adbsh_tool(full, int(a.get("timeout", 2400) or 2400))
+        # extensiile C++ au nevoie de NEEDED libc++_shared (altfel "cannot locate symbol")
+        try:
+            fix = ("import importlib.util as iu;"
+                   "sp=iu.spec_from_file_location('tc','%s');"
+                   "m=iu.module_from_spec(sp);sp.loader.exec_module(m);"
+                   "m._fix_libcxx_needed()" % tc)
+            r2 = _run([sys.executable, "-c", fix], 900)
+            if "LIBCXX_ADDED" in r2:
+                res += "\n" + r2.strip().split("\n")[-1]
+        except Exception:
+            pass
+        return res
     if action == "compile":
         srcf = (a.get("source") or "").strip()
         out = (a.get("out") or "/data/local/tmp/out.bin").strip()
@@ -1388,9 +1423,9 @@ def run_toolchain_tool(a):
         shared = out.endswith(".so")
         mode = "-shared -fPIC" if shared else ""
         # RULARE PRIN SHELL (uid=2000): app-ul NU poate executa din /data/local/tmp
-        full = ("export PATH=%s:$PATH; export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; "
-                "cd /data/local/tmp && %s %s -O2 '%s' -o '%s' %s && echo COMPILE_OK"
-                % (BIN, ROOT + "/usr/lib", cc, mode, srcf, out, flags))
+        full = (_toolchain_exports()
+                + "cd /data/local/tmp && %s %s -O2 '%s' -o '%s' %s && echo COMPILE_OK"
+                % (cc, mode, srcf, out, flags))
         r = run_adbsh_tool(full, int(a.get("timeout", 600) or 600))
         if "COMPILE_OK" in r and not shared:
             rr = run_adbsh_tool("export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; '%s'" % (ROOT + "/usr/lib", out), 120)
