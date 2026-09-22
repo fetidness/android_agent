@@ -139,6 +139,12 @@ oid (net.sys32.agent)
 | `cannot locate symbol...` (libs) | LD_LIBRARY_PATH gresit | pune `files/libs` PRIMUL in LD_LIBRARY_PATH |
 | `adbsh error: timed out` dupa multe apeluri | adbd rate-limit | asteapta 10s, sau repornire wireless |
 | Libs lipsa dupa update APK | assets re-extrase | app le copiaza automat la pornire (adb_setup.py) |
+| `code=127` / `library libX.so not found` | RUNPATH Termux hardcodat | `toolchain.py` face patch automat (patchelf) |
+| `ninja: subcommand failed` | ninja Termux e rupt | se inlocuieste automat cu samu |
+| `rm: inaccessible or not found` | PATH minimal la meson/ninja | wrapper-ele pun /system/bin in PATH |
+| `undefined symbol ctanl/ccoshl` | clang target android24 ascunde C99 | `--target=aarch64-linux-android<API>` |
+| `cannot locate symbol _ZTVNSt6__ndk1...` | lipseste libc++ la runtime | `LD_PRELOAD=libc++_shared.so` |
+| `undefined symbol` la linkare cu -lm | nu exista libm.so in Termux | `-L/apex/com.android.runtime/lib64/bionic` |
 
 ### CUM REBUILDUIESTI APLICATIA (daca modifici cod)
 ```bash
@@ -1225,3 +1231,53 @@ Sfirsitul documentului.
 ---
 
 
+---
+
+## Etapa 32 - REMEDIERI TOOLCHAIN (compilarea C/C++ reparata complet)
+
+**Context:** la sfirsitul sesiunii precedente numpy esua la pasul 1/345 cu
+`ninja: subcommand failed` / `FAILED: [code=127]` si nu se stia de ce
+(operatorul a intrerupt diagnosticul). Reparat acum, end-to-end.
+
+### Cauzele REALE (4, toate inlantuite)
+
+| # | Simptom | Cauza | Fix |
+|---|---------|-------|-----|
+| 1 | `code=127`, `library libX.so not found` | .deb-urile Termux au **RUNPATH hardcodat** la `/data/data/com.termux/files/usr/lib`, director care NU exista aici | `patchelf --set-rpath` pe toate binarele + .so + modulele din `lib-dynload` |
+| 2 | `ninja: subcommand failed` | **ninja din Termux e RUPT**: nu poate executa NICIUN proces (nici `/system/bin/sh`) | inlocuit cu **samu** (samurai 1.9.0), care face exact acelasi lucru |
+| 3 | `rm: inaccessible or not found` | subprocesele meson/ninja primesc **env minimal** (PATH doar cu prefix) -> `rm`/`sh` din `/system/bin` lipsesc | wrapper-ele adauga `/system/bin:/system/xbin` in PATH |
+| 4 | `call to undeclared function ctanl/ccoshl` (numpy) | clang are target **implicit android24**; functiile C99 cu `__INTRODUCED_IN(26)` sunt ASCUNSE | wrapper `cc/clang` injecteaza `--target=aarch64-linux-android<API real>` |
+
+**Piesa lipsa la linkare:** pachetul **`ndk-sysroot`** (nu era instalat, desi
+era in lista) - aduce crt-urile (`crtbegin_dynamic.o`) si stub-urile de link.
+`libm.so` NU exista in Termux: pe Android 11+ e fuzionat in libc, iar simbolurile
+C99 complete (ctanl, ccoshl...) sunt in
+`/apex/com.android.runtime/lib64/bionic/libm.so` -> se linkeaza cu `-L` acolo.
+
+**Piesa lipsa la rulare:** extensiile C++ (numpy) **nu au `NEEDED libc++_shared.so`**
+dar folosesc simboluri din el -> `ImportError: cannot locate symbol
+_ZTVNSt6__ndk117bad_function_callE` -> fix: `LD_PRELOAD=<prefix>/lib/libc++_shared.so`.
+
+### Functii noi in toolchain.py
+- `_patch_runpath()` - corecteaza RUNPATH (binare + libs + lib-dynload)
+- `_fix_ninja()`    - inlocuieste ninja rupt cu samu
+- `_fix_cc_wrappers()` - wrappere cc/clang cu `--target` + PATH complet
+- `_device_api()`   - detecteaza API-ul real (36 pe Android 16), cu fallback
+- `check()`         - acum verifica FUNCTIONAL (compile_test), nu doar prezenta
+
+Se apeleaza automat la finalul `bootstrap_direct()`. `env_vars()` returneaza
+acum CFLAGS/LDFLAGS cu target + libm bionic, si `LD_PRELOAD`.
+
+### REZULTAT (dovedit azi, pe telefon)
+```
+pip install numpy   ->  RC=0, "Successfully built numpy", "Successfully installed numpy-2.5.3"
+import numpy        ->  NUMPY 2.5.3   sum=15   det=-2.0
+```
+Compilare nativa reala pe ARM64, fara root, fara Termux.
+
+### CAPCANE
+- `patchelf` nu se poate patch-ui PE SINE ("Text file busy") -> copie care
+  patchuieste originalul.
+- patch-ul pe 200+ fisiere intr-o singura bucla Python poate segfaulta la final
+  (memorie) - dar lucrarea se face; verifica INTOTDEAUNA rezultatul, nu doar exit code.
+- `chmod u+r` inainte de patchelf: unele binare au mod `--x` si nu pot fi citite.

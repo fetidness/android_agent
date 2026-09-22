@@ -736,3 +736,19 @@ TRAP: Android app process (uid 10381) cannot see or write /data/local/tmp (SELin
 TRAP: Python imports a stale __pycache__/_common.pyc built from an earlier file layout -> new module files on disk are ignored and import keeps failing with ModuleNotFoundError -> delete __pycache__ dirs after any module-file restructuring before retesting.
 
 OK: Android SDK sidecar build on this machine: bash -lc 'cd /home/gab/Desktop/agent/workspace/app && ./build_app.sh' rebuilds and reinstalls the APK, bumping assets_vN in MainActivity.kt forces asset refresh -> run this exact script after editing assets/python/*.py.
+
+OK: /data/local/tmp on Android is reachable only via shell uid=2000 (adbsh/ADB), not from the app process (uid~10300 untrusted_app, SELinux blocks) -> any os.listdir/stat/mkdir/cp/chmod/exec there from the app is silently empty or denied -> do all such ops through shell, verify by listing via shell
+
+OK: Termux toolchain symlinks (libz.so.1->libz.so.1.3.2, clang->clang-21, ld->lld->ld.lld, llvm-*) must be recreated -> a clang run fails with 'library libz.so.1 not found' or 'clang: not found' -> regenerate symlinks generically (libX.so.N.M.P -> libX.so.N and libX.so) plus specials before compiling
+
+OK: /sdcard on Android is mounted noexec -> a binary copied there gives "Permission denied" on run -> keep source .c/.cpp on /sdcard but put executables in /data/local/tmp and run them via shell
+
+DEAD: Python import fails with stale __pycache__ even after restoring the real module file -> old bytecode from a deleted package shadows new source -> shutil.rmtree the __pycache__ dir after replacing a module/package
+
+OK: For 'from pkg._sub import x' to work, pkg must be a directory with __init__.py, not a single .py file -> mis-shaped package breaks transitive imports (e.g. lzma -> compression._common._streams) -> create _common/__init__.py + _common/_streams.py, not _common.py
+
+OK: adb on this headless desktop is /home/gab/android/platform-tools/adb, device SM-A366B serial RZGL102X5AT -> phone /sdcard/Download/Agent/context.json holds the Android-agent conversation as a JSON array -> read it via `adb -s RZGL102X5AT shell cat /sdcard/Download/Agent/context.json` (public path, no run-as) and parse with json.JSONDecoder().raw_decode (may have trailing data).
+
+P: context.json transcript is truncated per-message with marker `[... N chars in the middle, NOT LOST: the complete text in logs/<file>.log ...]` -> those logs/ files are self-referential noise (each log is itself truncated pointing to another), NOT a recoverable full transcript -> analyze the context.json messages directly; do not chase the log chain.
+
+OK: Android agent builds natively on-device into /data/local/tmp/tpm/usr (clang-21, python3.14, lib/ site-packages) -> missing ld.lld/clang symlinks break linking ("unable to execute command: No such file or directory") -> fix with `ln -sf lld $PREFIX/bin/ld.lld` and `ln -sf clang-21 clang` then compile with `-fuse-ld=lld`.

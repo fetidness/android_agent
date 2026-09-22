@@ -81,13 +81,19 @@ BIN = ROOT + "/usr/bin"
 
 # pachetele necesare pentru compilare COMPLETA (inclusiv numpy/scipy-level)
 PKGS = [
-    "clang", "lld", "make", "pkg-config", "cmake", "ninja",
+    "clang", "lld", "make", "pkg-config", "cmake", "ninja", "patchelf", "samurai",
+    "ndk-sysroot",
     "python", "python-pip", "binutils", "libandroid-spawn",
     "zlib", "liblzma", "libbz2", "openssl", "libffi",
     "ncurses", "readline", "sqlite", "libexpat", "libxml2",
     "git", "tar", "xz-utils", "coreutils", "findutils", "grep", "sed", "gawk",
     "rust", "libc++", "binutils-libs", "termux-elf-cleaner",
 ]
+
+# biblioteci bionice de pe DEVICE (libm.so real, cu simboluri C99 complete).
+# clang nu linkeaza -lm implicit pe android36, iar termux nu are libm.so in prefix.
+BIONIC_LIB = "/apex/com.android.runtime/lib64/bionic"
+BIONIC_LIB_FALLBACK = "/system/lib64"
 
 MARKER = F + "/.toolchain_ok"
 
@@ -139,8 +145,21 @@ def check():
         "git": "git" in present,
         "pkg-config": "pkg-config" in present,
         "rust": "rustc" in present,
+        "patchelf": "patchelf" in present,
+        "samu": "samu" in present,
+        "sysroot(crt)": "crtbegin_dynamic.o" in set(
+            _sh("ls " + ROOT + "/usr/lib 2>/dev/null", 30).split()),
         "marker": os.path.exists(MARKER),
     }
+    # verificare FUNCTIONALA (nu doar prezenta fisierului): chiar poate compila?
+    probe = _sh(
+        'cd /data/local/tmp 2>/dev/null || cd /tmp; '
+        'printf "int main(void){return 0;}" > .tc_probe.c; '
+        'PATH=' + BIN + ':$PATH ' + BIN + '/clang --target=aarch64-linux-android36 '
+        '.tc_probe.c -o .tc_probe 2>&1; echo RC=$?', 120)
+    need["compile_test"] = "RC=0" in probe
+    if not need["compile_test"]:
+        need["compile_hint"] = probe.strip()[-200:]
     return need
 
 # ============================================================
@@ -302,6 +321,135 @@ def _extract_deb(data, dest):
 
 
 
+def _patch_runpath():
+    """Termux .deb au RUNPATH hardcodat la /data/data/com.termux/files/usr/lib.
+    Acel director NU exista aici -> orice binar/subproces moare cu
+    'CANNOT LINK EXECUTABLE: library libX.so not found' (exit 127), iar
+    ninja/meson raporteaza doar 'subcommand failed'.
+    Fix: patch-uim RUNPATH la prefixul nostru real cu patchelf."""
+    if not os.path.exists(BIN + "/patchelf"):
+        print("[toolchain] patchelf lipsa - sar peste fix RUNPATH")
+        return
+    script = r"""
+B="__BIN__"; L="__LIB__"; P="__PREFIX__"
+PE="$B/patchelf"
+[ -x "$PE" ] || { echo NO_PATCHELF; exit 0; }
+export LD_LIBRARY_PATH="$L:$LD_LIBRARY_PATH"
+# 1. binarele
+for f in "$B"/*; do
+  [ -f "$f" ] || continue
+  case "$f" in *.orig|*.new) continue;; esac
+  if readelf -d "$f" 2>/dev/null | grep -q com.termux; then
+    chmod u+r "$f" 2>/dev/null
+    "$PE" --set-rpath "$L" "$f" 2>/dev/null
+  fi
+done
+# 2. bibliotecile din prefix
+for f in "$L"/*.so*; do
+  [ -f "$f" ] || continue
+  if readelf -d "$f" 2>/dev/null | grep -q com.termux; then
+    "$PE" --set-rpath "$L" "$f" 2>/dev/null
+  fi
+done
+# 3. modulele din lib-dynload (altfel pip moare la import)
+for d in "$P"/lib/python3.*/lib-dynload; do
+  [ -d "$d" ] || continue
+  for f in "$d"/*.so; do
+    [ -f "$f" ] || continue
+    if readelf -d "$f" 2>/dev/null | grep -q com.termux; then
+      "$PE" --set-rpath "$L" "$f" 2>/dev/null
+    fi
+  done
+done
+echo RUNPATH_DONE
+"""
+    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
+                    .replace("__PREFIX__", ROOT + "/usr"))
+    try:
+        out = _sh(script, 600)
+        if "RUNPATH_DONE" in out:
+            print("[toolchain] RUNPATH corectat (binare + libs + lib-dynload)")
+        else:
+            print("[toolchain] RUNPATH: partial", out[-200:])
+    except Exception as e:
+        print("[toolchain] RUNPATH err:", e)
+
+
+def _fix_ninja():
+    """ninja din Termux e RUPT: nu poate executa NICIUN subproces
+    (libandroid-spawn.so la runtime) -> 'ninja: subcommand failed', code=127.
+    samurai (samu) face acelasi lucru si merge. Inlocuim ninja cu samu."""
+    n = BIN + "/ninja"
+    s = BIN + "/samu"
+    if not os.path.exists(s):
+        print("[toolchain] samu lipsa - nu pot inlocui ninja")
+        return
+    script = r"""
+B="__BIN__"
+if [ -f "$B/ninja" ] && [ ! -f "$B/ninja.orig" ]; then cp "$B/ninja" "$B/ninja.orig"; fi
+cp "$B/samu" "$B/ninja" && chmod 755 "$B/ninja" && echo NINJA_DONE
+"""
+    script = script.replace("__BIN__", BIN)
+    try:
+        out = _sh(script, 120)
+        if "NINJA_DONE" in out:
+            print("[toolchain] ninja -> samu (ninja din Termux e rupt)")
+    except Exception as e:
+        print("[toolchain] ninja err:", e)
+
+
+def _fix_cc_wrappers():
+    """clang din Termux are target IMPLICIT android24. Functiile C99 introduse
+    ulterior (ex. ctanl/ccoshl/csinhl din complex.h, marcate __INTRODUCED_IN(26))
+    sunt ASCUNSE de header -> numpy si multe pachete C nu compileaza.
+    Fix: inlocuim cc/gcc/clang cu wrappere care injecteaza --target=<API real>
+    si un PATH complet (ninja/meson ruleaza subprocese cu env minimal, unde
+    rm/sh din /system/bin nu se gasesc -> 'rm: inaccessible or not found')."""
+    api = _device_api()          # ex. 36 pe Android 16
+    tgt = "aarch64-linux-android%d" % api
+    script = r"""
+B="__BIN__"; L="__LIB__"; TGT="__TGT__"; APIDIR="__APIDIR__"
+[ -x "$B/clang-21.real" ] || cp "$B/clang-21" "$B/clang-21.real"
+for name in cc c++ gcc g++ clang clang++ clang-21; do
+  cat > "$B/$name" <<EOF
+#!/system/bin/sh
+export PATH=$B:/system/bin:/system/xbin:\$PATH
+export LD_LIBRARY_PATH=$L:\$LD_LIBRARY_PATH
+export LD_PRELOAD=$L/libc++_shared.so
+exec $B/clang-21.real --target=$TGT "\$@"
+EOF
+  chmod 755 "$B/$name"
+done
+echo WRAPPERS_DONE
+"""
+    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
+                    .replace("__TGT__", tgt).replace("__APIDIR__", ""))
+    try:
+        out = _sh(script, 120)
+        if "WRAPPERS_DONE" in out:
+            print("[toolchain] cc/clang -> wrapper cu --target=%s" % tgt)
+    except Exception as e:
+        print("[toolchain] wrappers err:", e)
+
+
+def _device_api():
+    """API-ul real al telefonului (36 = Android 16).
+    Incercam 3 cai; daca toate esueaza folosim 36 (Android 16), pentru ca un
+    target PREA MIC ascunde functiile C99 noi si rupe compilarea numpy etc."""
+    # 1. getprop (in app _sh merge; in shell direct nu are chei)
+    for cmd in ("getprop ro.build.version.sdk",
+                "cat /system/build.prop 2>/dev/null | grep -m1 ro.build.version.sdk",
+                "getprop ro.build.version.release"):
+        try:
+            out = _sh(cmd, 20)
+            n = int("".join(c for c in out.split("\n")[0] if c.isdigit()) or 0)
+            if 26 <= n <= 99:
+                return n
+        except Exception:
+            pass
+    return 36
+
+
 def _fix_symlinks():
     """Recreeaza symlink-urile prin SHELL (os nu vede /data/local/tmp).
     Termux are symlink-uri in .deb (typeflag 2) pe care _untar nu le face."""
@@ -405,6 +553,16 @@ def bootstrap_direct(packages=None, progress=None):
     print("[toolchain] recreez symlink-uri...")
     _fix_symlinks()
 
+    # FIXURI OBLIGATORII dupa instalare (altfel compilarea NU merge):
+    #  1. RUNPATH: .deb-urile Termux au calea /data/data/com.termux/... care nu exista
+    #     -> orice subproces moare cu exit 127
+    #  2. ninja: versiunea Termux nu poate spawn-ui procese -> samu
+    print("[toolchain] aplic fixurile (RUNPATH + ninja)...")
+    _patch_runpath()
+    _fix_ninja()
+    _fix_cc_wrappers()
+    _fix_symlinks()
+
     # verificare
     st = check()
     if st.get("clang") or st.get("make"):
@@ -427,10 +585,17 @@ def env_vars():
         "AR": BIN + "/ar",
         "RANLIB": BIN + "/ranlib",
         "LD": BIN + "/ld",
-        "CFLAGS": "-I" + ROOT + "/usr/include",
-        "LDFLAGS": "-L" + ROOT + "/usr/lib -Wl,-rpath," + ROOT + "/usr/lib",
+        # API 36 (Android 16) - fara el, clang are target android24 si ASCUNDE
+        # functiile C99 introduse ulterior (ex. ctanl/ccoshl din complex.h)
+        "CFLAGS": "--target=aarch64-linux-android36 -I" + ROOT + "/usr/include",
+        "LDFLAGS": ("--target=aarch64-linux-android36 -L" + ROOT + "/usr/lib"
+                    + " -L" + BIONIC_LIB
+                    + " -Wl,-rpath," + ROOT + "/usr/lib"),
         "PKG_CONFIG_PATH": ROOT + "/usr/lib/pkgconfig:" + ROOT + "/usr/share/pkgconfig",
-        "LD_LIBRARY_PATH": ROOT + "/usr/lib:" + F + "/libs",
+        "LD_LIBRARY_PATH": ROOT + "/usr/lib:" + BIONIC_LIB + ":" + F + "/libs",
+        # numpy si alte extensii C++ nu au NEEDED libc++_shared.so dar folosesc
+        # simboluri din el -> fara preload: "cannot locate symbol _ZTVNSt6__ndk1..."
+        "LD_PRELOAD": ROOT + "/usr/lib/libc++_shared.so",
     }
 
 
