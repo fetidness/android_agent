@@ -650,3 +650,63 @@ OK: Android APK audit on this machine -> unzip -l on app-debug.apk lists assets/
 P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/ holds the Android agent project -> main sources under app/src/main/{java/net/sys32/agent,assets/python,jniLibs} -> use these absolute paths next time
 
 OK: `git add -A` + `git commit` in /home/gab/Desktop/agent works from bash tool and pushes to github.com:fetidness/android_agent.git master -> use it for committing repo changes there.
+
+TRAP: /sdcard/Download/Agent/context.json scris de app nu e JSON valid (are "Extra data" dupa array, ~76 bytes in plus) -> json.loads() esueaza cu "Extra data" -> foloseste json.JSONDecoder().raw_decode(raw) care intoarce (obj, idx) si parseaza pana la primul obiect valid.
+
+OK: analiza conversatiei agentului Android din context.json: raw_decode iti da 301 mesaje; mesajele lungi sunt trunchiate in afisare cu "[... N chars in the middle, NOT LOST: ... logs/tool_<ts>.log ...]" -> textul complet e in /home/gab/Desktop/agent/temp/logs/tool_*.log, citeste acel log dupa timestamp.
+
+OK: adbd pe acest telefon asculta pe portul 1234 (nu 5555) - getprop service.adb.tcp.port; adb_client.py auto-detecteaza portul, dar cheia noua necesita aprobare o singura data altfel connect() da "AUTH -> trimit RSAPUBLICKEY" apoi TimeoutError in _recv.
+
+DEAD: ninja from Termux repo on Android arm64 is broken (libandroid-spawn.so) - every build command fails code=127; use samu (samurai 1.3) as ninja replacement with same CLI.
+
+P: adb (`/home/gab/android/platform-tools/adb`, device RZGL102X5AT) comanda `run-as net.sys32.agent` executa cu context SELinux al aplicatiei -> fisierele in /data/local/tmp au context shell si `.so` incarcate cu dlopen dau "couldn't map ... Permission denied" -> copiaza librariile/pachetele Python in /data/data/net.sys32.agent/files/... inainte de import.
+
+P: pe acest telefon Python-ul ruleaza ca `run-as net.sys32.agent sh -c 'HOME=.. PYTHONHOME=.. LD_LIBRARY_PATH=<files/libs>:$CODE/lib/arm64 <libdir>/libpyexec.so script.py'` unde libdir=`$(dumpsys package net.sys32.agent | grep codePath | cut -d= -f2)/lib/arm64` -> libpyexec.so e executabilul Python (nu exista python binar).
+
+TRAP: pentru Python pe telefon, `sys.path.insert(0,"/data/local/tmp/...")` face importul sa incerce .so din /data/local/tmp si esueaza cu Permission denied, mascand faptul ca o copie valida exista in site-packages -> sterge/evita path-ul din /data/local/tmp in scriptul de test.
+
+P: Termux packages on this Samsung are managed without root/Termux via /data/local/tmp/tpm + tpm.py (repo packages.termux.dev apt termux-main aarch64); toolchain.py/tpm.py in assets/python reach them; check state with `toolchain.py check` -> clang/python/ld/ar/git show false until a full `install` bootstrap (~500MB) runs.
+
+TRAP: run-as net.sys32.agent python on this device works only with the full env prefix (HOME=.../files/home PYTHONHOME=.../files/pyhome LD_LIBRARY_PATH=.../files/libs:<codePath>/lib/arm64 and invoke <libdir>/libpyexec.so script.py) -> bare run-as ... python3 script.py fails -> get codePath via `dumpsys package net.sys32.agent | grep codePath` and build that exact prefix.
+
+OK: toolchain.py/tpm.py descarca .deb-uri Termux (bionic) in /data/local/tmp/tpm/usr si ruleaza pe Android fara Termux -> pentru compilare nativa pe telefon foloseste samu nu ninja (ninja Termux e rupt: libandroid-spawn.so, exit 127) si tine binarele in /data/local/tmp (nu /sdcard, montat noexec)
+
+TRAP: /sdcard pe aceasta masina Android e montat noexec -> orice binar extras/copiat acolo da "Permission denied" la exec -> pune executabilele in /data/local/tmp sau /data/data/<pkg>/files
+
+OK: pentru a rula python+libs din APK in shell foloseste run-as net.sys32.agent cu PYTHONHOME=/data/data/net.sys32.agent/files/pyhome si LD_LIBRARY_PATH=<codePath>/lib/arm64 -> altfel import-urile esueaza
+
+DEAD: `pm install -r /data/local/tmp/app-debug.apk` before pushing the file -> prints a Binder stacktrace and NO "Success", focus stays on LauncherActivity so the app never starts -> always `adb push <host-apk> /data/local/tmp/app-debug.apk` first, verify push says "1 file pushed", then pm install and require "Success" in output before launching.
+
+OK: Android app running under run-as (uid~10377) CANNOT read /data/local/tmp (SELinux Permission denied) while ADB shell uid=2000 can -> any file a Python script needs to read from shell context (tpm.py etc) must be adb-pushed to /data/local/tmp, not left in app files dir.
+
+OK: adb_client.py inside Termux-built python3 toolchain (/data/local/tmp/tpm/usr/bin/python3) fails with ConnectionRefusedError because device adbd TCP port is 1234 not 5555 -> when running scripts as uid=2000 use subprocess /system/bin/sh directly (os.geteuid()==2000 guard) instead of routing through adb_client.
+
+OK: Termux repo package python-pip does NOT exist; pip ships via package python-ensurepip-wheels (3.14.6) -> install that, then python3 -m ensurepip --upgrade to activate pip.
+
+P: toolchain at /data/local/tmp/tpm/usr requires BOTH PATH=/data/local/tmp/tpm/usr/bin and LD_LIBRARY_PATH=/data/local/tmp/tpm/usr/lib set together, otherwise every binary (python3, clang) fails with 'library libandroid-support.so not found' even though the .so is present.
+
+P: cand verifici textul scris intr-un EditText Android prin uiautomator dump, NU folosi regex cu text="([^"]*)" dupa class EditText -> caracterele speciale (paranteze, diacritice) pot face regexul sa rateze desi textul e acolo -> verifica intai dumpsys window mCurrentFocus sa confirmi app-ul in focus, apoi cauta textul brut in XML cu re.finditer pe toate nodurile.
+
+TRAP: adb shell input text cu spatiu -> trebuie inlocuit spatiul cu %s (input text 'a%sb') altfel textul nu se scrie -> scrie intotdeauna task.replace(' ','%s') inainte de input text.
+
+OK: /data/local/tmp full wipe -> `rm -rf /data/local/tmp/*` and per-file rm fail silently on some entries, but `find /data/local/tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +` empties it completely with no error output.
+
+TRAP: pm install cu cale de pe host (ex /home/gab/...) esueaza cu Binder exception -> APK-ul trebuie mai intai adb push /data/local/tmp/ si apoi pm install -r de acolo
+
+TRAP: `input text 'fraza cu spatii'` pe shell Android scrie zerouri (text gol, verificat cu uiautomator dump) -> inlocuieste spatiile cu %s: `input text 'fraza%scu%sspatii
+
+DEAD: Termux .deb packages contain ONLY data.tar.xz (no gz variant) -> Python here has NO lzma module (_lzma missing from build, "No module named 'compression._common'" on import lzma/gzip/tarfile) and Android toybox tar has no xz support, so extracting .deb in pure Python is impossible -> do not attempt offline .deb extraction without a real xz/lzma binary; either bootstrap via the shell path (tpm.py through adbsh as uid 2000) or add _lzma to the Python build.
+
+P: shells on this Android device: /system/bin/tar is toybox 0.8.12 (no xz), no standalone xz/busybox, /system/lib64/liblzma.so is stripped (no lzma_stream_* symbols usable via ctypes) -> gzip/CA/HTTP work but xz decompression has no local tool.
+
+TRAP: run_adbsh_tool in agent.py capped SIGALRM at min(int(timeout),60) -> any long adb-shell operation (toolchain bootstrap, big copies) died at 60s with "[TIMEOUT 40s]" even when caller passed timeout=3600 -> fix was _sig.alarm(max(min(int(timeout),3600),1)); verify by grepping for min(int(timeout),60) before trusting long bootstrap runs.
+
+P: Android app uid (run-as) cannot create files under /data/local/tmp (PermissionError Errno 13); only the shell uid can -> stage extracted files inside /data/data/<pkg>/files/ then copy to /data/local/tmp via adbsh.
+
+P: Python urllib on this device fails TLS with CERTIFICATE_VERIFY_FAILED unless an explicit CA bundle is passed (ssl.create_default_context(cafile=...)) -> always pass a cafile (certifi or /system/etc/security/cacerts) for HTTPS downloads in on-device Python.
+
+OK: adb push toolchain.py to device then run via `run-as net.sys32.agent sh -c 'HOME=... PYTHONHOME=... LD_LIBRARY_PATH=<pkg>/lib/arm64:/data/data/net.sys32.agent/files/libs libpyexec.so script.py'` -> works for testing python code on the phone; recreate /data/data/net.sys32.agent/files/pyhome/lib/python3.14/compression/_common/{__init__.py,_streams.py} after every app rebuild because it gets wiped.
+
+TRAP: Termux .deb extraction via pure-python untar loses symlinks (libX.so.N.M.P -> libX.so.N, clang->clang-21, ld->lld, ld.lld->lld, libbz2.so.1.0) -> clang reports "unable to execute command: No such file or directory" on link step -> fix by re-creating all symlinks after extraction; lld needs both `ld` and `ld.lld` names.
+
+TRAP: Android shell has no `strings`/`readelf`/`objdump`/`file` by default -> analysing binaries from adb needs those dumped manually or via python on-device.

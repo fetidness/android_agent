@@ -825,6 +825,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control. Only on the Android build. Includes the 'ui' tool: SEE and CONTROL other apps. Actions: read (returns a COMPACT text list, ~10x smaller than JSON; params: max, depth, textonly), find (SEARCH a node by text WITHOUT reading the whole screen - USE THIS FIRST when looking for a contact/button/field; returns matches with center coordinates), settext (type into a field), click, tap, swipe, scroll, back/home/recents, openapp, windows, wake (keep screen on for UI work), sleep (release), service (status). Also FULL generic SDK access via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell with uid=2000(shell) on this very phone, run FROM the app with no PC. Only on the Android build. Runs a raw shell command as the privileged shell user, which app code cannot: pm grant/revoke runtime permissions, appops set, settings put secure/global, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop/setprop (read), svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as on debuggable apps, ifconfig/ip, cat /proc/net/*. This bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing. Runs the command and returns stdout+stderr. Prefer ONE command per call; combine with && if needed.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},
+   {"type":"function","function":{"name":"toolchain","description":"COMPILE TOOLCHAIN: install and use a complete native build stack ON the phone (clang 21, make, cmake, ninja/samu, python, pip, git, rust, libc++, openssl...) WITHOUT PC and WITHOUT Termux. Use action=status to see what is installed; action=bootstrap to download+install everything (through the Termux package repo, ~500MB, done once); action=pip_install to pip-install a PyPI package INCLUDING C/C++ extensions (the toolchain compiles them natively); action=compile to build a C/C++ file into a shared library; action=env to get the environment variables (PATH, CC, CXX, CFLAGS, LDFLAGS...). This makes the phone a self-sufficient build machine: numpy, scipy-level packages, any compiler-requiring pip package can be built here.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | bootstrap | pip_install | compile | env | tpm","enum":["status","bootstrap","pip_install","compile","env","tpm"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pandas, pillow). For tpm: termux package (e.g. nano)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 300 for compile, max 3600)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
@@ -871,7 +872,8 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "camera list/photo; battery get|full (full = ALL battery data incl health/technology/current/charge_counter/estimate); clipboard get/set; notify; vibrate; tts; volume; wifi; device; apps list|launch; intent; settings get|set; system (model/cpu/ram/heap/uptime/build props with action=full); storage (disk usage); processes; network (wifi+transport); display (resolution/density/refresh/brightness); audio (all streams+devices); telephony (operator/SIM); nfc; usb; appinfo (package details+perms). "
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
- "Everything the Android SDK exposes to an app, you can reach.")
+ "Everything the Android SDK exposes to an app, you can reach."
+ " COMPILE STACK: this phone is a SELF-SUFFICIENT BUILD MACHINE. The 'toolchain' tool installs (once, via the Termux repo) a full native compiler stack: clang 21, make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl, zlib. Use toolchain action=status to see what is present; action=bootstrap to install the whole stack (~500MB, one time, no PC, no Termux app needed); action=pip_install package=<name> to pip-install ANY PyPI package INCLUDING ones with C/C++/Fortran extensions (they get compiled natively here); action=compile source=<file.c> out=<file.so> to build C/C++ into a shared library; action=env to print PATH/CC/CXX/CFLAGS/LDFLAGS; action=tpm package=<name> to install any Termux binary (nano, htop, jq...). RULE: when a task needs a library that is not installed, do NOT give up - install it: pip_install for Python packages (compiles extensions), tpm for CLI tools, compile for your own C/C++ code. Prefer the already-installed pure-Python tools first; reach for the toolchain when something must be compiled or installed.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1196,7 +1198,7 @@ def run_adbsh_tool(cmd, timeout=20):
         try:
             import signal as _sig
             def _to(s,f): raise TimeoutError("adbsh timeout")
-            old=_sig.signal(_sig.SIGALRM,_to); _sig.alarm(min(int(timeout),60))
+            old=_sig.signal(_sig.SIGALRM,_to); _sig.alarm(max(min(int(timeout),3600),1))
             try:
                 # ★ CONEXIUNE PERSISTENTA: refolosim ACELASI obiect Adb intre comenzi.
                 # adbd cere confirmare (fereastra "Allow USB debugging") doar la conexiuni NOI;
@@ -1312,7 +1314,95 @@ def call_tool(c):
         return run_android_tool(a.get("tool",""), a.get("action",""), a.get("params",{}) or {})
     if fn=="adbsh":
         return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
+    if fn=="toolchain":
+        return run_toolchain_tool(a)
     return run_tool(a.get("code",""))
+
+def run_toolchain_tool(a):
+    """Toolchain nativ de compilare pe telefon (clang, pip, meson...)."""
+    import subprocess as _sp
+    action = (a.get("action") or "status").strip()
+    here = os.path.dirname(os.path.abspath(__file__))
+    tc = os.path.join(here, "toolchain.py")
+    tpm = os.path.join(here, "tpm.py")
+    F = os.environ.get("AGENT_HOME") or "/data/data/net.sys32.agent/files"
+    ROOT = "/data/local/tmp/tpm"
+    BIN = ROOT + "/usr/bin"
+
+    def _env():
+        e = dict(os.environ)
+        e["PATH"] = BIN + ":" + F + "/python:" + e.get("PATH","")
+        e["PREFIX"] = e["TERMUX_PREFIX"] = ROOT + "/usr"
+        e["CC"] = BIN + "/clang"; e["CXX"] = BIN + "/clang++"
+        e["AR"] = BIN + "/ar"; e["RANLIB"] = BIN + "/ranlib"
+        e["CFLAGS"] = "-I" + ROOT + "/usr/include"
+        e["LDFLAGS"] = "-L" + ROOT + "/usr/lib -Wl,-rpath," + ROOT + "/usr/lib"
+        e["PKG_CONFIG_PATH"] = ROOT + "/usr/lib/pkgconfig:" + ROOT + "/usr/share/pkgconfig"
+        e["LD_LIBRARY_PATH"] = ROOT + "/usr/lib:" + F + "/libs:" + e.get("LD_LIBRARY_PATH","")
+        return e
+
+    def _run(cmd, timeout=300):
+        try:
+            r = _sp.run(cmd, capture_output=True, text=True, timeout=timeout, env=_env(),
+                        cwd="/data/local/tmp")
+            return (r.stdout + r.stderr).strip()
+        except _sp.TimeoutExpired:
+            return "[timeout dupa %ss]" % timeout
+        except Exception as ex:
+            return "EROARE: " + str(ex)
+
+    if action == "status":
+        return _run([sys.executable, tc, "check"], 60)
+    if action == "bootstrap":
+        return _run([sys.executable, tc, "bootstrap_direct"], int(a.get("timeout", 3600) or 3600))
+    if action == "bootstrap_tpm":
+        return _run([sys.executable, tc, "install"], int(a.get("timeout", 3600) or 3600))
+    if action == "env":
+        return _run([sys.executable, tc, "env"], 30)
+    if action == "tpm":
+        pkg = (a.get("package") or "").strip()
+        if not pkg: return "lipseste 'package'"
+        return _run([sys.executable, tpm, "install", pkg], int(a.get("timeout", 600) or 600))
+    if action == "pip_install":
+        pkg = (a.get("package") or "").strip()
+        if not pkg: return "lipseste 'package'"
+        pip = BIN + "/pip"
+        if not os.path.exists(pip): pip = "pip"
+        full = ("export PATH=%s:$PATH; export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; "
+                "export PREFIX=%s/usr; "
+                "(python3 -m pip || pip3 || pip) install --no-cache-dir '%s' 2>&1 | tail -25"
+                % (BIN, ROOT + "/usr/lib", ROOT, pkg))
+        return run_adbsh_tool(full, int(a.get("timeout", 1800) or 1800))
+    if action == "compile":
+        srcf = (a.get("source") or "").strip()
+        out = (a.get("out") or "/data/local/tmp/out.bin").strip()
+        # /sdcard e montat noexec: mut binarul in /data/local/tmp daca e acolo
+        if out.startswith("/sdcard") or out.startswith("/storage"):
+            out = "/data/local/tmp/" + os.path.basename(out)
+        if not srcf: return "lipseste 'source'"
+        cpp = srcf.endswith((".cpp", ".cc", ".cxx"))
+        # aleg compilatorul prin SHELL (app-ul nu vede /data/local/tmp)
+        cc = "clang++" if cpp else "clang"
+        flags = (a.get("flags") or "").strip()
+        # .so => shared library; altfel executabil
+        shared = out.endswith(".so")
+        mode = "-shared -fPIC" if shared else ""
+        # RULARE PRIN SHELL (uid=2000): app-ul NU poate executa din /data/local/tmp
+        full = ("export PATH=%s:$PATH; export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; "
+                "cd /data/local/tmp && %s %s -O2 '%s' -o '%s' %s && echo COMPILE_OK"
+                % (BIN, ROOT + "/usr/lib", cc, mode, srcf, out, flags))
+        r = run_adbsh_tool(full, int(a.get("timeout", 600) or 600))
+        if "COMPILE_OK" in r and not shared:
+            rr = run_adbsh_tool("export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; '%s'" % (ROOT + "/usr/lib", out), 120)
+            return r + "\n--- OUTPUT BINAR ---\n" + rr
+        return r
+    if action == "run":
+        exe = (a.get("source") or a.get("package") or "").strip()
+        if not exe: return "lipseste 'source' (calea binarului)"
+        return run_adbsh_tool("export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; '%s'" % (ROOT + "/usr/lib", exe), 120)
+    return "actiune necunoscuta: " + action
+
+
 def ask(messages=None, tools=None):
     _msgs = M if messages is None else messages
     _tools = T if tools is None else tools
@@ -1664,3 +1754,28 @@ while 1:
         while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
         complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
 save_ctx()   # on /exit or Ctrl+D the history is already on disk
+
+# ---- FIX: AAPT2 ignora folderele care incep cu "_" (ex: compression/_common) ----
+# Il recreem la runtime din compression/_streams_data.py (livrat ca fisier simplu).
+def _fix_compression_common():
+    import os, sys
+    try:
+        import sysconfig
+        purelib = sysconfig.get_paths().get("purelib", "")
+        base = os.path.dirname(os.path.abspath(__file__))
+        # locul REAL vazut de Python: pyhome/lib/python3.14/compression
+        comp = os.path.join(purelib, "compression") if purelib and os.path.isdir(os.path.join(purelib, "compression")) else os.path.join(base, "Lib", "compression")
+        common = os.path.join(comp, "_common")
+        if os.path.isdir(common):
+            return
+        src_data = os.path.join(comp, "_streams_data.py")
+        if not os.path.exists(src_data):
+            return
+        os.makedirs(common, exist_ok=True)
+        open(os.path.join(common, "__init__.py"), "w").close()
+        import shutil
+        shutil.copyfile(src_data, os.path.join(common, "_streams.py"))
+    except Exception:
+        pass
+
+_fix_compression_common()

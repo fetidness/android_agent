@@ -31,8 +31,14 @@ A_VERSION = 0x01000001
 A_CNXN, A_AUTH, A_OPEN, A_OKAY, A_CLSE, A_WRTE = 0x4e584e43, 0x48545541, 0x4e45504f, 0x59414b4f, 0x45534c43, 0x45545257
 AUTH_TOKEN, AUTH_SIGNATURE, AUTH_RSAPUBLICKEY = 1, 2, 3
 
-def _alarm(s,f): print("[TIMEOUT 40s]",flush=True); os._exit(2)
-signal.signal(signal.SIGALRM, _alarm); signal.alarm(40)
+# SIGALRM global: omoara procesul dupa N secunde (protectie anti-agatare).
+# Configurabil prin ADB_GLOBAL_TIMEOUT (0 = dezactivat). Default 600s (10 min),
+# nu 40s: bootstrap-ul toolchain-ului dureaza minute intregi.
+_GT = int(os.environ.get("ADB_GLOBAL_TIMEOUT", "600") or "600")
+def _alarm(s,f):
+    print("[GLOBAL TIMEOUT %ss]" % _GT, flush=True); os._exit(2)
+if _GT > 0:
+    signal.signal(signal.SIGALRM, _alarm); signal.alarm(_GT)
 
 class Adb:
     def __init__(self, host="127.0.0.1", port=None):

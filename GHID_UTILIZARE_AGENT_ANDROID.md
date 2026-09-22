@@ -280,6 +280,80 @@ ZILNIC:
   [ ] Deschizi app -> scrii task -> trimiti
 ```
 
+
+---
+
+## 9. COMPILARE NATIVA PE TELEFON (Toolchain) - si LICENTE
+
+Agentul poate instala SINGUR un toolchain complet de compilare (clang 21,
+make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl) si poate:
+
+- instala ORICE pachet PyPI, inclusiv cele cu extensii C/C++/Fortran
+  (numpy, pandas, pillow...) - compilate NATIV pe telefon
+- compila cod C/C++ propriu in biblioteci partajate (.so)
+- instala orice binar din repo-ul Termux (nano, htop, jq...)
+
+### Cum se foloseste (agentul o face singur, sau tu prin el)
+```
+toolchain action=status        # ce e instalat
+toolchain action=bootstrap     # instaleaza TOT (~500MB, o singura data)
+toolchain action=pip_install package=numpy
+toolchain action=compile source=/sdcard/x.c out=/sdcard/x.so
+toolchain action=tpm package=nano
+```
+
+
+### 9.1 EXEMPLE PRACTICE (toolchain)
+
+```
+# 1. Verifica ce e instalat
+toolchain action=status
+
+# 2. Instaleaza toolchain complet (~600 MB, o data, 4-5 min)
+toolchain action=bootstrap
+
+# 3. Compileaza si ruleaza un program C
+toolchain action=compile source=/sdcard/prog.c out=/data/local/tmp/prog
+# (agentul detecteaza .so = biblioteca, altfel executabil)
+
+# 4. Instaleaza un pachet Python CU compilare nativa
+toolchain action=pip_install package=numpy
+
+# 5. Instaleaza un binar Termux (nano, htop, jq...)
+toolchain action=tpm package=nano
+```
+
+**TESTAT:** agentul a scris `calc.c`, l-a compilat cu clang 21 si a rulat
+binarul -> `6 * 7 = 42`, totul pe telefon, fara PC.
+
+**ATENTIE:** binarele se pun in `/data/local/tmp` (NU `/sdcard` - e noexec).
+
+### LICENTE (important)
+Aplicatia **NU include** niciun binar de compilare. La `bootstrap`, agentul
+**descarca** unelte open-source din **repo-ul public Termux**
+(https://packages.termux.dev), exact cum face `apt` pe orice Linux.
+
+| Pachet | Licenta |
+|---|---|
+| clang / LLVM | Apache-2.0 with LLVM exceptions |
+| python | PSF-2.0 |
+| make, cmake | GPL-3.0 |
+| ninja / samu | Apache-2.0 |
+| openssl | Apache-2.0 |
+| zlib, xz-utils | zlib / public domain |
+
+- Descarcarea si **folosirea locala** nu creeaza obligatii de redistribuire.
+- **Nu redistribuim** binarele in APK.
+- Daca cineva impacheteaza aceste binare in alt produs, trebuie sa respecte
+  licentele respective (inclusiv GPL pentru make/cmake).
+- Termux mentine repo-ul pentru aplicatia Termux; folosirea lui de alt client
+  este tehnica permisa (repo APT public) dar **neoficiala** (fara suport).
+
+### Cerinte
+- Spatiu liber: ~600 MB (toolchain complet)
+- Internet (prima instalare)
+- Nu necesita PC, root, sau aplicatia Termux
+
 ---
 
 Sfarsitul ghidului.

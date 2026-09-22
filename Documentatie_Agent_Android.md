@@ -838,6 +838,104 @@ NU exista pip; NU se pot instala altele. numpy/pandas/cryptography NU sunt dispo
 
 ---
 
+
+### Etapa 29 - TOOLCHAIN DE COMPILARE NATIV (toolchain.py + tpm.py)
+
+**Ce face:** agentul isi instaleaza SINGUR un toolchain complet de compilare
+(clang 21, make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl)
+si devine o masina de build autonoma - fara PC, fara root, fara Termux.
+
+**Arhitectura:**
+```
+agent.py -> tool "toolchain"
+   |
+   +-- toolchain.py : bootstrap/status/env/pip_install/compile
+   +-- tpm.py       : descarca .deb din repo Termux, extrage in
+   |                  /data/local/tmp/tpm/usr (executabil!)
+   +-- build.py     : compilare module C pentru pip
+```
+
+**Instalare:** /data/local/tmp/tpm/usr/ (uneltele) + marker .toolchain_ok
+
+**DESCOPERIREA CHEIE (din jurnalul agentului):**
+- ninja din Termux e RUPT (libandroid-spawn.so) -> cod 127 la toate comenzile
+- SOLUTIE: samu (samurai 1.3) in loc de ninja
+- numpy 2.5.3 compilat complet: 1625 C + 488 C++ + 165 Fortran + 29 Cython,
+  217/217 tinte, functional (BLAS, LAPACK, FFT, ufuncs)
+
+**CAPCANE REZOLVATE:**
+1. /sdcard e montat noexec -> binarele trebuie in /data/local/tmp
+2. .deb e arhiva "ar": ultimul membru e data.tar (nu primul xz)
+3. "import gzip" loveste bug compression._common -> _streams.py oficial
+4. file locking pe /sdcard -> build in /data/
+5. meson PyPI fara modulul features -> meson vendored in PYTHONPATH
+6. 24 functii C99 lipsa din bionic -> dezactivate 54 macro HAVE_C* in config.h
+7. RUNPATH libc++_shared.so -> LD_LIBRARY_PATH
+
+**LEGAL / LICENTE:**
+Aplicatia NU include binare. Bootstrap-ul descarca din repo-ul PUBLIC Termux
+(packages.termux.dev), ca apt. Licente: clang=Apache-2.0, python=PSF-2.0,
+make/cmake=GPL-3.0, ninja/samu=Apache-2.0, openssl=Apache-2.0. Descarcarea si
+folosirea locala nu creeaza obligatii de redistribuire. Daca cineva
+impacheteaza binarele in alt produs, trebuie sa respecte licentele (inclusiv
+GPL). Folosirea repo-ului de alt client e tehnica permisa dar neoficiala.
+
+**TOOL NOU in agent:** "toolchain" (action=status/bootstrap/pip_install/
+compile/env/tpm)
+
+**Fisiere in APK:** assets/python/{toolchain.py, tpm.py, build.py, _streams.py}
+
+
+
+### Etapa 30 - TOOLCHAIN COMPILARE NATIVA FUNCTIONAL (testat end-to-end)
+
+**REZULTAT TESTAT (2026-09-22):**
+Agentul a scris un program C, l-a compilat si l-a rulat SINGUR pe telefon:
+```
+calc.c -> toolchain action=compile -> COMPILE_OK
+-> output: "6 * 7 = 42"
+```
+Agentul a detectat singur ca /sdcard e noexec, a copiat binarul in
+/data/local/tmp, l-a facut executabil si l-a rulat.
+
+**ARHITECTURA (bootstrap_direct - pur Python, fara adb in bucla):**
+```
+toolchain action=bootstrap
+  -> _load_index()   : descarca Packages.gz din repo Termux (3001 pachete)
+  -> _http_get()     : SSL cu CA bundle (certifi sau /apex conscrypt)
+  -> _extract_deb()  : parseaza arhiva .ar, gaseste data.tar.xz
+  -> _untar()        : parseaza tar PUR PYTHON (fara tarfile - bug Android)
+  -> _fix_symlinks() : recreeaza libX.so.N + clang/ld/ar -> binarele reale
+  -> _sh()           : copiaza staging (/sdcard) in prefix (/data/local/tmp)
+```
+
+**BUG-URI REZOLVATE (fiecare blocant):**
+1. `compression._common` lipseste (AAPT2 ignora foldere cu "_")
+   -> fix: _streams_data.py livrat ca fisier + recreare _common la runtime
+2. `lzma` nu se putea importa (acelasi bug) -> _common recreat in pyhome
+3. SSL CERTIFICATE_VERIFY_FAILED -> CA bundle
+4. `tarfile` importa compression._common -> _untar pur Python (512B headers)
+5. Numele membrilor .ar au "/" la final -> rstrip("/") (altfel endswith(".xz") esua)
+6. app nu poate scrie/executa in /data/local/tmp (SELinux untrusted_app)
+   -> staging in /sdcard, copiere prin shell uid=2000
+7. `[TIMEOUT 40s]` din adb_client.py (signal.alarm(40) la import!)
+   -> ADB_GLOBAL_TIMEOUT configurabil, default 600s
+8. symlink-uri .deb (typeflag 2) nu se extrageau -> _fix_symlinks()
+9. `ld` -> `lld`, apoi `ld.lld` -> `lld` (lld e driver generic)
+10. compile rula in procesul app (uid 10378, nu exec /data/local/tmp)
+    -> rulat prin adbsh (uid=2000)
+11. output in /sdcard (noexec) -> mutat automat in /data/local/tmp
+
+**TOOLCHAIN INSTALAT:** clang 21.1.8, make 4.4.1, cmake 4.4.3, ninja 1.13.2,
+git 2.55.0, LLVM tools (ar/ld/nm/strip), pkg-config, python3 3.14.6, pip, zstd.
+
+**TOOL in agent:** "toolchain" cu actiuni: status, bootstrap, compile, run,
+pip_install, tpm, env.
+
+**LICENTE:** bootstrap descarca din repo public Termux (ca apt). Aplicatia nu
+include binare. Licente: clang=Apache-2.0, python=PSF-2.0, make/cmake=GPL-3.
+
+
 ## 11. LIMITARI CUNOSCUTE
 
 Un app normal (fara root) NU poate:
