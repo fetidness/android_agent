@@ -873,7 +873,13 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " COMPILE STACK: this phone is a SELF-SUFFICIENT BUILD MACHINE. The 'toolchain' tool installs (once, via the Termux repo) a full native compiler stack: clang 21, make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl, zlib. Use toolchain action=status to see what is present; action=bootstrap to install the whole stack (~500MB, one time, no PC, no Termux app needed); action=pip_install package=<name> to pip-install ANY PyPI package INCLUDING ones with C/C++/Fortran extensions (they get compiled natively here); action=compile source=<file.c> out=<file.so> to build C/C++ into a shared library; action=env to print PATH/CC/CXX/CFLAGS/LDFLAGS; action=tpm package=<name> to install any Termux binary (nano, htop, jq...). RULE: when a task needs a library that is not installed, do NOT give up - install it: pip_install for Python packages (compiles extensions), tpm for CLI tools, compile for your own C/C++ code. Prefer the already-installed pure-Python tools first; reach for the toolchain when something must be compiled or installed.")
+ " COMPILE STACK: this phone is a SELF-SUFFICIENT BUILD MACHINE. The 'toolchain' tool installs (once, via the Termux repo) a full native compiler stack: clang 21, make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl, zlib. Use toolchain action=status to see what is present; action=bootstrap to install the whole stack (~500MB, one time, no PC, no Termux app needed); action=pip_install package=<name> to pip-install ANY PyPI package INCLUDING ones with C/C++/Fortran extensions (they get compiled natively here); action=compile source=<file.c> out=<file.so> to build C/C++ into a shared library; action=env to print PATH/CC/CXX/CFLAGS/LDFLAGS; action=tpm package=<name> to install any Termux binary (nano, htop, jq...). RULE: when a task needs a library that is not installed, do NOT give up - install it: pip_install for Python packages (compiles extensions), tpm for CLI tools, compile for your own C/C++ code. Prefer the already-installed pure-Python tools first; reach for the toolchain when something must be compiled or installed. "
+ "RUNNING SCRIPTS FOR THE OPERATOR: when a build was done and the operator needs to RUN something "
+ "(a compiled binary, llama.cpp, a GGUF model, a chat script, anything under /data/local/tmp), "
+ "tell them to use /run_su <script> [args] - it runs with SHELL rights (uid=2000), so it can see "
+ "/data/local/tmp, the native toolchain and compiled binaries. /run only has the APP's rights "
+ "(uid=app) and CANNOT access /data/local/tmp. Always write the launcher as a .sh script in the "
+ "workspace (exporting PATH/LD_LIBRARY_PATH) so /run_su can execute it.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1028,6 +1034,38 @@ def vision(path,prompt,max_tokens=None):
         return out+"\n[look] "+str(os.path.getsize(p)//1024)+" KB | tok in "+str(u.get("prompt_tokens","?"))+" out "+str(u.get("completion_tokens","?"))+(" (reasoning "+str(u["completion_tokens_details"]["reasoning_tokens"])+")" if u.get("completion_tokens_details") else "")
     except Exception as e:
         return "[look] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]
+def adbsu_capture(argv, timeout=3600):
+    """Ruleaza un script PRIN ADB SHELL (uid=2000) si afiseaza output-ul
+    linie cu linie, in timp real. Fata de py_capture (uid=app), acesta are
+    SUPER-PUTERI: vede /data/local/tmp, poate executa binare din toolchain
+    (compilate nativ), llama.cpp, modele GGUF etc.
+
+    argv = [script, args...] ; scriptul poate fi .py, .sh sau orice executabil.
+    """
+    import shlex as _sh
+    # construim linia de comanda: mediul complet + scriptul + argumente
+    parts = [". /data/local/tmp/tpm/env.sh >/dev/null 2>&1; "]
+    script = argv[0]
+    args = " ".join(_sh.quote(a) for a in argv[1:])
+    if script.endswith(".py"):
+        # script Python: il rulam cu python3-ul din toolchain
+        parts.append("cd %s; exec python3 %s %s" % (_sh.quote(WORK), _sh.quote(script), args))
+    elif script.endswith(".sh"):
+        parts.append("cd %s; exec sh %s %s" % (_sh.quote(WORK), _sh.quote(script), args))
+    else:
+        parts.append("cd %s; exec %s %s" % (_sh.quote(WORK), _sh.quote(script), args))
+    cmd = "".join(parts)
+    try:
+        out = run_adbsh_tool(cmd, timeout)
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        out = "[run_su error: %s]" % str(e)
+    sys.stdout.write(out if out.endswith("\n") else out + "\n")
+    sys.stdout.flush()
+    return out or "(no output)"
+
+
 def py_capture(argv, timeout=600):
     """Ruleaza un script Python (argv=[script, args...]) si afiseaza output-ul LINIE cu LINIE,
     in timp real (streaming). Returneaza intregul output (pentru context), dar il si printeaza
@@ -1696,7 +1734,9 @@ while 1:
         print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
         print(G+"     /ctx                context window + archives/logs on disk"+N)
         print(G+"     /where             show where everything lives (workspace, memory, context, logs)"+N)
-        print(G+"     /run <script.py>   run a Python script from the workspace, with optional args"+N)
+        print(G+"     /run <script.py>   run a script from the workspace, with the APP's rights (uid=app)"+N)
+        print(G+"     /run_su <script>   run a script with SHELL rights (uid=2000): /data/local/tmp,"+N)
+        print(G+"                        toolchain nativ, llama.cpp, modele GGUF, binare compilate"+N)
         print(G+"     /compact            compress the context now"+N)
         print(G+"     /verbose            toggle full code/output of each step"+N)
         print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
@@ -1753,6 +1793,40 @@ while 1:
                 with open(_lf,"w",encoding="utf-8") as f: f.write(_o)
                 print(SD+"   (full output: "+_lf+")"+N)
             except Exception: pass
+        continue
+
+    if q.startswith("/run_su ") or q == "/run_su":
+        # /run_su <script> [args...] - ca /run, dar cu DREPTURI DE SHELL (uid=2000):
+        # vede /data/local/tmp, toolchain-ul nativ, llama.cpp, modelele GGUF.
+        try:
+            argv = shlex.split(q[8:].strip())
+        except Exception as _e:
+            print(R + "   parse error: " + str(_e) + N); continue
+        if not argv:
+            print(R + "   usage: /run_su <script.py|script.sh|binar> [args...]" + N)
+            print(SD + "   (ruleaza cu uid=2000: /data/local/tmp, toolchain, llama.cpp)" + N)
+            continue
+        script = argv[0]
+        if not os.path.isabs(script):
+            script = os.path.join(WORK, script)
+        if not os.path.exists(script):
+            print(R + "   no such file: " + script + N); continue
+        _a = argv[1:]
+        print(G + "   [run_su] " + os.path.basename(script) + (" " + " ".join(_a) if _a else "")
+              + "  (uid=2000)" + N)
+        try:
+            _o = adbsu_capture([script] + _a)
+        except KeyboardInterrupt:
+            print(R + "\n   [run_su] intrerupt (SIGINT)" + N); continue
+        if len(_o) > 4000:
+            try:
+                os.makedirs(LOGDIR, exist_ok=True)
+                _lf = os.path.join(LOGDIR, "runsu_" + os.path.basename(script) + "_"
+                                   + time.strftime("%Y%m%d-%H%M%S") + ".log")
+                with open(_lf, "w", encoding="utf-8") as f: f.write(_o)
+                print(SD + "   (full output: " + _lf + ")" + N)
+            except Exception:
+                pass
         continue
 
     if q=="/mem":

@@ -802,3 +802,7 @@ TRAP: patchelf cannot patch a binary that is currently executing (Text file busy
 P: adb shell commands containing C compound literals or braces in f-strings break python syntax -> write the shell script to a file and adb push it instead of inlining.
 
 DEAD: patching 200+ binaries in one adb-shell loop can end in a segfault (nonzero exit) but the work is still done -> judge by the result (readelf | grep com.termux count), not by exit code.
+
+OK: toolchain-ul Termux (/data/local/tmp/tpm/usr) are caile Termux hardcodate in binarele cmake/make (SHELL=/data/data/com.termux/files/usr/bin/sh); patch in-place cu inlocuire de siruri de ACEEASI lungime (padding NUL) si chmod 755 dupa scriere, caile lungi INAINTE de cele scurte; NU patch-ui libpython*/libLLVM (se corup, "Bus error").
+
+TRAP: `cmake . $(python3 toolchain.py profile cmake)` sparge flagurile cu spatii in shell (word-splitting) -> "Unknown argument -lc++_shared"; fix: profile scrie un script shell cu fiecare argument quotat separat (sh prof.sh <src> <build>).

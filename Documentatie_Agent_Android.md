@@ -1402,3 +1402,37 @@ cu regula: **preflight INAINTE de orice build mare**).
 preflight(): c_compile cxx_compile math_link prefix_hdr make_shell ssl cmake git cmake_build  -> TOATE TRUE
 cmake + C++ (STL, math, vector) -> CONFIGURE OK | BUILD OK | CMAKE_CXX_MATH_OK 7
 ```
+
+
+---
+
+## Etapa 35 - comanda `/run_su` (rulare cu DREPTURI DE SHELL, uid=2000)
+
+**Problema:** `/run` ruleaza scriptul in sandbox-ul aplicatiei (uid=app ~10300).
+SELinux ii interzice accesul la `/data/local/tmp` si executia binarilor
+compilate acolo. Deci un script care foloseste llama.cpp, toolchain-ul nativ,
+modele GGUF etc. **NU putea fi rulat** din aplicatie.
+
+**Solutia:** comanda noua `/run_su <script> [args...]` in agent.py:
+- ruleaza scriptul **prin `adbsh`** (clientul ADB intern, uid=2000 shell)
+- surseaza automat `/data/local/tmp/tpm/env.sh` (mediul complet)
+- detecteaza tipul: `.py` -> `python3` din toolchain; `.sh` -> `sh`; altfel executabil
+- streaming live al output-ului (ca `/run`), salvare automata la output lung
+
+**Verificat pe device:**
+```
+/run_su test_su.sh          -> uid=2000, vede /data/local/tmp, llama-cli --version OK
+/run_su run_chat.sh -p "..." -> LLM local (Qwen2.5-0.5b) a RASPUNS: 10.6 tok/s
+```
+
+**Utilizare:**
+```
+/run              -> uid app (sandbox, fara /data/local/tmp)
+/run_su           -> uid 2000 (shell): /data/local/tmp, toolchain nativ, llama.cpp
+```
+Atentie la quoting: ca in orice shell, spatiile se pun intre ghilimele:
+`/run_su run_chat.sh -p "Buna, cine esti?"`
+
+**In system prompt:** agentul e instruit sa recomande `/run_su` cand operatorul
+trebuie sa ruleze ceva compilat (binar, llama.cpp, model GGUF, script de chat)
+si sa scrie lansatorul ca `.sh` in workspace.
