@@ -11,7 +11,7 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 - **Kotlin** pentru UI + bridge + accessibility
 - **DeepSeek API** pentru creier
 
-### Ce poti face (12 tool-uri)
+### Ce poti face (11 tool-uri)
 
 | Tool | Ce face | Uid |
 |------|---------|-----|
@@ -27,7 +27,7 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 | `bg` | **gestionar de procese in fundal** (start/status/log/kill/list/clean) — OBLIGATORIU pentru orice comanda >30s | 10362 |
 | `toolchain` | compilare C/C++ nativa pe telefon (clang-21, samu, pkg Termux) | 10362 |
 
-### REGULA DE AURENTRU ALEGEREA TOOL-URILOR
+### REGULA DE AUR PENTRU ALEGEREA TOOL-URILOR
 1. **Ecran** (citire/tap/text) → `android ui` (nativ, instant, 0 auth)
 2. **Senzori/camera/baterie** → `android` (nativ, instant)
 3. **Reflection SDK** → `android eval`
@@ -1416,7 +1416,7 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 ### Stare finala
 - APK ~34 MB (debug, neprotejat, arm64 + x86_64)
 - Kotlin + CPython 3.14 compilat
-- 10 tool-uri: android, ui, adbsh, python, bash, smart, read, look, bg, toolchain
+- 11 tool-uri: android, ui, adbsh, python, bash, smart, read, look, bg, toolchain, multi
 - 4 primitive reflection: proxy, referinte de obiecte, await/events, subclass (DexMaker)
 - 25+ actiuni native (sensors, camera, location, battery, system, storage, network, display,
   audio, telephony, nfc, usb, appinfo, processes, ...)
@@ -1426,7 +1426,7 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - Acces la hardware si sistem (maxim posibil fara root)
 - Memorie persistenta cu auto-invatare (filtrata pe relevanta + mediu)
 - Workspace vizibil: /sdcard/Download/Agent/ (memorie, context) + workspace/
-- Comenzi: /help /learn /mem /ctx /where /run /reset /compact /verbose /nospin /exit
+- Comenzi: /help /learn /auto-learn /mem /ctx /compact /verbose /nospin /where /run /run_su /watch /reset /exit
 - Interfata terminal in engleza, raspuns in limba operatorului, auto-scroll corect,
   stop generare, fara tabele pe ecran mic
 - Iconita profesionala
