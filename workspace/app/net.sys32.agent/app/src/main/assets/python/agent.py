@@ -735,6 +735,71 @@ def _task_foot(stare="done"):
     b=G+"  ·  "+str(TASK["steps"])+(" step" if TASK["steps"]==1 else " steps")+"  ·  total "+C+_dur(tot)+N
     return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+N+b
 
+# ==================== MONITOR DE STATUS (0 tokeni, fara API) ====================
+# DE CE EXISTA: operatorul a intrebat daca putem verifica statusul la fiecare minut.
+# Daca asta s-ar face PRIN API (agentul cheama un tool), fiecare check ar retrimite TOT
+# contextul: 30 de check-uri = ~255.000 tokeni INPUT. Inutil de scump.
+# Solutia: un THREAD LOCAL care citeste registrul bg.json si scrie o linie pe ECRAN.
+# 0 cereri API, 0 tokeni, 0 impact pe context. Se activeaza cu /watch on (sau AGENT_WATCH=1).
+WATCH = {"on": os.environ.get("AGENT_WATCH") == "1", "sec": int(os.environ.get("AGENT_WATCH_SEC", "60") or 60)}
+
+def _watch_snapshot():
+    """One status line per RUNNING background job, read from bg.json - no API, no context.
+    Returns [] when nothing runs (so the caller prints nothing and stays quiet)."""
+    try:
+        reg = _bg_load()
+    except Exception:
+        return []
+    out = []
+    for jid, j in (reg or {}).items():
+        if j.get("status") != "running":
+            continue
+        pid = j.get("pid", 0)
+        alive = "?"
+        try:
+            ok = run_adbsh_tool("test -d /proc/%d && echo A || echo D" % pid, 20).strip()
+            alive = "RUNNING" if "A" in ok else "DONE"
+        except Exception:
+            pass
+        dur = int(time.time() - j.get("ts", time.time()))
+        sz = "?"
+        try:
+            sz = run_adbsh_tool("wc -c < %s 2>/dev/null || echo 0" % j["log"], 20).strip().split()[0]
+        except Exception:
+            pass
+        out.append((jid, alive, pid, dur, sz))
+    return out
+
+def _watch_loop():
+    """Writes one compact line every WATCH['sec'] seconds, ONLY while something runs.
+    Prints to stdout (the app terminal), never to the model context."""
+    last = ""
+    while not WATCH.get("stop"):
+        time.sleep(max(10, int(WATCH.get("sec", 60))))
+        if not WATCH.get("on"):
+            continue
+        try:
+            rows = _watch_snapshot()
+        except Exception:
+            continue
+        if not rows:
+            continue                      # nothing running: stay silent (no noise)
+        line = "  ".join("%s %s %ds %sB" % (jid.split("_")[0], a, d, s) for jid, a, p, d, s in rows)
+        if line != last:
+            last = line
+        try:
+            print("\r\33[K" + SD + "\u23f1 watch " + N + G + line + N, flush=True)
+        except Exception:
+            pass
+
+def _watch_start():
+    if WATCH.get("thread"):
+        return
+    WATCH["stop"] = False
+    th = threading.Thread(target=_watch_loop, daemon=True)
+    WATCH["thread"] = th
+    th.start()
+
 def _live(i):
     """The live line, rewritten in place while the step runs. SIMPLE design:
     spinner + "Thinking..." (or "Running...") + the label of the work + the task clock.
@@ -2214,238 +2279,252 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
         print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
 
 
-refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
-ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
-# --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
-def _ctr(txt, visible):
-    return txt   # aliniat la stanga (cerut de operator)
-_title = "\u26a1 AGENT DeepSeek"
-_tvis = len(_title) - 1   # emoji-ul ⚡ ocupa 2 celule, scadem 1
-print("")
-print(RED + _ctr(_title, _tvis) + N)
-print(G + _ctr("Type /help for all commands", 26) + N + "\n")
-while 1:
-    try: q=input(U+UPROMPT+IN).strip()
-    except (EOFError,KeyboardInterrupt): print(N);break
-    if q=="": continue          # blank line (extra newline from the UI) = no-op, do NOT quit the agent
-    if q in ("/exit","/quit"): break
-    if q in ("/help","/?"):
-        _al="ON" if AUTOLEARN["on"] else "OFF"
-        print(G+"   COMMANDS"+N)
-        print(G+"     /learn              update memory now (manual learning)"+N)
-        print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
-        print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
-        print(G+"     /ctx                context window + archives/logs on disk"+N)
-        print(G+"     /where             show where everything lives (workspace, memory, context, logs)"+N)
-        print(G+"     /run <script.py>   run a script from the workspace, with the APP's rights (uid=app)"+N)
-        print(G+"     /run_su <script>   run a script with SHELL rights (uid=2000): /data/local/tmp,"+N)
-        print(G+"                        toolchain nativ, llama.cpp, modele GGUF, binare compilate"+N)
-        print(G+"     /compact            compress the context now"+N)
-        print(G+"     /verbose            toggle full code/output of each step"+N)
-        print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
-        print(G+"     /reset              erase the conversation history"+N)
-        print(G+"     /help, /?           this list"+N)
-        print(G+"     /exit, /quit        leave (empty line too)"+N)
-        print(G+"   "+(HINT_LINE)+N)
-        continue
-    if q=="/ctx":
-        _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
-        _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
-        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok = "+("%.0f"%(100.0*ctx_tokens()/CTXWINDOW))+"% of "+_K(CTXWINDOW)+" ("+str(CTXWARN)+"% = red warning) | compression OFF (context grows until /reset)"+N)
-        _hit="n/a"
-        if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
-        print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
-        print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
-    if q=="/compact":
-        print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, not on request), so the memory inserted at startup stays intact until you give /reset. Nothing was changed."+N); continue
-    if q in ("/nospin","/spin"):
-        NOSPIN[0]=(q=="/nospin"); print(G+"   [ui] "+("NOSPIN: no live line at all - the terminal scrollback stays clean (recommended on a phone)" if NOSPIN[0] else "live line back on (spinner + timer rewritten in place)")+N); continue
-    if q=="/verbose":
-        VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
-    if q=="/where":
-        print(G+"   LOCATIONS"+N)
-        print(G+"     home       "+N+HOME_DIR+N)
-        print(G+"     workspace  "+N+WORK+N+"   (everything I create goes here)"+N)
-        print(G+"     memory     "+N+MEM+N)
-        print(G+"     context    "+N+CTX+N)
-        print(G+"     logs       "+N+LOGDIR+N)
-        print(G+"     archive    "+N+ARCH+N)
-        try:
-            _n=len([f for f in os.listdir(WORK)])
-            print(G+"     files in workspace: "+N+str(_n)+N)
-        except Exception: pass
-        if HOME_DIR==_DEFHOME:
-            print(OF+"     note: running from the app sandbox (external storage not writable) -"+N)
-            print(OF+"           files are NOT visible in a file manager here."+N)
-        continue
-
-    if q.startswith("/run "):
-        # /run <script.py> [args...] - ruleaza un script Python din workspace, cu argumente.
-        argv=shlex.split(q[5:].strip())
-        if not argv:
-            print(R+"   usage: /run <script.py> [args...]   (scriptul trebuie sa fie in workspace)"+N); continue
-        script=argv[0]
-        if not os.path.isabs(script): script=os.path.join(WORK,script)
-        if not os.path.exists(script):
-            print(R+"   no such file: "+script+N); continue
-        _a=argv[1:]
-        print(G+"   [run] "+os.path.basename(script)+(" "+" ".join(_a) if _a else "")+N)
-        _o=py_capture([script]+_a)   # afiseaza live (streaming), linie cu linie
-        if len(_o)>4000:             # output lung: il salvam, ca sa nu-ti scape nimic
-            try:
-                _lf=os.path.join(LOGDIR,"run_"+os.path.basename(script)+"_"+time.strftime("%Y%m%d-%H%M%S")+".log")
-                os.makedirs(LOGDIR,exist_ok=True)
-                with open(_lf,"w",encoding="utf-8") as f: f.write(_o)
-                print(SD+"   (full output: "+_lf+")"+N)
-            except Exception: pass
-        continue
-
-    if q.startswith("/run_su ") or q == "/run_su":
-        # /run_su <script> [args...] - ca /run, dar cu DREPTURI DE SHELL (uid=2000):
-        # vede /data/local/tmp, toolchain-ul nativ, llama.cpp, modelele GGUF.
-        try:
-            argv = shlex.split(q[8:].strip())
-        except Exception as _e:
-            print(R + "   parse error: " + str(_e) + N); continue
-        if not argv:
-            print(R + "   usage: /run_su <script.py|script.sh|binar> [args...]" + N)
-            print(SD + "   (ruleaza cu uid=2000: /data/local/tmp, toolchain, llama.cpp)" + N)
+if __name__ == "__main__":
+    if WATCH.get("on"):
+        _watch_start()
+    refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
+    ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
+    # --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
+    def _ctr(txt, visible):
+        return txt   # aliniat la stanga (cerut de operator)
+    _title = "\u26a1 AGENT DeepSeek"
+    _tvis = len(_title) - 1   # emoji-ul ⚡ ocupa 2 celule, scadem 1
+    print("")
+    print(RED + _ctr(_title, _tvis) + N)
+    print(G + _ctr("Type /help for all commands", 26) + N + "\n")
+    while 1:
+        try: q=input(U+UPROMPT+IN).strip()
+        except (EOFError,KeyboardInterrupt): print(N);break
+        if q=="": continue          # blank line (extra newline from the UI) = no-op, do NOT quit the agent
+        if q in ("/exit","/quit"): break
+        if q in ("/help","/?"):
+            _al="ON" if AUTOLEARN["on"] else "OFF"
+            print(G+"   COMMANDS"+N)
+            print(G+"     /learn              update memory now (manual learning)"+N)
+            print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
+            print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
+            print(G+"     /ctx                context window + archives/logs on disk"+N)
+            print(G+"     /where             show where everything lives (workspace, memory, context, logs)"+N)
+            print(G+"     /run <script.py>   run a script from the workspace, with the APP's rights (uid=app)"+N)
+            print(G+"     /run_su <script>   run a script with SHELL rights (uid=2000): /data/local/tmp,"+N)
+            print(G+"                        toolchain nativ, llama.cpp, modele GGUF, binare compilate"+N)
+            print(G+"     /compact            compress the context now"+N)
+            print(G+"     /verbose            toggle full code/output of each step"+N)
+            print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
+            print(G+"     /reset              erase the conversation history"+N)
+            print(G+"     /help, /?           this list"+N)
+            print(G+"     /exit, /quit        leave (empty line too)"+N)
+            print(G+"   "+(HINT_LINE)+N)
             continue
-        script = argv[0]
-        if not os.path.isabs(script):
-            script = os.path.join(WORK, script)
-        if not os.path.exists(script):
-            print(R + "   no such file: " + script + N); continue
-        _a = argv[1:]
-        print(G + "   [run_su] " + os.path.basename(script) + (" " + " ".join(_a) if _a else "")
-              + "  (uid=2000)" + N)
-        try:
-            _o = adbsu_capture([script] + _a)
-        except KeyboardInterrupt:
-            print(R + "\n   [run_su] intrerupt (SIGINT)" + N); continue
-        if len(_o) > 4000:
+        if q=="/ctx":
+            _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
+            _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
+            print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok = "+("%.0f"%(100.0*ctx_tokens()/CTXWINDOW))+"% of "+_K(CTXWINDOW)+" ("+str(CTXWARN)+"% = red warning) | compression OFF (context grows until /reset)"+N)
+            _hit="n/a"
+            if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
+            print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
+            print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
+        if q=="/compact":
+            print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, not on request), so the memory inserted at startup stays intact until you give /reset. Nothing was changed."+N); continue
+        if q in ("/nospin","/spin"):
+            NOSPIN[0]=(q=="/nospin"); print(G+"   [ui] "+("NOSPIN: no live line at all - the terminal scrollback stays clean (recommended on a phone)" if NOSPIN[0] else "live line back on (spinner + timer rewritten in place)")+N); continue
+        if q.startswith("/watch"):
+            _a = q.split()
+            if len(_a) > 1 and _a[1].isdigit(): WATCH["sec"] = max(10, int(_a[1]))
+            WATCH["on"] = not WATCH["on"]
+            if WATCH["on"]:
+                _watch_start()
+                print(G+"   [watch] ON - o linie de status la fiecare "+str(WATCH["sec"])+"s, DOAR cat ruleaza un job."+N)
+                print(G+"   [watch] cost: 0 tokeni (scrie pe ECRAN, nu intra in contextul modelului)."+N)
+            else:
+                print(G+"   [watch] OFF."+N)
+            continue
+        if q=="/verbose":
+            VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
+        if q=="/where":
+            print(G+"   LOCATIONS"+N)
+            print(G+"     home       "+N+HOME_DIR+N)
+            print(G+"     workspace  "+N+WORK+N+"   (everything I create goes here)"+N)
+            print(G+"     memory     "+N+MEM+N)
+            print(G+"     context    "+N+CTX+N)
+            print(G+"     logs       "+N+LOGDIR+N)
+            print(G+"     archive    "+N+ARCH+N)
             try:
-                os.makedirs(LOGDIR, exist_ok=True)
-                _lf = os.path.join(LOGDIR, "runsu_" + os.path.basename(script) + "_"
-                                   + time.strftime("%Y%m%d-%H%M%S") + ".log")
-                with open(_lf, "w", encoding="utf-8") as f: f.write(_o)
-                print(SD + "   (full output: " + _lf + ")" + N)
-            except Exception:
-                pass
-        continue
+                _n=len([f for f in os.listdir(WORK)])
+                print(G+"     files in workspace: "+N+str(_n)+N)
+            except Exception: pass
+            if HOME_DIR==_DEFHOME:
+                print(OF+"     note: running from the app sandbox (external storage not writable) -"+N)
+                print(OF+"           files are NOT visible in a file manager here."+N)
+            continue
 
-    if q=="/mem":
-        _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
-    if q=="/reset":
-        M[:]=M[:1]; save_ctx()
-        print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
-    if q.startswith("/auto-learn"):
-        arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
-        if arg in ("on","1","yes"):
-            AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
-        elif arg in ("off","0","no"):
-            AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
-        else:
-            print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
-        continue
-    if q=="/learn":
-        do_learn("/learn"); continue
-    # ★ FIX: daca task-ul anterior s-a oprit cu tool_calls fara raspuns (ex. operatorul
-    # a scris in chat in timpul unui task, sau API error), contextul devine INVALID si
-    # API-ul respinge TOT. Reparam INAINTE de a adauga noul mesaj.
-    try:
-        _n = sanitize_msgs(M)
-        if _n:
-            print(OF + "   [ctx] " + str(_n) + " tool_call(uri) orfane reparate (context valid)" + N)
-    except Exception:
-        pass
-    M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
-    print(_task_head(q))
-    try:
-     tries=0
-     while 1:
-        m,u=_spin(ask,phase="think");print_usage_compact(u)
-        if m is None: M.pop();print(_task_foot("interrupted: API error"));break
-        if _empty(m):
-            tries+=1
-            if tries<=EMPTY_RETRY:
-                print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
+        if q.startswith("/run "):
+            # /run <script.py> [args...] - ruleaza un script Python din workspace, cu argumente.
+            argv=shlex.split(q[5:].strip())
+            if not argv:
+                print(R+"   usage: /run <script.py> [args...]   (scriptul trebuie sa fie in workspace)"+N); continue
+            script=argv[0]
+            if not os.path.isabs(script): script=os.path.join(WORK,script)
+            if not os.path.exists(script):
+                print(R+"   no such file: "+script+N); continue
+            _a=argv[1:]
+            print(G+"   [run] "+os.path.basename(script)+(" "+" ".join(_a) if _a else "")+N)
+            _o=py_capture([script]+_a)   # afiseaza live (streaming), linie cu linie
+            if len(_o)>4000:             # output lung: il salvam, ca sa nu-ti scape nimic
+                try:
+                    _lf=os.path.join(LOGDIR,"run_"+os.path.basename(script)+"_"+time.strftime("%Y%m%d-%H%M%S")+".log")
+                    os.makedirs(LOGDIR,exist_ok=True)
+                    with open(_lf,"w",encoding="utf-8") as f: f.write(_o)
+                    print(SD+"   (full output: "+_lf+")"+N)
+                except Exception: pass
+            continue
+
+        if q.startswith("/run_su ") or q == "/run_su":
+            # /run_su <script> [args...] - ca /run, dar cu DREPTURI DE SHELL (uid=2000):
+            # vede /data/local/tmp, toolchain-ul nativ, llama.cpp, modelele GGUF.
+            try:
+                argv = shlex.split(q[8:].strip())
+            except Exception as _e:
+                print(R + "   parse error: " + str(_e) + N); continue
+            if not argv:
+                print(R + "   usage: /run_su <script.py|script.sh|binar> [args...]" + N)
+                print(SD + "   (ruleaza cu uid=2000: /data/local/tmp, toolchain, llama.cpp)" + N)
                 continue
-            print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
-            print(_task_foot("stopped: empty answer"));break
-        tries=0
-        M.append(m);save_ctx();ctx_warn()
-        if m.get("tool_calls"):
-            _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
-            _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
-            _txt=str(m.get("content") or "").strip() or _fb
-            # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
-            if _txt:
-                _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
-                if _clean: print(OF+"   "+N+C+_clean+N)
-            for c in m["tool_calls"]:
-                code=json.loads(c["function"]["arguments"] or "{}").get("code","")
-                o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
-                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
-        else:
-            print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
-            print(_task_foot())
-            auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
-            flush_task_tokens()
-            break
-    except KeyboardInterrupt:
-        LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
-        print("\r\33[K",end="",flush=True)
-        print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
-        while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
-        complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
-save_ctx()   # on /exit or Ctrl+D the history is already on disk
+            script = argv[0]
+            if not os.path.isabs(script):
+                script = os.path.join(WORK, script)
+            if not os.path.exists(script):
+                print(R + "   no such file: " + script + N); continue
+            _a = argv[1:]
+            print(G + "   [run_su] " + os.path.basename(script) + (" " + " ".join(_a) if _a else "")
+                  + "  (uid=2000)" + N)
+            try:
+                _o = adbsu_capture([script] + _a)
+            except KeyboardInterrupt:
+                print(R + "\n   [run_su] intrerupt (SIGINT)" + N); continue
+            if len(_o) > 4000:
+                try:
+                    os.makedirs(LOGDIR, exist_ok=True)
+                    _lf = os.path.join(LOGDIR, "runsu_" + os.path.basename(script) + "_"
+                                       + time.strftime("%Y%m%d-%H%M%S") + ".log")
+                    with open(_lf, "w", encoding="utf-8") as f: f.write(_o)
+                    print(SD + "   (full output: " + _lf + ")" + N)
+                except Exception:
+                    pass
+            continue
 
-# ---- FIX: AAPT2 ignora folderele care incep cu "_" (ex: compression/_common) ----
-# Il recreem la runtime din compression/_streams_data.py (livrat ca fisier simplu).
-def _fix_compression_common():
-    import os, sys
-    try:
-        import sysconfig
-        purelib = sysconfig.get_paths().get("purelib", "")
-        base = os.path.dirname(os.path.abspath(__file__))
-        # locul REAL vazut de Python: pyhome/lib/python3.14/compression
-        # compression poate fi in pyhome/lib/pythonX.Y/ (stdlib) SAU in
-        # site-packages SAU in assets Lib/. Cautam in toate.
-        cands = []
-        if purelib: cands.append(os.path.join(os.path.dirname(purelib), "compression"))
-        if purelib: cands.append(os.path.join(purelib, "compression"))
-        cands.append(os.path.join(base, "Lib", "compression"))
-        for d in list(sys.path):
-            if d: cands.append(os.path.join(d, "compression"))
-        comp = ""
-        for c in cands:
-            if os.path.isdir(c) and os.path.exists(os.path.join(c, "_streams_data.py")):
-                comp = c; break
-        if not comp:
+        if q=="/mem":
+            _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
+        if q=="/reset":
+            M[:]=M[:1]; save_ctx()
+            print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
+        if q.startswith("/auto-learn"):
+            arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
+            if arg in ("on","1","yes"):
+                AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
+            elif arg in ("off","0","no"):
+                AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
+            else:
+                print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
+            continue
+        if q=="/learn":
+            do_learn("/learn"); continue
+        # ★ FIX: daca task-ul anterior s-a oprit cu tool_calls fara raspuns (ex. operatorul
+        # a scris in chat in timpul unui task, sau API error), contextul devine INVALID si
+        # API-ul respinge TOT. Reparam INAINTE de a adauga noul mesaj.
+        try:
+            _n = sanitize_msgs(M)
+            if _n:
+                print(OF + "   [ctx] " + str(_n) + " tool_call(uri) orfane reparate (context valid)" + N)
+        except Exception:
+            pass
+        M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
+        print(_task_head(q))
+        try:
+         tries=0
+         while 1:
+            m,u=_spin(ask,phase="think");print_usage_compact(u)
+            if m is None: M.pop();print(_task_foot("interrupted: API error"));break
+            if _empty(m):
+                tries+=1
+                if tries<=EMPTY_RETRY:
+                    print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
+                    continue
+                print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
+                print(_task_foot("stopped: empty answer"));break
+            tries=0
+            M.append(m);save_ctx();ctx_warn()
+            if m.get("tool_calls"):
+                _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
+                _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
+                _txt=str(m.get("content") or "").strip() or _fb
+                # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
+                if _txt:
+                    _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
+                    if _clean: print(OF+"   "+N+C+_clean+N)
+                for c in m["tool_calls"]:
+                    code=json.loads(c["function"]["arguments"] or "{}").get("code","")
+                    o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
+                    M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
+            else:
+                print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
+                print(_task_foot())
+                auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
+                flush_task_tokens()
+                break
+        except KeyboardInterrupt:
+            LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
+            print("\r\33[K",end="",flush=True)
+            print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
+            while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
+            complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
+    save_ctx()   # on /exit or Ctrl+D the history is already on disk
+
+    # ---- FIX: AAPT2 ignora folderele care incep cu "_" (ex: compression/_common) ----
+    # Il recreem la runtime din compression/_streams_data.py (livrat ca fisier simplu).
+    def _fix_compression_common():
+        import os, sys
+        try:
+            import sysconfig
+            purelib = sysconfig.get_paths().get("purelib", "")
+            base = os.path.dirname(os.path.abspath(__file__))
+            # locul REAL vazut de Python: pyhome/lib/python3.14/compression
+            # compression poate fi in pyhome/lib/pythonX.Y/ (stdlib) SAU in
+            # site-packages SAU in assets Lib/. Cautam in toate.
+            cands = []
+            if purelib: cands.append(os.path.join(os.path.dirname(purelib), "compression"))
+            if purelib: cands.append(os.path.join(purelib, "compression"))
+            cands.append(os.path.join(base, "Lib", "compression"))
+            for d in list(sys.path):
+                if d: cands.append(os.path.join(d, "compression"))
+            comp = ""
             for c in cands:
-                if os.path.isdir(c): comp = c; break
-        if not comp: return
-        common = os.path.join(comp, "_common")
-        src_data = os.path.join(comp, "_streams_data.py")
-        if not os.path.exists(src_data):
-            return
-        bad = os.path.join(comp, "_common.py")
-        if os.path.isfile(bad):
-            try: os.remove(bad)
-            except Exception: pass
-        if os.path.isfile(common):
-            try: os.remove(common)
-            except Exception: pass
-        if not (os.path.isdir(common) and os.path.exists(os.path.join(common, "_streams.py"))):
-            os.makedirs(common, exist_ok=True)
-            open(os.path.join(common, "__init__.py"), "w").close()
-            import shutil
-            shutil.copyfile(src_data, os.path.join(common, "_streams.py"))
-            import shutil as _sh2
-            _sh2.rmtree(os.path.join(common, "__pycache__"), ignore_errors=True)
-            _sh2.rmtree(os.path.join(comp, "__pycache__"), ignore_errors=True)
-    except Exception:
-        pass
+                if os.path.isdir(c) and os.path.exists(os.path.join(c, "_streams_data.py")):
+                    comp = c; break
+            if not comp:
+                for c in cands:
+                    if os.path.isdir(c): comp = c; break
+            if not comp: return
+            common = os.path.join(comp, "_common")
+            src_data = os.path.join(comp, "_streams_data.py")
+            if not os.path.exists(src_data):
+                return
+            bad = os.path.join(comp, "_common.py")
+            if os.path.isfile(bad):
+                try: os.remove(bad)
+                except Exception: pass
+            if os.path.isfile(common):
+                try: os.remove(common)
+                except Exception: pass
+            if not (os.path.isdir(common) and os.path.exists(os.path.join(common, "_streams.py"))):
+                os.makedirs(common, exist_ok=True)
+                open(os.path.join(common, "__init__.py"), "w").close()
+                import shutil
+                shutil.copyfile(src_data, os.path.join(common, "_streams.py"))
+                import shutil as _sh2
+                _sh2.rmtree(os.path.join(common, "__pycache__"), ignore_errors=True)
+                _sh2.rmtree(os.path.join(comp, "__pycache__"), ignore_errors=True)
+        except Exception:
+            pass
 
-_fix_compression_common()
+    _fix_compression_common()

@@ -221,16 +221,28 @@ class Adb:
                 #    ca a cheii adb standard) -> adbd o valideaza si autorizeaza.
                 #    (Cheia in formatul vechi de 267 B -> "Invalid base64 key".)
                 # 2. fallback: SIGNATURE (pentru adbd care au deja cheia salvata)
-                pub = open(PUBC,"rb").read().strip()+b"\0"
-                try:
-                    print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
-                    self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
-                except Exception as e:
-                    print("[adb] pubkey send err:", str(e)[:60], flush=True)
-                    if os.path.exists(KEY):
+                # ★ ORDINEA CORECTA (fix dupa blocajul "adbsh timeout" din teste):
+                # adbd trimite AUTH_TOKEN si ASTEAPTA o dovada. Sunt doua cai:
+                #   (1) AUTH_SIGNATURE  - daca cheia privata e deja in user_keys: adbd
+                #       verifica semnatura si raspunde CNXN IMEDIAT, fara dialog.
+                #   (2) AUTH_RSAPUBLICKEY - daca NU e autorizata: adbd afiseaza dialogul
+                #       "Allow USB debugging".
+                # Vechiul cod incerca (2) PRIMUL si (1) doar in `except`. Pe acest device
+                # cheia e deja in user_keys, deci adbd NU raspunde deloc la (2):
+                # ramanea in timeout si adbsh parea mort. Acum incercam (1) PRIMUL.
+                sent = False
+                if os.path.exists(KEY):
+                    try:
                         sig = _rsa_sign_token(d)
                         print("[adb] AUTH -> trimit SIGNATURE", len(sig), "bytes", flush=True)
                         self._send(A_AUTH, AUTH_SIGNATURE, 0, sig)
+                        sent = True
+                    except Exception as e:
+                        print("[adb] sign err:", str(e)[:70], flush=True)
+                if not sent:
+                    pub = open(PUBC,"rb").read().strip()+b"\0"
+                    print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
+                    self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
                 _auth_left -= 1
                 if _auth_left <= 0:
                     raise RuntimeError("adbd a respins autorizarea (3 incercari) - "

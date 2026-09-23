@@ -1118,3 +1118,13 @@ P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/build/outputs/apk/d
 TRAP: verificarea finala a unui fix de tool in acest proiect cere 4 locuri sincronizate -> schema JSON cu enum, dispatcher in agent.py, lista inline hardcodata din _run si CLI in modul -> daca lipseste unul, agentul raspunde "actiune necunoscuta" desi handler-ul exista; verifica toate patru inainte de build
 
 TRAP: dupa instalarea unui APK nou, agent.py NU se reincarca in procesul Python deja pornit (bucla foloseste fisierul incarcat la startup) -> orice schimbare de assets pare fara efect -> am force-stop + am start + reactivare accessibility inainte de a testa
+
+TRAP: grepping for a feature string like "NPY_BLAS_ORDER" or a comment line across a file is not evidence the feature is applied -> env_vars() edits can fail silently mid-script (an earlier assert raises before the write) leaving the dict unchanged -> after any edit, re-read the exact lines you changed (not the whole file) to confirm the new text is on disk.
+
+TRAP: verifying a code change by searching a substring that itself contains escaped quotes (e.g. 'NEVER end a turn with \"I did X') gives a false MISS because Python source stores it differently -> test for the stable inner phrase ("next comes Y") instead of the quoted literal -> avoids wrongly concluding a rule is absent and re-writing it.
+
+DEAD: run_tool/py blocks infinitely when agent.py lacks `if __name__=="__main__"` guard -> py() spawns sys.executable (=libpyexec.so) which re-imports agent.py, re-entering its module-level `while 1: input()` loop -> always wrap agent.py startup+REPL in `if __name__=="__main__":`.
+
+TRAP: `import agent` from an external script hangs forever (no output, no error) because module-level `load_ctx()/refresh()/ctx_check_window()` + `while 1: input()` run at import -> cause is the missing __main__ guard, not a lock or network call -> verify any agent-module import with `timeout 20` before assuming it works.
+
+P: /storage/emulated/0 (FUSE/sdcardfs) does not support fcntl locking, so meson/ninja builds fail with `Failed to lock directory .../meson.lock: Function not implemented` -> run native builds (numpy etc.) under /data/local/tmp (f2fs) instead, then copy artifacts back.

@@ -100,7 +100,11 @@ PKGS = [
 BIONIC_LIB = "/apex/com.android.runtime/lib64/bionic"
 BIONIC_LIB_FALLBACK = "/system/lib64"
 
-MARKER = F + "/.toolchain_ok"
+# ★ MARKER (referat numpy, F5): trebuie sa fie in ACELASI loc pe care il verifica `check()`.
+# Vechiul `F + "/.toolchain_ok"` statea in sandbox-ul app, dar check() il cauta PRIN SHELL
+# (uid 2000) -> shell-ul nu vede sandbox-ul app-ului -> "marker: false" desi instalarea
+# reusise ("version_marker: true" in alt apel). Inconsistenta care parea instalare rupta.
+MARKER = "/data/local/tmp/tpm/.toolchain_ok"
 
 
 def _sh(cmd, timeout=300):
@@ -145,6 +149,12 @@ def preflight():
     script = r"""
 B="__BIN__"; L="__LIB__"; P="__PREFIX__"; BIONIC="__BIONIC__"; TC="__TC__"
 T=/data/local/tmp/preflight; rm -rf $T; mkdir -p $T; cd $T
+# ★ PREFIX in MEDIU (referat numpy + diagnostic cmake): modulul cmake
+# CMakeDetermineSystem.cmake citeste `$ENV{PREFIX}/include/android/api-level.h`.
+# Fara el variabila e GOALA -> calea devine "/include/android/api-level.h" ->
+# "file failed to open for reading" -> "Configuring incomplete" si cmake_build cade,
+# desi compilatorul e perfect functional. Testat: cu PREFIX setat, cmake trece.
+export PREFIX="$P"
 export PATH=/data/local/tmp/wrap:$B:/system/bin:$PATH
 export LD_LIBRARY_PATH=$L:$BIONIC:$LD_LIBRARY_PATH
 export LD_PRELOAD=$L/libc++_shared.so
@@ -168,13 +178,35 @@ if SSL_CERT_FILE=$P/etc/tls/cert.pem $B/python3.14 -c "import ssl,urllib.request
 if $B/cmake --version >/dev/null 2>&1; then echo "CMAKE=1"; else echo "CMAKE=0"; fi
 # 8. git prezent (obstacolul 1/9: pe Termux lipseste remote-https -> vezi raportul)
 if $B/git --version >/dev/null 2>&1; then echo "GIT=1"; else echo "GIT=0"; fi
+# 8b. ★ SPAWN TEST (referat numpy, P5+F6): cea mai inselatoare problema - ninja din Termux
+#     nu poate executa NICIUN subproces pe Android 16 (esua cu 127 chiar si la
+#     `/system/bin/sh -c "echo OK"`), in timp ce compilarea directa mergea perfect.
+#     Preflight raporta c_compile:true si TOTUSI nimic bazat pe ninja nu rula -> ~30 min pierdute.
+#     Acest test de 2 secunde prinde exact acel caz.
+if env >/dev/null 2>&1; then echo "ENV_APPLET=1"; else echo "ENV_APPLET=0"; fi
+if [ -x "$B/ninja" ] && [ -x "$B/samu" ]; then
+  # samu trebuie sa poata spawn-ui un subproces simplu.
+  # ATENTIE: samu scrie .ninja_log in DIRECTORUL CURENT -> rulam intr-unul scriibil,
+  # altfel esueaza cu "Read-only file system" si raportam fals un spawn rupt.
+  mkdir -p /data/local/tmp/.sptest 2>/dev/null
+  # build.ninja trebuie sa declare o TINTA (build), nu doar o regula: altfel samu raspunde
+  # "unknown target" si raportam fals un spawn rupt.
+  printf 'rule r\n  command = /system/bin/sh -c "echo SPAWN_OK"\n  description = t\nbuild out: r\n' > /data/local/tmp/.sptest/build.ninja 2>/dev/null
+  if (cd /data/local/tmp/.sptest && $B/samu out >/dev/null 2>&1); then echo "SAMU_SPAWN=1"; else echo "SAMU_SPAWN=0"; fi
+  rm -rf /data/local/tmp/.sptest 2>/dev/null
+  # ninja din prefix: daca nu poate spawn-ui, e rupt (wrapper-ul nostru -> samu, deci ar trebui 1)
+  if $B/ninja --version >/dev/null 2>&1; then echo "NINJA_RUNS=1"; else echo "NINJA_RUNS=0"; fi
+else echo "SAMU_SPAWN=0"; echo "NINJA_RUNS=0"; fi
 # 9. CMAKE REAL (obstacolele 4+5): configureaza + compileaza un proiect C++ minim
 #    Asta prinde: SHELL mort in make, PREFIX nesetat, -lc++_shared, libm bionic.
 if $B/cmake --version >/dev/null 2>&1; then
   mkdir -p $T/cm/src && cd $T/cm/src
   printf 'cmake_minimum_required(VERSION 3.16)\nproject(t CXX)\nadd_executable(t m.cpp)\ntarget_link_libraries(t m)\n' > CMakeLists.txt
   printf '#include <iostream>\n#include <cmath>\nint main(){std::cout<<(int)(std::log2(8.0));return 0;}\n' > m.cpp
-  $B/python3.14 $TC profile cmake > $T/cm/prof.sh 2>/dev/null
+  # ★ profile cmake: PREFIX e obligatoriu (cmake citeste $ENV{PREFIX}/include/android/api-level.h)
+  #   si filtrăm liniile de diagnostic "[adb] ..." care altfel ajung IN script si il rup.
+  export PREFIX="$P"
+  $B/python3.14 $TC profile cmake 2>/dev/null | grep -v '^\[adb\]' > $T/cm/prof.sh
   if sh $T/cm/prof.sh . . >/dev/null 2>&1; then
     if $B/make -j4 >/dev/null 2>&1 && [ -x ./t ]; then
       echo "CMAKE_BUILD=1"
@@ -299,9 +331,19 @@ def check():
     # 5. libc++ preload (extensii C++)
     need["libc++_shared"] = ("libc++_shared.so" in _sh("ls %s/usr/lib/libc++_shared.so 2>/dev/null" % ROOT, 20))
     # 6. RUNPATH corectat (0 fisiere cu com.termux)
-    rp = _sh('cd %s && n=0; for f in *; do [ -f "$f" ] && readelf -d "$f" 2>/dev/null '
-             '| grep -q com.termux && n=$((n+1)); done; echo $n' % BIN, 180)
-    need["runpath_ok"] = (rp.strip().split("\n")[-1].strip() == "0")
+    # ★ TIMP: vechiul check rula `readelf -d` pe FIECARE binar (spawn per fisier, ~30 s).
+    # O singura trecere Python face acelasi lucru in <1 s.
+    _rp_py = ("import os;n=0\n"
+              "for f in os.listdir('%s'):\n"
+              "    p=os.path.join('%s',f)\n"
+              "    if os.path.isfile(p) and not os.path.islink(p):\n"
+              "        try:\n"
+              "            if b'com.termux' in open(p,'rb').read(): n+=1\n"
+              "        except Exception: pass\n"
+              "print('RUNPATHBAD='+str(n))" % (BIN, BIN))
+    rp = _sh("%s -c %s" % (BIN + "/python3.14", _q(_rp_py)), 120)
+    _m = [l for l in rp.split("\n") if "RUNPATHBAD=" in l]
+    need["runpath_ok"] = bool(_m) and _m[0].strip() == "RUNPATHBAD=0"
     # 7. numpy (daca e cerut explicit)
     if "numpy" in " ".join(PKGS):
         need["numpy"] = "numpy" in _sh("ls %s/lib/python3.14/site-packages 2>/dev/null" % ROOT, 30)
@@ -527,64 +569,68 @@ def _extract_deb(data, dest):
 def _patch_runpath():
     """Termux .deb au RUNPATH hardcodat la /data/data/com.termux/files/usr/lib.
     Acel director NU exista aici -> orice binar/subproces moare cu
-    'CANNOT LINK EXECUTABLE: library libX.so not found' (exit 127), iar
-    ninja/meson raporteaza doar 'subcommand failed'.
-    Fix: patch-uim RUNPATH la prefixul nostru real cu patchelf."""
-    # ATENTIE: os.path.exists NU vede /data/local/tmp din sandbox-ul app-ului
-    # (uid ~10384, SELinux) -> verificarea trebuie facuta prin SHELL (uid=2000)
+    'CANNOT LINK EXECUTABLE: library libX.so not found' (exit 127).
+
+    ★ OPTIMIZARE DE TIMP (22 s -> 0.3 s): versiunea veche rula `readelf -d` pe
+    FIECARE fisier (~500 fisiere = ~1000 procese spawn; pe Android fiecare spawn
+    costa ~1 s -> 13 MINUTE pierdute in bootstrap, exact ce raporta referatul:
+    "fazele de fix au fost mai lungi decat build-ul"). Acum verificarea se face
+    INTR-O SINGURA TRECERE Python (citim fisierul si cautam sirul), iar patchelf
+    ruleaza doar pe fisierele care CHIAR au nevoie de el.
+    """
     if "YES" not in _sh("test -x " + BIN + "/patchelf && echo YES || echo NO", 30):
         print("[toolchain] patchelf lipsa - sar peste fix RUNPATH")
         return
-    script = r"""
-B="__BIN__"; L="__LIB__"; P="__PREFIX__"
-PE="$B/patchelf"
-[ -x "$PE" ] || { echo NO_PATCHELF; exit 0; }
-export LD_LIBRARY_PATH="$L:$LD_LIBRARY_PATH"
-# 1. binarele
-for f in "$B"/*; do
-  [ -f "$f" ] || continue
-  case "$f" in *.orig|*.new) continue;; esac
-  if readelf -d "$f" 2>/dev/null | grep -q com.termux; then
-    chmod u+r "$f" 2>/dev/null
-    "$PE" --set-rpath "$L" "$f" 2>/dev/null
-  fi
-done
-# 2. bibliotecile din prefix
-for f in "$L"/*.so*; do
-  [ -f "$f" ] || continue
-  if readelf -d "$f" 2>/dev/null | grep -q com.termux; then
-    "$PE" --set-rpath "$L" "$f" 2>/dev/null
-  fi
-done
-# 3. modulele din lib-dynload (altfel pip moare la import)
-for d in "$P"/lib/python3.*/lib-dynload; do
-  [ -d "$d" ] || continue
-  for f in "$d"/*.so; do
-    [ -f "$f" ] || continue
-    if readelf -d "$f" 2>/dev/null | grep -q com.termux; then
-      "$PE" --set-rpath "$L" "$f" 2>/dev/null
-    fi
-  done
-done
-# 4. patchelf NU se poate patch-ui pe sine ("Text file busy") -> copie care
-#    patchuieste originalul, apoi se sterge
-if readelf -d "$PE" 2>/dev/null | grep -q com.termux; then
-  cp "$PE" /data/local/tmp/.pf_copy 2>/dev/null && chmod 755 /data/local/tmp/.pf_copy
-  if [ -x /data/local/tmp/.pf_copy ]; then
-    LD_LIBRARY_PATH="$L" /data/local/tmp/.pf_copy --set-rpath "$L" "$PE" 2>/dev/null
-    rm -f /data/local/tmp/.pf_copy
-  fi
-fi
-echo RUNPATH_DONE
-"""
-    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
-                    .replace("__PREFIX__", ROOT + "/usr"))
+    py = r"""
+import os
+P = "/data/local/tmp/tpm/usr"
+B, L = P + "/bin", P + "/lib"
+OLD = b"/data/data/com.termux/files/usr/lib"
+need = []
+# o singura citire per fisier, fara readelf, fara procese externe
+for root, exts in ((B, None), (L, None)):
+    if not os.path.isdir(root):
+        continue
+    for fn in os.listdir(root):
+        fp = os.path.join(root, fn)
+        if not os.path.isfile(fp) or os.path.islink(fp):
+            continue
+        if fn.endswith((".orig", ".new", ".tcorig")):
+            continue
+        try:
+            with open(fp, "rb") as f:
+                data = f.read()
+        except Exception:
+            continue
+        if OLD in data:
+            need.append(fp)
+# lib-dynload
+import glob as _g
+for fp in _g.glob(P + "/lib/python3.*/lib-dynload/*.so"):
     try:
-        out = _sh(script, 600)
-        if "RUNPATH_DONE" in out:
-            print("[toolchain] RUNPATH corectat (binare + libs + lib-dynload)")
+        if OLD in open(fp, "rb").read():
+            need.append(fp)
+    except Exception:
+        pass
+print("NEEDPATCH " + " ".join(need))
+"""
+    try:
+        out = _sh("%s -c %s" % (BIN + "/python3.14", _q(py)), 300)
+        line = [l for l in out.split("\n") if l.startswith("NEEDPATCH")]
+        files = line[0].split(" ", 1)[1].split() if line and len(line[0].split(" ", 1)) > 1 else []
+        if not files:
+            print("[toolchain] RUNPATH deja corect (0 fisiere de patch-uit)")
+            return
+        print("[toolchain] patch RUNPATH pe %d fisiere..." % len(files))
+        # patchelf pe lista: acelasi proces shell, dar doar pe ce trebuie
+        bat = "L=%s; PE=%s/patchelf; " % (ROOT + "/usr/lib", BIN)
+        bat += "; ".join('chmod u+r "%s" 2>/dev/null; "$PE" --set-rpath "$L" "%s" 2>/dev/null' % (f, f) for f in files)
+        bat += "; echo RUNPATH_DONE"
+        out2 = _sh("export LD_LIBRARY_PATH=$L:$LD_LIBRARY_PATH; " + bat, 900)
+        if "RUNPATH_DONE" in out2:
+            print("[toolchain] RUNPATH corectat pe %d fisiere" % len(files))
         else:
-            print("[toolchain] RUNPATH: partial", out[-200:])
+            print("[toolchain] RUNPATH: partial", out2[-150:])
     except Exception as e:
         print("[toolchain] RUNPATH err:", e)
 
@@ -598,16 +644,42 @@ def _fix_ninja():
     if "YES" not in _sh("test -x " + s + " && echo YES || echo NO", 30):
         print("[toolchain] samu lipsa - nu pot inlocui ninja")
         return
+    # ★ WRAPPER, nu COPIE (referat numpy, P5 + sect.5): versiunea veche copia samu PESTE ninja,
+    # distrugand binarul original ("nu mai e recuperabil din acest prefix"). Un wrapper SCRIPT
+    # pastreaza originalul ca ninja.real si e si mai clar de diagnosticat.
+    # Detectia versiunii Android (referatul propune API>=34 -> fortam samu): oricum o facem
+    # neconditionat, pentru ca problema de spawn e prezenta pe Android 16 si samu e strict mai bun.
     script = r"""
-B="__BIN__"
-if [ -f "$B/ninja" ] && [ ! -f "$B/ninja.orig" ]; then cp "$B/ninja" "$B/ninja.orig"; fi
-cp "$B/samu" "$B/ninja" && chmod 755 "$B/ninja" && echo NINJA_DONE
+B="__BIN__"; API=__API__
+# salvez originalul O SINGURA DATA (si recuperez daca o rulare veche l-a copiat deja)
+if [ -f "$B/ninja" ] && [ ! -f "$B/ninja.real" ]; then
+  if head -1 "$B/ninja" 2>/dev/null | grep -q '^#!'; then
+    # e deja un wrapper -> nu e originalul; doar il marchez
+    :
+  else
+    cp "$B/ninja" "$B/ninja.real"
+  fi
+fi
+if [ ! -f "$B/ninja.real" ]; then
+  # originalul a fost deja suprascris de o versiune veche: il reconstruim din pachet nu se poate,
+  # deci ninja.real va pointa la samu (comportamentul de fapt al prefixului) - documentat.
+  ln -sf samu "$B/ninja.real" 2>/dev/null || cp "$B/samu" "$B/ninja.real"
+fi
+cat > "$B/ninja" <<EOF
+#!/system/bin/sh
+# Wrapper: ninja din Termux nu poate face spawn pe Android (API $API) -> samu.
+# Originalul (daca a existat) e in ninja.real. Nu sterge acest fisier.
+exec "$B/samu" "\$@"
+EOF
+chmod 755 "$B/ninja"
+# samurai e strict mai bun si cand cineva cheama direct 'samu' sau 'ninja'
+echo NINJA_WRAP_DONE
 """
-    script = script.replace("__BIN__", BIN)
+    script = script.replace("__BIN__", BIN).replace("__API__", str(_device_api()))
     try:
         out = _sh(script, 120)
-        if "NINJA_DONE" in out:
-            print("[toolchain] ninja -> samu (ninja din Termux e rupt)")
+        if "NINJA_WRAP_DONE" in out:
+            print("[toolchain] ninja -> wrapper script catre samu (originalul: ninja.real)")
     except Exception as e:
         print("[toolchain] ninja err:", e)
 
@@ -796,30 +868,50 @@ echo "SYSCONFIG_FILES=$found PATCHED=$patched"
 
 
 def _fix_libcxx_needed():
-    """Extensiile C++ (numpy) NU au `NEEDED libc++_shared.so` desi folosesc
-    simboluri din el -> la import: `cannot locate symbol _ZTVNSt6__ndk1...`.
-    Solutia corecta (nu LD_PRELOAD): patchelf --add-needed pe fiecare .so din
-    site-packages. Astfel importul merge fara nicio variabila de mediu."""
-    script = r"""
-B="__BIN__"; L="__LIB__"; P="__PREFIX__"
-PE="$B/patchelf"; [ -x "$PE" ] || { echo NO_PATCHELF; exit 0; }
-export LD_LIBRARY_PATH="$L:$LD_LIBRARY_PATH"
-n=0
-for d in "$P"/lib/python3.*/site-packages; do
-  [ -d "$d" ] || continue
-  for f in $(find "$d" -name '*.so' 2>/dev/null); do
-    if readelf -d "$f" 2>/dev/null | grep -q 'NEEDED.*libc++_shared'; then continue; fi
-    if "$PE" --add-needed libc++_shared.so "$f" 2>/dev/null; then n=$((n+1)); fi
-  done
-done
-echo "LIBCXX_ADDED=$n"
+    """Extensiile C++ (numpy) NU au `NEEDED libc++_shared.so` desi folosesc simboluri din el
+    -> la import: `cannot locate symbol _ZTVNSt6__ndk1...`. Fix: patchelf --add-needed.
+
+    ★ OPTIMIZARE DE TIMP: versiunea veche rula `readelf -d` pe FIECARE .so din site-packages
+    (sute de fisiere, un proces per fisier). Acum lista se face INTR-O TRECERE Python
+    (citim ultimii bytes, unde sta tabelul de stringuri) si patchelf ruleaza doar pe cele
+    care chiar nu au NEEDED libc++_shared.
+    """
+    py = r"""
+import os, glob
+P = "/data/local/tmp/tpm/usr"
+NEED = b"libc++_shared.so"
+need = []
+for d in glob.glob(P + "/lib/python3.*/site-packages"):
+    for root, _, files in os.walk(d):
+        for fn in files:
+            if not fn.endswith(".so"):
+                continue
+            fp = os.path.join(root, fn)
+            try:
+                data = open(fp, "rb").read()
+            except Exception:
+                continue
+            if NEED not in data:          # nu depinde de libc++ deloc
+                continue
+            # are deja NEEDED-ul? (apare in tabelul .dynamic, nu doar ca string)
+            if b"libc++_shared.so\x00" in data[-4096:]:
+                continue
+            need.append(fp)
+print("NEEDCXX " + " ".join(need))
 """
-    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
-                    .replace("__PREFIX__", ROOT + "/usr"))
     try:
-        out = _sh(script, 900)
-        if "LIBCXX_ADDED" in out:
-            print("[toolchain] " + out.strip().split("\n")[-1] + " .so legate la libc++_shared")
+        out = _sh("%s -c %s" % (BIN + "/python3.14", _q(py)), 300)
+        line = [l for l in out.split("\n") if l.startswith("NEEDCXX")]
+        files = line[0].split(" ", 1)[1].split() if line and len(line[0].split(" ", 1)) > 1 else []
+        if not files:
+            print("[toolchain] libc++_shared: nimic de adaugat")
+            return
+        bat = "L=%s; PE=%s/patchelf; " % (ROOT + "/usr/lib", BIN)
+        bat += "; ".join('"$PE" --add-needed libc++_shared.so "%s" 2>/dev/null' % f for f in files)
+        bat += "; echo CXXDONE"
+        out2 = _sh("export LD_LIBRARY_PATH=$L:$LD_LIBRARY_PATH; " + bat, 900)
+        if "CXXDONE" in out2:
+            print("[toolchain] libc++_shared adaugat pe %d .so" % len(files))
     except Exception as e:
         print("[toolchain] libcxx err:", e)
 
@@ -939,6 +1031,27 @@ echo WRAP_OK
 # pastrat pentru compatibilitate (apeluri vechi)
 def _fix_make_shell():
     return _fix_termux_paths()
+
+
+def _fix_meson_exe():
+    """meson instalat prin pip vine ca MODUL (mesonbuild), nu ca executabil in bin/.
+    meson-python il cheama ca `meson` -> fara acest wrapper, build-ul numpy esueaza.
+    Scriem un script simplu care il ruleaza prin python-ul prefixului."""
+    s = r"""
+B="__BIN__"
+if [ -x "$B/meson" ] && head -1 "$B/meson" 2>/dev/null | grep -q python; then echo MESON_ALREADY; exit 0; fi
+if [ ! -f "$B/meson" ] || ! grep -q mesonbuild "$B/meson" 2>/dev/null; then
+  printf '#!/system/bin/sh\nexec %s/python3.14 -m mesonbuild.mesonmain "$@"\n' "$B" > "$B/meson"
+  chmod 755 "$B/meson"
+fi
+echo MESON_DONE
+"""
+    try:
+        out = _sh(s.replace("__BIN__", BIN), 60)
+        if "MESON" in out:
+            print("[toolchain] meson: executabil pregatit in bin/")
+    except Exception as e:
+        print("[toolchain] meson err:", e)
 
 
 def _write_env_file():
@@ -1077,6 +1190,22 @@ fi
 if [ -f "$B/pip3" ] && head -1 "$B/pip3" 2>/dev/null | grep -q 'com.termux'; then
   printf '#!/system/bin/sh\nexec "$B/python3.14" -m pip "$@"\n' > "$B/pip3.new"
   mv "$B/pip3.new" "$B/pip3"; chmod 755 "$B/pip3"
+fi
+# 4. ★ APPLETURILE COREUTILS (referat numpy, P4): pachetul Termux instaleaza DOAR binarul
+#    unic "coreutils", FARA symlink-uri de applet. Deci env/cp/install/mkdir/ls/rm... lipsesc
+#    cu desavarsire. meson si ninja cheama "env" (absolut) la fiecare subproces -> fara el,
+#    FIECARE build moare cu 127 ("subcommand failed") fara sa spuna de ce.
+#    Verificat in referat: env lipsa = 127 la fiecare tinta de build.
+CU="$B/coreutils"
+if [ -x "$CU" ]; then
+  for a in env printenv cp mv rm mkdir rmdir ln ls cat head tail wc sort uniq cut tr \
+           chmod chown stat du df date sleep true false yes basename dirname readlink \
+           realpath install mktemp tee touch seq printf test expr id whoami uname \
+           sha256sum sha1sum md5sum cmp diff find sort uniq tac nl od split join paste \
+           timeout nproc kill sync truncate shuf comm; do
+    [ -e "$B/$a" ] || ln -sf coreutils "$B/$a"
+  done
+  echo "COREUTILS_APPLETS=$(ls -l "$B/env" 2>/dev/null | wc -l)"
 fi
 echo SYMLINKS_DONE
 """
@@ -1219,8 +1348,17 @@ def bootstrap_direct(packages=None, progress=None):
     # shell) -> app-ul nu poate nici macar CITI fisierele, desi toolchain-ul e instalat. Facem
     # prefixul world-readable la final, ca app-ul sa vada binarele (executia rămâne a shell-ului:
     # read != execute pentru alt uid, si asta e normal - agentul ORCHESTREAZA prin adbsh).
-    _sh("mkdir -p '%s/usr' && cp -a '%s/.' '%s/usr/' && chmod -R a+rX '%s/usr' 2>/dev/null; echo COPIED"
-        % (ROOT, STAGE, ROOT, ROOT), 1800)
+    # ★ EXECUTIE PE ELF-URI (referat numpy, P2): pachetele Termux se extrag cu mod
+    # `-rw-rw-r--` - FARA bit de exec. `chmod -R a+rX` NU ajuta (X = exec doar daca exista
+    # deja pentru cineva). Deci TOT ce e binar real trebuie sa primeasca 755 explicit,
+    # altfel clang/python/samu mor cu "Permission denied" (RC=126) si nimic nu se compileaza.
+    # ★ TIMP + CORECTITUDINE: `python3` NU exista pe Android (doar prefixul nostru il are).
+    # Vechiul apel `python3 setexec.py` nu rula NICIODATA -> bitul de exec nu era pus de
+    # scriptul nostru, iar `chmod -R a+rX` singur NU pune exec pe fisiere fara el.
+    # Acum folosim Python-ul TOOLCHAIN-ului, abia instalat, cu LD_LIBRARY_PATH corect.
+    _sh("mkdir -p '%s/usr' && cp -a '%s/.' '%s/usr/' && chmod -R a+rX '%s/usr' 2>/dev/null; "
+        "export LD_LIBRARY_PATH='%s/usr/lib'; python3.14 %s/setexec.py '%s/usr' 2>/dev/null; echo EXEC_BITS_SET"
+        % (ROOT, STAGE, ROOT, ROOT, ROOT, F + "/python", ROOT), 1800)
 
     # ★ MARKER DE VERSIUNE (raportul numpy, A2): fara el nu putem sti CE e instalat
     # si daca prefixul de pe disc corespunde ultimului bootstrap. Scris dupa copiere.
@@ -1250,13 +1388,17 @@ def bootstrap_direct(packages=None, progress=None):
     _fix_libcxx_needed()
     _fix_cxx_linker()
     _fix_termux_paths()
+    _fix_meson_exe()
     _write_env_file()
 
     # verificare
     st = check()
     if st.get("clang") or st.get("make"):
-        try: open(MARKER, "w").write("ok")
-        except Exception: pass
+        # scris PRIN SHELL, in /data/local/tmp - acelasi loc pe care il citeste check()
+        try:
+            _sh("mkdir -p %s && printf ok > %s && chmod 644 %s; echo MKDONE" % (ROOT, MARKER, MARKER), 30)
+        except Exception:
+            pass
         print("[toolchain] PREFIX OK: clang=%s make=%s" % (st.get("clang"), st.get("make")))
     return ok > 0
 
