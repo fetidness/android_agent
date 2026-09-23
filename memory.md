@@ -850,3 +850,23 @@ OK: adb USB pe acest device (Samsung RZGL102X5AT) foloseste portul TCP local 123
 OK: `adb -s <serial> shell rm -rf /data/local/tmp/*` clears toolchain but `adb uninstall` does NOT remove /data/local/tmp or /sdcard dirs -> full reset needs both adb uninstall AND explicit rm of /data/local/tmp and /sdcard/Download, then verify via `ls -A /data/local/tmp | wc -l` returning 0
 
 OK: `adb install -r` on a built debug APK prints "Performing Streamed Install\nSuccess"; verify with `adb -s <serial> shell pm list packages | grep <pkg>` -> confirms package present without opening a GUI
+
+TRAP: `dumpsys window | grep -c UsbDebugging` numara ferestre ISTORICE necuratate, nu dialogul activ -> raporteaza zeci de "dialoguri" false -> pentru a sti ce vede utilizatorul real foloseste `dumpsys window | grep mCurrentFocus` si verifica daca e UsbDebuggingActivity sau app-ul
+
+P: pe Android/adbd, fiecare `Adb().connect()` nou (chiar si in acelasi proces sau din subproces) poate declansa dialogul "Allow USB debugging" -> fix: conexiune singleton la nivel de modul (`adb_client.shared()`) + rularea submodulelor inline (import, nu `subprocess` cu `sys.executable`) + NU inchide socket-ul intre comenzi + SO_KEEPALIVE
+
+DEAD: rularea unui script Python cu `run-as <pkg> ... libpyexec.so script.py` prin adb shell esueaza cu TimeoutError la AUTH adbd deoarece ruleaza ca uid=2000 (shell), nu ca uid-ul app-ului -> pentru testarea codului app-ului trebuie pornit din aplicatie, nu din shell
+
+OK: adb connect/shell via wireless debugging on this machine needs a SINGLE shared transport so the "Allow USB debugging" dialog is shown once -> opening/closing a fresh connection per operation re-triggers the prompt and drops mid-op -> build one persistent adb client reused for all calls (toolchain inline, not subprocess), add TCP keepalive.
+
+P: /home/gab/android/platform-tools/adb -s RZGL102X5AT shell ... -> this is the working adb path/serial on this machine, not the adb on PATH.
+
+OK: adb -s <serial> shell "rm -rf /data/local/tmp/* /data/local/tmp/.[!.]*" -> plain rm -rf /data/local/tmp/* leaves dotfiles -> use the .[!.]* glob to fully clear it for a clean reset.
+
+TRAP: ls -A /data/local/tmp | wc -l returning 0 is the reliable empty-check -> leftover hidden files otherwise give a false clean state.
+
+OK: `git ls-files` in /home/gab/Desktop/agent lists only ~305 tracked files; `du -sh` on untracked dirs (workspace/build 1.7G, poc 152M, samsung_dump 85M, temp 44M, app/*.tar 261M) is how to size reclaimable space -> .gitignore excludes build/, poc/, *.tar, *.apk, logs/, context.json so on-disk vs tracked differ hugely; verify reclaimable = on-disk minus tracked before proposing cleanup.
+
+DEAD: `/reset` on this agent wipes `temp/context.json` to ~803 bytes with NO archive/backup written and `temp/archive/` absent -> conversation history is unrecoverable from disk, only `memory.md` survives -> before any reset, copy `temp/context.json` to a timestamped file yourself; don't trust the agent to keep history.
+
+P: recovering agent session state -> `find /home/gab -maxdepth 4 -name 'context.json*' -newermt <date>` is the only reliable locator; `temp/logs/tool_*.log` holds just the current turn -> check `memory.md` (updated ~1 min before reset) as the real surviving state, not logs.
