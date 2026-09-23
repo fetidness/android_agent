@@ -79,7 +79,33 @@ def ensure_key():
     nl = (c.BN_num_bits(n)+7)//8; el = (c.BN_num_bits(e)+7)//8
     nb = ctypes.create_string_buffer(nl); c.BN_bn2bin(n, nb)
     eb = ctypes.create_string_buffer(el); c.BN_bn2bin(e, eb)
-    blob = struct.pack(">I", nl) + nb.raw[:nl] + struct.pack(">I", el) + eb.raw[:el]
+    # ★ FORMATUL ANDROID_PUBKEY (AOSP), verificat pe cheia care MERGE (524 B):
+    #   [0:4]     u32 n0inv    (inversul lui -modulus^-1 mod 2^32 ... in practica 64)
+    #   [4:260]   u8  modulus[256]  (LITTLE-endian)
+    #   [260:516] u8  rr[256]       ((2^2048)^2 mod modulus, LITTLE-endian)
+    #   [516:520] u32 (parte din exponent, 4 B)
+    #   [520:524] u32 exponent = 65537 (LE)
+    # Total EXACT 524 bytes; adbd verifica b64_pton(...) == 524.
+    import ctypes as _ct
+    S("BN_bn2lebinpad", [_ct.c_void_p, _ct.c_char_p, _ct.c_int], _ct.c_int)
+    S("BN_bn2binpad", [_ct.c_void_p, _ct.c_char_p, _ct.c_int], _ct.c_int)
+    N = 2048 // 8      # 256 bytes
+    def _lebn(bn, size=N):
+        buf = _ct.create_string_buffer(size)
+        if c.BN_bn2lebinpad(bn, buf, size) == size:
+            return buf.raw[:size]
+        b2 = _ct.create_string_buffer(size)
+        c.BN_bn2binpad(bn, b2, size)
+        return b2.raw[:size][::-1]
+    mod_le = _lebn(n)
+    m_int = int.from_bytes(mod_le, "little")
+    m0 = m_int & 0xFFFFFFFF
+    if m0 & 1 == 0: m0 |= 1
+    n0inv = (2**32 - pow(m0, -1, 2**32)) % 2**32
+    rr_int = pow(2, 2048 * 2, m_int)
+    rr_le = rr_int.to_bytes(N, "little")
+    exp_le = _lebn(e)                    # 256 bytes, 65537 la inceput
+    blob = (struct.pack("<I", n0inv) + mod_le + rr_le + exp_le[0:4] + exp_le[0:4])
     open(LPUBC,"w").write(base64.b64encode(blob).decode())
     # ★ salvez in /sdcard (persistent!)
     try:

@@ -816,3 +816,21 @@ TRAP: Android WebView terminal app chat is single-flight -> typing a new message
 OK: diagnose a broken agent context from outside by `adb exec-out cat /sdcard/Download/Agent/context.json` and printing `role` + len(tool_calls) + tool_call_id per msg -> an `assistant` with tool_calls not immediately followed by one `tool` per id is the offending msg -> repair in place and `adb push` it back to avoid forcing a /reset that loses all history.
 
 TRAP: inserting into a single-line Python tool-list T=[...] in agent.py with a regex ending at 'required":["cmd"]}}},' wrongly matches the FIRST occurrence range and splices the new tool into the MIDDLE of the adbsh description string -> SyntaxError invalid syntax; fix: verify the splice offset with src.index on the exact closing brace after the target tool name, or insert at a newline-delimited list boundary, then always run py_compile before writing.
+
+P: pe Android (Samsung RZGL102X5AT) NU exista python3 deloc in shell (/system/bin/sh: python3: inaccessible or not found) -> nu pot testa scripturi Python direct pe device; testez logica pe laptop cu stub-uri in loc de subprocess, sau o simulez in pur shell sh.
+
+P: la inserarea unui tool nou in lista JSON `T` din agent.py, lipirea unui fragment se termina frecvent cu `}}},,` (virgula dubla) -> py_compile da eroare; dupa fiecare insertie rulez py_compile si repar `,,` inainte de a continua.
+
+P: verificarea ca un proces ruleaza in fundal pe Android se face cu `test -d /proc/$PID` sau citind /proc/$PID/stat (prinde si zombie), NU cu `ps` (output trunchiat/inconsistent pe device) -> asa functioneaza actiunea `status` a tool-ului bg.
+
+OK: adb reset complet pe device S=RZGL102X5AT -> `rm -rf /data/local/tmp/*` + `rm -rf /sdcard/Download/Agent` + `adb install -r app-debug.apk` -> verifică cu `ls -A /data/local/tmp | wc -l` = 0 și `pm list packages | grep sys32` ca să confirmi starea curată înainte de test.
+
+P: adb path pe această mașină -> /home/gab/android/platform-tools/adb; APK debug la /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk.
+
+TRAP: adb shell logcat grep after a failed adb connect is empty because logcat -d -t<N> shows the newest N lines; when no adbd error was logged in that window you get only your own command line -> drop -t and grep with a wider window (e.g. logcat -d | grep -iE 'adbd' | tail) or clear first with logcat -c before triggering.
+
+OK: on this machine ADB_KEY wire format for adbd is little-endian struct.pack('<I',256)+modulus+struct.pack('<I',3)+b'\x01\x00\x01' -> base64 'AAEAALZ+...' (NOT 'AAABAN' which is the keystore format, big-endian 0x00010000) -> use '<I' when generating the pubkey.
+
+TRAP: adbd on this Samsung/Android16 rejects repeated AUTH_RSAPUBLICKEY connections with 'adbd_auth: prompt currently pending, skipping' (a stuck Allow-USB-debugging dialog) and then hangs the client socket at ESTABLISHED with Send-Q>0 -> only a reboot (or physical revoke+dialog) clears it; adb revoke + kill-server + tcpip toggle do NOT.
+
+DEAD: running /data/data/<pkg>/files/python/*.py as shell (uid 2000) on this device - no python3 binary on PATH and the deleted toolchain at /data/local/tmp/tpm/usr/bin/python3 is gone -> test app code only via run-as <pkg> with the libpyexec.so loader.

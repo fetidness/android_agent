@@ -1492,7 +1492,25 @@ def run_adbsh_tool(cmd, timeout=20):
                                     "export PATH=/data/local/tmp/wrap:$PATH; ") + cmd
                 except Exception:
                     pass
-                return _ADBCONN.shell(_wrapped, timeout=min(int(timeout),60))
+                # ★ FIX: NU limita la 60s - bootstrap/build-urile depasesc lejer
+                # (bug real: min(int(timeout),60) facea ca ORICE comanda lunga sa
+                #  expire garantat -> agentul credea ca adbsh e mort)
+                _out = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
+                # daca a iesit gol/timeout, verificam sanatatea sesiunii si reconectam o data
+                if ("depasit" in _out and "procesul poate continua" in _out) and not _out.strip().startswith("["):
+                    pass
+                if _out.strip().startswith("[adb] comanda a depasit") or _out.strip() == "":
+                    try:
+                        if not _ADBCONN.ping():
+                            try: _ADBCONN.close()
+                            except Exception: pass
+                            _ADBCONN = _ADBCLI.Adb(); _ADBCONN.connect()
+                            _out2 = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
+                            if _out2.strip():
+                                _out = _out2
+                    except Exception:
+                        pass
+                return _out
             finally:
                 _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
         except Exception as e:
