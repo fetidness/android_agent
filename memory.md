@@ -870,3 +870,23 @@ OK: `git ls-files` in /home/gab/Desktop/agent lists only ~305 tracked files; `du
 DEAD: `/reset` on this agent wipes `temp/context.json` to ~803 bytes with NO archive/backup written and `temp/archive/` absent -> conversation history is unrecoverable from disk, only `memory.md` survives -> before any reset, copy `temp/context.json` to a timestamped file yourself; don't trust the agent to keep history.
 
 P: recovering agent session state -> `find /home/gab -maxdepth 4 -name 'context.json*' -newermt <date>` is the only reliable locator; `temp/logs/tool_*.log` holds just the current turn -> check `memory.md` (updated ~1 min before reset) as the real surviving state, not logs.
+
+P: /home/gab/Desktop/agent is a git repo with remote origin github.com:fetidness/android_agent.git on master; git push works non-interactively (SSH key set up) -> verify sync with `git status -sb` (shows `## master...origin/master` with no ahead/behind) before/after pushes here
+
+TRAP: git rename detection only surfaces after `git add -A`; raw `git status --short` shows ` D old` + `?? new` (looks like delete+untracked) -> always git add first, then commit, so history records R (rename) not delete+add
+
+OK: write commits with `git commit -F -` fed a message via stdin (python subprocess or heredoc) when the message contains backticks/quotes -> avoids shell interpretation of backticks inside -m "...
+
+PREVENT: repo docs live in root readme.md (75KB, the Android agent guide); workspace/*.sh old emulator scripts were deleted, so don't reference workspace/start_emulator*.sh or GHID_UTILIZARE_AGENT_ANDROID.md as existing files
+
+OK: `android`/`ui` tools are NOT available in this desktop shell - I ran `bash` on /home/gab/Desktop/agent and could read files fine, but tool names like `adbsh`/`ui` are device-side only -> on desktop always use `read`/`bash`/`python` to inspect the agent repo, never expect agent-internal tools.
+
+OK: readme.md here is 1516 lines / 75KB and shell `sed -n '115,190p'` returned empty (pager-substitution oddity) while `sed -n '115,200p'` worked -> when slicing this repo's readme use explicit non-overlapping ranges or python line iteration, verify non-empty output before trusting a slice.
+
+TRAP: adb devices returns empty list "List of devices attached" (not an error) when phone not connected -> build succeeds but install fails silently later -> check `adb devices -l` and look for a serial line, not just exit status, before running build_app.sh
+
+TRAP: Android asset re-extraction marker is `File(filesDir, ".assets_v81")` hardcoded in MainActivity.kt:554 with `if (stamp.exists() && dest.exists()) return` -> editing assets/python/* does NOT reach device unless the version number is incremented -> bump .assets_vNN before every assets edit then rebuild
+
+TRAP: grep pe un readme mare pentru a-i inventaria secțiunile dă rezultate înșelător de sărace când folosești doar `grep -n -i` pe cuvinte-cheie -> pierzi secțiuni întregi (EXISTA dar nu conțin termenul căutat) -> inventariază structura cu python: citește fișierul, `re.match(r'^#{1,4}\s', l)` pe fiecare linie și printează numărul liniei + heading-ul, apoi inspectează intervalele relevante cu slice pe listă.
+
+OK: pentru a verifica dacă o afirmație din documentație e stale, nu te încrede în readme -> caută artefactul real pe disc cu `grep -rn`/`ls`/`find` (ex. `env.sh` sau calea de build) și compară cu ce zice textul.
