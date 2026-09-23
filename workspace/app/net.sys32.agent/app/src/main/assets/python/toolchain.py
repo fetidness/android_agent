@@ -11,6 +11,8 @@ Folosire (agentul il cheama automat):
   python toolchain.py env       -> exporta variabilele de mediu
 """
 
+import json
+
 # ---------------------------------------------------------------------------
 # LICENTE / LEGAL
 # ---------------------------------------------------------------------------
@@ -33,7 +35,8 @@ Folosire (agentul il cheama automat):
 # Trebuie sa ruleze INAINTE de orice import de lzma/gzip/bz2/tarfile.
 # ---------------------------------------------------------------------------
 def _ensure_compression():
-    import os, sys
+    import os
+    import sys
     if os.environ.get("_TC_FIXED"):
         return
     os.environ["_TC_FIXED"] = "1"
@@ -126,6 +129,73 @@ def have(binary):
     """Verifica prin shell (uid=2000) - app-ul NU vede /data/local/tmp."""
     r = _sh("test -x %s/%s && echo YES || echo NO" % (BIN, binary), 20)
     return "YES" in r
+
+
+def preflight():
+    """R2 + R4 (din raportul llama.cpp): PRE-FLIGHT CHECK inainte de build.
+
+    Raportul noteaza: "Nu am construit un test minim (un program C++ de 3 linii)
+    inainte de a lansa compilarea completa de 10 minute. Un test de acest fel ar
+    fi expus ambele probleme de linkare in 10 secunde."
+
+    Rulare: 10 secunde. Prinde: target API, libc++ nelegat, libm stub,
+    PREFIX lipsa, make SHELL, cmake config.
+    """
+    api = _device_api()
+    r = {"api": api}
+    script = r"""
+B="__BIN__"; L="__LIB__"; P="__PREFIX__"; BIONIC="__BIONIC__"; TC="__TC__"
+T=/data/local/tmp/preflight; rm -rf $T; mkdir -p $T; cd $T
+export PATH=/data/local/tmp/wrap:$B:/system/bin:$PATH
+export LD_LIBRARY_PATH=$L:$BIONIC:$LD_LIBRARY_PATH
+export LD_PRELOAD=$L/libc++_shared.so
+export TMPDIR=/data/local/tmp/tmp; mkdir -p $TMPDIR
+# 1. C simplu (target corect)
+printf '#include <stdio.h>\nint main(void){printf("C_OK");return 0;}\n' > c.c
+if $B/clang --target=aarch64-linux-android__API__ c.c -o c.bin >/dev/null 2>&1; then echo "C_COMPILE=1"; else echo "C_COMPILE=0"; fi
+# 2. C++ cu libc++ + STL (obstacolul 6)
+printf '#include <iostream>\n#include <string>\nint main(){std::string s="CXX_OK";std::cout<<s;return 0;}\n' > x.cpp
+if $B/clang++ --target=aarch64-linux-android__API__ x.cpp -o x.bin -L$L -L$BIONIC -lc++_shared -Wl,-rpath,$L >/dev/null 2>&1; then echo "CXX_COMPILE=1"; else echo "CXX_COMPILE=0"; fi
+# 3. functii matematice (obstacolul 7 - libm stub)
+printf '#include <math.h>\n#include <stdio.h>\nint main(void){printf("%%f",(double)(log2f(8.f)+expf(0.f)));return 0;}\n' > m.c
+if $B/clang --target=aarch64-linux-android__API__ m.c -o m.bin -L$BIONIC -lm >/dev/null 2>&1; then echo "MATH_LINK=1"; else echo "MATH_LINK=0"; fi
+# 4. PREFIX (obstacolul 5)
+if [ -f "$P/include/android/api-level.h" ]; then echo "PREFIX_HDR=1"; else echo "PREFIX_HDR=0"; fi
+# 5. make SHELL corect (obstacolul 4)
+if make -p -f /dev/null 2>/dev/null | grep -q "SHELL = /system/bin/sh"; then echo "MAKE_SHELL=1"; else echo "MAKE_SHELL=0"; fi
+# 6. python + SSL (obstacolul 3)
+if SSL_CERT_FILE=$P/etc/tls/cert.pem $B/python3.14 -c "import ssl,urllib.request;urllib.request.urlopen('https://pypi.org',timeout=15)" >/dev/null 2>&1; then echo "SSL=1"; else echo "SSL=0"; fi
+# 7. cmake prezent
+if $B/cmake --version >/dev/null 2>&1; then echo "CMAKE=1"; else echo "CMAKE=0"; fi
+# 8. git prezent (obstacolul 1/9: pe Termux lipseste remote-https -> vezi raportul)
+if $B/git --version >/dev/null 2>&1; then echo "GIT=1"; else echo "GIT=0"; fi
+# 9. CMAKE REAL (obstacolele 4+5): configureaza + compileaza un proiect C++ minim
+#    Asta prinde: SHELL mort in make, PREFIX nesetat, -lc++_shared, libm bionic.
+if $B/cmake --version >/dev/null 2>&1; then
+  mkdir -p $T/cm/src && cd $T/cm/src
+  printf 'cmake_minimum_required(VERSION 3.16)\nproject(t CXX)\nadd_executable(t m.cpp)\ntarget_link_libraries(t m)\n' > CMakeLists.txt
+  printf '#include <iostream>\n#include <cmath>\nint main(){std::cout<<(int)(std::log2(8.0));return 0;}\n' > m.cpp
+  $B/python3.14 $TC profile cmake > $T/cm/prof.sh 2>/dev/null
+  if sh $T/cm/prof.sh . . >/dev/null 2>&1; then
+    if $B/make -j4 >/dev/null 2>&1 && [ -x ./t ]; then
+      echo "CMAKE_BUILD=1"
+    else echo "CMAKE_BUILD=0"; fi
+  else echo "CMAKE_BUILD=0"; fi
+else echo "CMAKE_BUILD=0"; fi
+rm -rf $T
+"""
+    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
+                    .replace("__PREFIX__", ROOT + "/usr").replace("__API__", str(api))
+                    .replace("__BIONIC__", BIONIC_LIB).replace("__TC__", os.path.join(os.path.dirname(os.path.abspath(__file__)), "toolchain.py")))
+    try:
+        out = _sh(script, 240)
+        for line in out.split("\n"):
+            if "=" in line and line.split("=")[0].strip().isupper():
+                k, v = line.split("=", 1)
+                r[k.strip().lower()] = (v.strip() == "1")
+    except Exception as e:
+        r["error"] = str(e)[:120]
+    return r
 
 
 def check():
@@ -511,6 +581,11 @@ echo WRAPPERS_DONE
         print("[toolchain] wrappers err:", e)
 
 
+def _q(s):
+    """Quoting sigur pentru shell (single-quote cu escape)."""
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
 def _device_api():
     """API-ul real al telefonului (36 = Android 16).
     Incercam 3 cai; daca toate esueaza folosim 36 (Android 16), pentru ca un
@@ -684,6 +759,174 @@ echo "LIBCXX_ADDED=$n"
         print("[toolchain] libcxx err:", e)
 
 
+def _fix_cxx_linker():
+    """Obstacol 6 (llama.cpp): `-stdlib=libc++` NU e suficient pentru clang++ pe
+    Android - linkerul nu gaseste libc++_shared.so si da
+    "undefined symbol: std::__ndk1::cout".
+
+    Fix: wrapper-e clang/clang++ in /data/local/tmp/wrap care adauga AUTOMAT
+    --target, -L<prefix>/lib, -L bionic si -lc++_shared. Astfel orice build
+    (cmake, make, meson, scripturi) linkeaza corect fara flaguri speciale.
+    """
+    api = _device_api()
+    script = r"""
+B="__BIN__"; L="__LIB__"; BIONIC="__BIONIC__"; API=__API__; W="/data/local/tmp/wrap"
+mkdir -p "$W" 2>/dev/null
+for tool in clang clang++; do
+  cat > "$W/$tool" <<EOF
+#!/system/bin/sh
+export LD_LIBRARY_PATH=$L:$BIONIC:\$LD_LIBRARY_PATH
+exec $B/$tool --target=aarch64-linux-android$API -L$L -L$BIONIC -Wl,-rpath,$L -lc++_shared "\$@"
+EOF
+  chmod 755 "$W/$tool"
+done
+# si cc/c++/gcc/g++ -> aceleasi wrappere
+for tool in cc c++ gcc g++; do
+  case "$tool" in c++|g++) base="clang++" ;; *) base="clang" ;; esac
+  cat > "$W/$tool" <<EOF
+#!/system/bin/sh
+exec $W/$base "\$@"
+EOF
+  chmod 755 "$W/$tool"
+done
+echo CXXWRAP_OK
+"""
+    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
+                    .replace("__BIONIC__", BIONIC_LIB).replace("__API__", str(api)))
+    try:
+        out = _sh(script, 90)
+        if "CXXWRAP_OK" in out:
+            print("[toolchain] wrappere clang/clang++ (auto -lc++_shared -L bionic) in /data/local/tmp/wrap")
+    except Exception as e:
+        print("[toolchain] cxx wrapper err:", e)
+
+
+def _fix_termux_paths():
+    """Obstacolele 4+5 (llama.cpp): binarele Termux (make, cmake) au cai
+    ABSOLUTE hardcodate catre /data/data/com.termux/files/usr - inclusiv
+    SHELL = /data/data/com.termux/files/usr/bin/sh (mort).
+
+    Consecinta: cmake scrie acea cale in build.make, iar la build da
+    "make: /data/data/com.termux/files/usr/bin/sh: No such file or directory"
+    -> "The C++ compiler is not able to compile a simple test program".
+
+    Fix: inlocuim sirurile in BINARELE cmake/make (in aceasta ordine: intai
+    caile lungi, apoi prefixul scurt; padding cu NUL ca sa pastram lungimea
+    si offseturile ELF). NU patch-uim libpython.so/libLLVM.so: se corup.
+    """
+    py = r"""
+import os
+P = os.environ.get("TC_PREFIX", "/data/local/tmp/tpm/usr")
+# ORDINE CRITICA: sirurile lungi intai, altfel "/usr" din mijloc ramane orfan
+PAIRS = [
+    (b"/data/data/com.termux/files/usr/bin/sh",   b"/system/bin/sh"),
+    (b"/data/data/com.termux/files/usr/bin/bash", b"/system/bin/sh"),
+    (b"/data/data/com.termux/files/usr",          b"/data/local/tmp/tpm/usr"),
+]
+n = 0
+for name in ("cmake", "make", "ctest", "cpack"):
+    f = P + "/bin/" + name
+    if not os.path.exists(f):
+        continue
+    d = open(f, "rb").read()
+    if not any(o in d for o, _ in PAIRS):
+        continue
+    bak = f + ".tcorig"
+    if not os.path.exists(bak):
+        open(bak, "wb").write(d)
+    for OLD, NEWP in PAIRS:
+        NEW = NEWP + b"\x00" * (len(OLD) - len(NEWP))
+        d = d.replace(OLD, NEW)
+    open(f, "wb").write(d)
+    os.chmod(f, 0o755)          # scrierea pierde bitul de exec
+    n += 1
+print("TERMUXPATCH", n)
+"""
+    try:
+        r = _sh("%s -c %s" % (BIN + "/python3.14", _q(py)), 300)
+        if "TERMUXPATCH" in r:
+            print("[toolchain] cai Termux corectate in binare: " + r.strip().split("\n")[-1])
+    except Exception as e:
+        print("[toolchain] termux paths err:", e)
+    # wrapper make in PATH (suplimentar, pentru apelurile fara cale absoluta)
+    w = r"""
+B="__BIN__"; W="/data/local/tmp/wrap"
+mkdir -p "$W" 2>/dev/null
+cat > "$W/make" <<EOF
+#!/system/bin/sh
+exec $B/make SHELL=/system/bin/sh "\$@"
+EOF
+chmod 755 "$W/make"
+echo WRAP_OK
+"""
+    try:
+        _sh(w.replace("__BIN__", BIN), 60)
+    except Exception:
+        pass
+
+
+# pastrat pentru compatibilitate (apeluri vechi)
+def _fix_make_shell():
+    return _fix_termux_paths()
+
+
+def _write_env_file():
+    """R1 (din raportul llama.cpp): scrie un fisier de mediu PERSISTENT.
+
+    PREFIX, PATH, LD_LIBRARY_PATH, SSL_CERT_FILE, TMPDIR, HOME trebuiau setate
+    manual la fiecare apel; daca lipsea unul, build-ul esua si se pierdeau
+    minute. Fisierul e sursat automat de `adbsh` si de tool-ul toolchain.
+    """
+    api = _device_api()
+    v = {
+        "P": ROOT + "/usr",
+        "L": ROOT + "/usr/lib",
+        "B": BIONIC_LIB,
+        "F": F,
+        "api": api,
+    }
+    c = (
+        "# Generat automat de toolchain.py - mediu complet de compilare\n"
+        "export PREFIX={P}\n"
+        "export TERMUX_PREFIX={P}\n"
+        "export PATH=/data/local/tmp/wrap:{P}/bin:/system/bin:/system/xbin:$PATH\n"
+        "export LD_LIBRARY_PATH={L}:{B}:$LD_LIBRARY_PATH\n"
+        "unset LD_PRELOAD\n"
+        "export SSL_CERT_FILE={P}/etc/tls/cert.pem\n"
+        "export REQUESTS_CA_BUNDLE=$SSL_CERT_FILE\n"
+        "export CURL_CA_BUNDLE=$SSL_CERT_FILE\n"
+        "export CC={P}/bin/clang\n"
+        "export CXX={P}/bin/clang++\n"
+        "export AR={P}/bin/ar\n"
+        "export RANLIB={P}/bin/ranlib\n"
+        "export NM={P}/bin/nm\n"
+        "export STRIP={P}/bin/strip\n"
+        "export LD={P}/bin/ld\n"
+        "export MAKE={P}/bin/make\n"
+        "export CMAKE={P}/bin/cmake\n"
+        "export CFLAGS=\"--target=aarch64-linux-android{api} -I{P}/include\"\n"
+        "export CXXFLAGS=\"--target=aarch64-linux-android{api} -I{P}/include -stdlib=libc++\"\n"
+        "export LDFLAGS=\"--target=aarch64-linux-android{api} -L{L} -L{B} -Wl,-rpath,{L} -lc++_shared\"\n"
+        "export PKG_CONFIG_PATH={P}/lib/pkgconfig:{P}/share/pkgconfig\n"
+        "export TMPDIR=/data/local/tmp/tmp\n"
+        "export HOME={F}/home\n"
+        "export PIP_CACHE_DIR=$HOME/.cache/pip\n"
+        "export CMAKE_SYSTEM_VERSION={api}\n"
+        # make -j>1 foloseste un fifo jobserver in TMPDIR, blocat de SELinux
+        # ("jobserver mkfifo: Permission denied") -> dezactivam jobserver-ul
+        "export MAKEFLAGS=--no-print-directory\n"
+        "export MFLAGS=\n"
+    ).format(**v)
+    script = ("mkdir -p /data/local/tmp; cat > %s/env.sh <<'ENVEOF'\n%s\nENVEOF\n"
+              "chmod 644 %s/env.sh; echo ENVFILE_OK") % (ROOT, c, ROOT)
+    try:
+        out = _sh(script, 60)
+        if "ENVFILE_OK" in out:
+            print("[toolchain] mediu persistent scris: %s/env.sh" % ROOT)
+    except Exception as e:
+        print("[toolchain] env.sh err:", e)
+
+
 def _fix_ca_bundle():
     """Python din Termux caută CA in /data/data/com.termux/files/usr/etc/tls/cert.pem
     (inexistent) -> orice HTTPS (pip!) moare cu CERTIFICATE_VERIFY_FAILED.
@@ -775,12 +1018,76 @@ echo SYMLINKS_DONE
         print("[toolchain] symlinks err:", e)
 
 
+# R3 + R4b (raport llama.cpp): profile de build PREFABRICATE, cu TOATE flagurile
+# intr-un singur loc (libc++, libm bionic, target API, rpath). Raportul noteaza:
+# "combina flagurile corecte intr-un singur loc, nu le descoperi la fiecare build".
+BUILD_PROFILES = {
+    # ATENTIE: flagurile sunt separate prin ";" (nu spatiu) pentru a supravietui
+    # la `cmake . $(toolchain profile cmake)` fara quoting special
+    # ATENTIE: elemente separate prin ";" pentru a supravietui la
+    # `cmake . $(toolchain profile cmake)` fara quoting special
+    "cmake_args": [
+        "-DCMAKE_C_COMPILER={bin}/clang",
+        "-DCMAKE_CXX_COMPILER={bin}/clang++",
+        "-DCMAKE_SYSTEM_NAME=Android",
+        "-DCMAKE_SYSTEM_VERSION={api}",
+        "-DCMAKE_ANDROID_ARCH_ABI=arm64-v8a",
+        '-DCMAKE_C_FLAGS=--target=aarch64-linux-android{api} -I{prefix}/include',
+        '-DCMAKE_CXX_FLAGS=--target=aarch64-linux-android{api} -I{prefix}/include -stdlib=libc++',
+        '-DCMAKE_EXE_LINKER_FLAGS=-L{prefix}/lib -L{bionic} -Wl,-rpath,{prefix}/lib -lc++_shared',
+        '-DCMAKE_SHARED_LINKER_FLAGS=-L{prefix}/lib -L{bionic} -Wl,-rpath,{prefix}/lib -lc++_shared',
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PREFIX_PATH={prefix}",
+        "-DCMAKE_INSTALL_PREFIX={prefix}",
+    ],
+    "cflags": "--target=aarch64-linux-android{api} -I{prefix}/include",
+    "cxxflags": "--target=aarch64-linux-android{api} -I{prefix}/include -stdlib=libc++",
+    "ldflags": ("--target=aarch64-linux-android{api} -L{prefix}/lib -L{bionic} "
+                "-Wl,-rpath,{prefix}/lib -lc++_shared"),
+    "python_env": {
+        "PREFIX": "{prefix}", "SSL_CERT_FILE": "{prefix}/etc/tls/cert.pem",
+        "LD_PRELOAD": "{prefix}/lib/libc++_shared.so",
+    },
+}
+
+
+def profile(name="cmake"):
+    """Flaguri/scripturi pregatite pentru un build (vezi BUILD_PROFILES).
+
+    name="cmake"    -> SCRIPT shell gata de rulat: `sh cmake_prof.sh <srcdir>`
+    name="cflags"/"cxxflags"/"ldflags" -> string de flaguri
+    name="python_env" -> dict de variabile pentru pip/python
+    """
+    api = _device_api()
+    fmt = dict(bin=BIN, api=api, prefix=ROOT + "/usr", bionic=BIONIC_LIB, root=ROOT)
+    if name == "cmake":
+        args = [x.format(**fmt) for x in BUILD_PROFILES["cmake_args"]]
+        # script cu fiecare argument intr-un tablou (quoting corect garantat)
+        lines = ["#!/system/bin/sh", "# Profil cmake generat de toolchain.py",
+                 "# Folosire: sh cmake_prof.sh <dir_sursa> [dir_build]", 'SRC="${1:-.}"',
+                 'BUILD="${2:-.}"',
+                 'SRC="$(cd "$SRC" && pwd)"',          # absolut INAINTE de cd
+                 'mkdir -p "$BUILD"; BUILD="$(cd "$BUILD" && pwd)"; cd "$BUILD"',
+                 "exec cmake \"$SRC\" \\"]
+        for k, a in enumerate(args):
+            tail = "" if k == len(args) - 1 else " \\"
+            lines.append("  '" + a.replace("'", "'\\''") + "'" + tail)
+        return "\n".join(lines) + "\n"
+    val = BUILD_PROFILES.get(name)
+    if isinstance(val, str):
+        return val.format(**fmt)
+    if isinstance(val, dict):
+        return {k: v.format(**fmt) for k, v in val.items()}
+    return val
+
+
 def _prepare_dirs():
     """Creeaza directoarele de lucru (TMPDIR, HOME, cache pip).
     pip/meson au nevoie de un HOME si TMPDIR scriibile; fara ele: erori obscure."""
     script = r"""
 mkdir -p /data/local/tmp/tmp __HOME__ __HOME__/.cache/pip 2>/dev/null
 chmod 777 /data/local/tmp/tmp 2>/dev/null
+chmod 777 /data/local/tmp 2>/dev/null
 echo DIRS_OK
 """
     script = script.replace("__HOME__", F + "/home")
@@ -857,6 +1164,9 @@ def bootstrap_direct(packages=None, progress=None):
     _fix_sysconfig()
     _fix_ca_bundle()
     _fix_libcxx_needed()
+    _fix_cxx_linker()
+    _fix_termux_paths()
+    _write_env_file()
 
     # verificare
     st = check()
@@ -888,7 +1198,8 @@ def env_vars():
     except Exception:
         pass
     return {
-        "PATH": (BIN + ":/system/bin:/system/xbin:" + F + "/python:"
+        # /data/local/tmp/wrap PRIMUL: contine wrapper-e (make cu SHELL corect)
+        "PATH": ("/data/local/tmp/wrap:" + BIN + ":/system/bin:/system/xbin:" + F + "/python:"
                  + os.environ.get("PATH", "")),
         "PREFIX": ROOT + "/usr",
         "TERMUX_PREFIX": ROOT + "/usr",
@@ -954,6 +1265,10 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
     if cmd == "check":
         print(json.dumps(check(), indent=2))
+    elif cmd == "preflight":
+        print(json.dumps(preflight(), indent=2))
+    elif cmd == "profile":
+        print(profile(sys.argv[2] if len(sys.argv) > 2 else "cmake"))
     elif cmd == "install":
         bootstrap_direct()
     elif cmd == "install_tpm":
@@ -963,3 +1278,13 @@ if __name__ == "__main__":
     elif cmd == "env":
         for k, v in env_vars().items():
             print(f'export {k}="{v}"')
+    elif cmd == "env-file":
+        _write_env_file()
+        print("fisier: %s/env.sh" % ROOT)
+    elif cmd == "fix":
+        # re-aplica TOATE fixurile (util dupa ce agentul reinstaleaza pachete)
+        _prepare_dirs(); _patch_runpath(); _fix_ninja(); _fix_cc_wrappers()
+        _fix_symlinks(); _fix_wrappers_shebang(); _fix_sysconfig()
+        _fix_ca_bundle(); _fix_libcxx_needed(); _fix_make_shell()
+        _write_env_file()
+        print(json.dumps(preflight(), indent=2))

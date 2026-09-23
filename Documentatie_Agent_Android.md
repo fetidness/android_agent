@@ -1346,3 +1346,59 @@ scrise singur in memory.md.
 - `patchelf` nu se poate patch-ui pe sine (Text file busy) → copie.
 - patch pe 200+ fisiere intr-o bucla poate da segfault la final, dar munca se face:
   verifica REZULTATUL (readelf), nu exit code-ul.
+
+
+---
+
+## Etapa 34 - OPTIMIZARE dupa raportul llama.cpp (pre-flight + profiluri de build)
+
+**Context:** agentul a compilat llama.cpp de la 0 (REUSIT, ~50 min, inferenta
+functionala) dar a lovit **9 obstacole**; a scris singur raportul
+`RAPORT_COMPILARE_llama.cpp.md` (in workspace si in repo) cu clasificarea
+fiecarei probleme: necesara / evitabila, cu cost in apeluri si fix propus.
+
+### Obstacolele raportate si fixurile aplicate
+
+| # | Obstacol | Cauza | Fix implementat |
+|---|----------|-------|-----------------|
+| 1 | `git` fara `remote-https` | pachetul Termux e incomplet | documentat; `git` local merge |
+| 2 | `curl` din /system/bin e rupt | legat de libcrypto incompatibil | regula: foloseste `python3 urllib` |
+| 3 | `CERTIFICATE_VERIFY_FAILED` | python nu gaseste CA | `SSL_CERT_FILE` in `env_vars()` + `env.sh` (**deja**) |
+| 4 | `make: /data/.../termux/sh: No such file` (cmake) | make are **SHELL hardcodat** la calea Termux | `_fix_termux_paths()` patch binarul make |
+| 5 | `cmake` nu gaseste `api-level.h` | `PREFIX` nesetat | `PREFIX` in `env.sh` + profil cmake |
+| 6 | `undefined symbol: std::__ndk1::cout` | `-stdlib=libc++` NU e suficient | `_fix_cxx_linker()` wrapper clang++ cu `-L -lc++_shared` |
+| 7 | `undefined symbol: log2f/expf/sinf...` | `/system/lib64/libm.so` e STUB | `-L /apex/.../bionic` in profil + LDFLAGS (**deja**) |
+| 8 | comenzi `adbsh` lungi blocheaza sesiunea | output bufferizat/trunchiat | documentat: scripturi in fisier + logfile |
+| 9 | `git clone --depth` fara remote-helper | pachet incomplet | documentat |
+
+### Functii noi (recomandarile R1-R9 din raportul agentului)
+
+- **R1 `_write_env_file()`** - scrie `/data/local/tmp/tpm/env.sh` cu TOT mediul
+  (PREFIX, PATH, LD_LIBRARY_PATH, SSL_CERT_FILE, CC/CXX, CFLAGS, LDFLAGS, TMPDIR,
+  HOME, MAKEFLAGS). `adbsh` il **surseaza automat** la fiecare comanda, deci
+  agentul nu mai scrie export-uri manual.
+- **R2/R4 `preflight()`** - test de 10 secunde care compileaza si **linkeaza**
+  C, C++ (STL), math (libm bionic), verifica PREFIX, make SHELL, SSL, git si
+  face un **cmake+build real** de proiect C++ minim. Prinde toate problemele
+  de mediu INAINTE de un build de 10 minute.
+- **R3/R4b `profile("cmake"|"cflags"|"cxxflags"|"ldflags")`** - flaguri
+  PREFABRICATE cu tot ce trebuie (target API, libc++, libm bionic, rpath,
+  `CMAKE_SYSTEM_VERSION`). `profile("cmake")` intoarce un **script shell** gata
+  de rulat (`sh prof.sh <src> <build>`) - evita problems de word-splitting.
+- **R5/R6** - `adbsh` surseaza `env.sh` automat; actiunea `toolchain fix`
+  re-aplica toate fixurile dupa reinstalarea de pachete Termux.
+- **`_fix_cxx_linker()`** - wrappere `clang/clang++/cc/c++/gcc/g++` in
+  `/data/local/tmp/wrap` care injecteaza `--target`, `-L prefix`, `-L bionic`,
+  `-lc++_shared`. Orice build C++ linkeaza corect fara flaguri speciale.
+- **`_fix_termux_paths()`** - patch pe binarele cmake/make (inlocuire de siruri
+  cu padding NUL, caile lungi intai). NU patch-uieste libpython/libLLVM (se corup).
+
+### Actiuni noi in tool-ul `toolchain`
+`preflight` · `profile` · `fix` · `env-file` (+ enum extins, descriere actualizata
+cu regula: **preflight INAINTE de orice build mare**).
+
+### REZULTAT
+```
+preflight(): c_compile cxx_compile math_link prefix_hdr make_shell ssl cmake git cmake_build  -> TOATE TRUE
+cmake + C++ (STL, math, vector) -> CONFIGURE OK | BUILD OK | CMAKE_CXX_MATH_OK 7
+```

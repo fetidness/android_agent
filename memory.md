@@ -794,3 +794,11 @@ P: numpy compiled natively on this phone lives in /data/local/tmp/tpm/usr with w
 OK: verifying a phone-side build from this desktop works with `adb -s RZGL102X5AT shell 'export PATH=/data/local/tmp/tpm/usr/bin:/system/bin LD_LIBRARY_PATH=/data/local/tmp/tpm/usr/lib HOME=/data/local/tmp; /data/local/tmp/tpm/usr/bin/python3.14 -c "import numpy;print(numpy.__version__)"'` -> import test proves binaries actually run, not just that files exist.
 
 TRAP: `ps -A | grep python3.14` on this phone returns 0 even while a compiled python build is actively running (process name/shown args don't match) -> never use ps-grep as liveness proof for the on-device build; poll the agent's terminal screenshot or a logfile instead.
+
+TRAP: os.path.exists in the agent sandbox.py does NOT see /data/local/tmp files -> file checks return false negatives -> verify toolchain/device files only via _sh (adb shell test -f), never os.path.exists.
+
+TRAP: patchelf cannot patch a binary that is currently executing (Text file busy) -> the RUNPATH fix silently skips python3/python3.14 -> patch via a copy or re-run after the process exits, then confirm with readelf -d.
+
+P: adb shell commands containing C compound literals or braces in f-strings break python syntax -> write the shell script to a file and adb push it instead of inlining.
+
+DEAD: patching 200+ binaries in one adb-shell loop can end in a segfault (nonzero exit) but the work is still done -> judge by the result (readelf | grep com.termux count), not by exit code.
