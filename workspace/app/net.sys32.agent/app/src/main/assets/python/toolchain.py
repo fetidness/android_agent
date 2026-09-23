@@ -110,17 +110,14 @@ def _sh(cmd, timeout=300):
             if _p not in _s.path:
                 _s.path.insert(0, _p)
         import adb_client as _AC
-        a = _AC.Adb()
-        try:
-            a.connect()
-            out = a.shell(cmd, timeout=timeout)
-            try: a.close()
-            except Exception: pass
-            return out or ""
-        except Exception:
-            try: a.close()
-            except Exception: pass
-            raise
+        # ★ CONEXIUNE PARTEJATA: refolosim aceeasi sesiune ADB intre apeluri.
+        # Inainte: Adb() + connect() + close() la FIECARE comanda -> adbd vedea
+        # o sesiune noua de fiecare data si cerea aprobarea "Allow USB debugging"
+        # la nesfarsit (exact simptomul raportat de operator).
+        a = _AC.shared()
+        out = a.shell(cmd, timeout=timeout)
+        # NU inchidem conexiunea: o pastram pentru urmatoarea comanda
+        return out or ""
     except Exception as e:
         return "[shell-error] " + str(e)[:120]
 

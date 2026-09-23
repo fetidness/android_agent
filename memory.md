@@ -840,3 +840,13 @@ TRAP: bash tool here intermittently returns completely EMPTY output (rc and text
 TRAP: adb `shell 'cmd'` hangs forever (no output, rc never returns) when adbd is stuck in an AUTH loop -> always wrap adb shell calls in `timeout N adb ...` from subprocess and use `pkill -9 -f platform-tools/adb` + `adb start-server` to recover the server.
 
 OK: AOSP source for the real ADB auth protocol is fetchable from this machine via `git clone --depth 1 https://android.googlesource.com/platform/packages/modules/adb /tmp/adbtest` and single files via `curl -s 'https://android.googlesource.com/platform/<proj>/+/refs/heads/main/<path>?format=TEXT' | base64 -d` -> use this instead of guessing protocol formats.
+
+TRAP: `dumpsys adb | grep user_keys` arata chei posibil TRUNCHIATE (ex. "AAABAM2roh7") -> nu iti spune daca cheia e valida; adbd pe Android 16 nu persista chei in user_keys fara aprobare dialog, iar /data/misc/adb/adb_keys e doar-root -> solutia NU e sa adaugi cheia, ci sa NU inchizi conexiunea ADB intre comenzi (socket persistent + keepalive).
+
+PREVENT: in ORICE client ADB propriu, nu face close()+connect() la exceptii de executie sau la output gol -> adbd re-cere "Allow USB debugging"; arunca socket-ul DOAR la EOF real (recv MSG_PEEK == b"") sau errno 9/104/107, si seteaza SO_KEEPALIVE/TCP_KEEPIDLE ca adbd sa nu inchida conexiunea idle.
+
+OK: adb USB pe acest device (Samsung RZGL102X5AT) foloseste portul TCP local 1234 (nu 5555); adb_client.py detecteaza automat portul citind `getprop service.adb.tcp.port` -> conectarea la 127.0.0.1:1234 merge cu RSAPUBLICKEY de 524B (format corect, prefix AAEA), semnatura RSA (A_AUTH type 2) e respinsa mereu.
+
+OK: `adb -s <serial> shell rm -rf /data/local/tmp/*` clears toolchain but `adb uninstall` does NOT remove /data/local/tmp or /sdcard dirs -> full reset needs both adb uninstall AND explicit rm of /data/local/tmp and /sdcard/Download, then verify via `ls -A /data/local/tmp | wc -l` returning 0
+
+OK: `adb install -r` on a built debug APK prints "Performing Streamed Install\nSuccess"; verify with `adb -s <serial> shell pm list packages | grep <pkg>` -> confirms package present without opening a GUI

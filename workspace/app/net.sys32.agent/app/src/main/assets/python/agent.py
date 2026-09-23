@@ -1460,7 +1460,9 @@ def run_adbsh_tool(cmd, timeout=20):
                 except NameError:
                     _ADBCONN=None
                 if _ADBCONN is None:
-                    _ADBCONN=_ADBCLI.Adb(); _ADBCONN.connect()
+                    # ★ folosim conexiunea PARTAJATA (acelasi socket si pentru
+                    # toolchain._sh() din alte module) -> un singur dialog Allow
+                    _ADBCONN=_ADBCLI.shared()
                 else:
                     # ★ VERIFICARE DE LIVENESS CONSERVATOARE.
                     # Inainte: orice exceptie sau orice byte rezidual de protocol
@@ -1674,6 +1676,51 @@ def run_toolchain_tool(a):
         return e
 
     def _run(cmd, timeout=300):
+        """Ruleaza toolchain.py. ★ INLINE cand se poate (acelasi proces), ca sa
+        refolosim conexiunea ADB partajata: altfel fiecare subproces face
+        connect() NOU si adbd cere aprobarea 'Allow USB debugging' iar si iar
+        (simptomul raportat de operator)."""
+        # daca comanda e [python, toolchain.py, actiune, ...] o rulam inline
+        try:
+            if (len(cmd) >= 2 and str(cmd[0]).endswith(("python3", "python", "libpyexec.so"))
+                    and os.path.basename(str(cmd[1])) == "toolchain.py"):
+                import importlib.util as _ilu2
+                _spec = _ilu2.spec_from_file_location("_tc_inline", tc)
+                _mod = _ilu2.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)
+                _act = cmd[2] if len(cmd) > 2 else "check"
+                _extra = cmd[3] if len(cmd) > 3 else None
+                import io as _io, contextlib as _cl
+                _buf = _io.StringIO()
+                with _cl.redirect_stdout(_buf), _cl.redirect_stderr(_buf):
+                    if _act == "check":
+                        print(json.dumps(_mod.check(), indent=2))
+                    elif _act == "preflight":
+                        print(json.dumps(_mod.preflight(), indent=2))
+                    elif _act == "profile":
+                        print(_mod.profile(_extra or "cmake"))
+                    elif _act == "env":
+                        for _k, _v in _mod.env_vars().items():
+                            print('export %s="%s"' % (_k, _v))
+                    elif _act == "env-file":
+                        _mod._write_env_file(); print("fisier: %s/env.sh" % _mod.ROOT)
+                    elif _act == "bootstrap_direct":
+                        _mod.bootstrap_direct()
+                    elif _act == "install_tpm":
+                        _mod.install()
+                    elif _act == "fix":
+                        for _fn in ("_prepare_dirs", "_patch_runpath", "_fix_ninja",
+                                    "_fix_cc_wrappers", "_fix_symlinks", "_fix_wrappers_shebang",
+                                    "_fix_sysconfig", "_fix_ca_bundle", "_fix_libcxx_needed",
+                                    "_fix_cxx_linker", "_fix_termux_paths", "_write_env_file"):
+                            try: getattr(_mod, _fn)()
+                            except Exception: pass
+                        print(json.dumps(_mod.preflight(), indent=2))
+                    else:
+                        print("[inline] actiune necunoscuta: %s" % _act)
+                return _buf.getvalue().strip()
+        except Exception as _ie:
+            pass   # fallback la subproces
         try:
             r = _sp.run(cmd, capture_output=True, text=True, timeout=timeout, env=_env(),
                         cwd="/data/local/tmp")

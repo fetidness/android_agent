@@ -83,6 +83,61 @@ def _alarm(s,f):
 if _GT > 0:
     signal.signal(signal.SIGALRM, _alarm); signal.alarm(_GT)
 
+# ============================================================================
+# CONEXIUNE PARTEJATA (module-level singleton)
+#
+# PROBLEMA REALA: fiecare apel `Adb().connect()` deschide o conexiune NOUA.
+# adbd cere aprobarea "Allow USB debugging" pentru fiecare cheie/sesiune noua
+# in anumite conditii -> dialogul reapare la fiecare comanda!
+# (toolchain._sh() facea connect()+close() la FIECARE apel -> dialog non-stop.)
+#
+# SOLUTIA: o singura conexiune, refolosita de toti consumatorii din proces.
+# ============================================================================
+_SHARED = None          # instanta Adb partajata
+_SHARED_PID = None      # pid-ul procesului care a creat-o (nu refolosim intre procese)
+
+
+def shared(host="127.0.0.1", port=None, auto=True):
+    """Returneaza conexiunea ADB partajata, creand-o la prima folosire.
+
+    Reutilizeaza socket-ul daca e viu; reconecteaza DOAR daca e mort.
+    Astfel adbd vede O SINGURA sesiune -> un singur dialog 'Allow'.
+    """
+    global _SHARED, _SHARED_PID
+    pid = os.getpid()
+    if _SHARED_PID != pid:
+        _SHARED = None
+        _SHARED_PID = pid
+    if _SHARED is not None and _SHARED.s is not None:
+        try:
+            import select as _sel
+            r, _, _ = _sel.select([_SHARED.s], [], [], 0)
+            if r:
+                peek = _SHARED.s.recv(1, 0x02)     # MSG_PEEK
+                if peek == b"":
+                    _SHARED = None                  # EOF real
+        except BlockingIOError:
+            pass                                    # EAGAIN: e viu
+        except Exception:
+            _SHARED = None
+    if _SHARED is None:
+        _SHARED = Adb(host=host, port=port)
+        if auto:
+            _SHARED.connect()
+    return _SHARED
+
+
+def close_shared():
+    """Inchide conexiunea partajata (la iesirea din proces, nu intre comenzi)."""
+    global _SHARED
+    if _SHARED is not None:
+        try:
+            _SHARED.close()
+        except Exception:
+            pass
+        _SHARED = None
+
+
 class Adb:
     def __init__(self, host="127.0.0.1", port=None):
         # ★ AUTO-DETECTIE PORT: citesc service.adb.tcp.port (orice port foloseste adbd)
