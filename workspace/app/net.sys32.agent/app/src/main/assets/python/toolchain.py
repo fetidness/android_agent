@@ -11,7 +11,7 @@ Folosire (agentul il cheama automat):
   python toolchain.py env       -> exporta variabilele de mediu
 """
 
-import json
+import json, datetime
 
 # ---------------------------------------------------------------------------
 # LICENTE / LEGAL
@@ -86,7 +86,7 @@ BIN = ROOT + "/usr/bin"
 PKGS = [
     "clang", "lld", "make", "pkg-config", "cmake", "ninja", "patchelf", "samurai",
     "ndk-sysroot",
-    "python", "python-pip", "binutils", "libandroid-spawn",
+    "python", "python-pip", "python-ensurepip-wheels", "binutils", "libandroid-spawn",
     "zlib", "liblzma", "libbz2", "openssl", "libffi",
     "ncurses", "readline", "sqlite", "libexpat", "libxml2",
     "git", "tar", "xz-utils", "coreutils", "findutils", "grep", "sed", "gawk",
@@ -195,11 +195,59 @@ rm -rf $T
     return r
 
 
+def doctor():
+    """Full health check from EVERY relevant perspective (the numpy report asked for this):
+    the toolchain is installed by uid 2000 (shell) but CONSUMED by the app, so 'it works' must be
+    answered separately for each. Returns a dict with a per-uid verdict plus a verdict string."""
+    r = {"prefix": ROOT + "/usr/bin"}
+    api = _device_api()
+    r["api"] = api
+    # --- perspective shell (uid 2000): instalarea si executia ---
+    _lc = _sh("ls %s 2>/dev/null | wc -l" % BIN, 30)
+    try: r["shell_ls_count"] = int("".join(ch for ch in _lc if ch.isdigit()) or 0)
+    except Exception: r["shell_ls_count"] = -1   # -1 = nu am putut numara (nu 3!)
+    r["shell_clang"] = "RC=0" in _sh("printf 'int main(void){return 0;}' > /data/local/tmp/.d.c; "
+        "%s/clang --target=aarch64-linux-android%d /data/local/tmp/.d.c -o /data/local/tmp/.d.bin 2>&1; echo RC=$?" % (BIN, api), 120)
+    r["shell_python"] = "Python" in _sh("%s/python3.14 -V 2>&1" % BIN, 30)
+    r["shell_pip"] = "pip" in _sh("PATH=%s:/system/bin:$PATH %s/python3.14 -m pip --version 2>&1" % (BIN, BIN), 90).lower()
+    # --- perspective app (uid ~10300): POATE citi? POATE executa? ---
+    pkg = "net.sys32.agent"
+    app = _sh("run-as %s ls %s 2>&1 | head -2" % (pkg, BIN), 30)
+    r["app_can_read"] = not any(x in app for x in ("Permission denied", "No such file", "not found"))
+    ae = _sh("run-as %s %s/python3.14 -V 2>&1" % (pkg, BIN), 30)
+    r["app_can_exec"] = ("Python" in ae) and ("denied" not in ae.lower())
+    r["app_hint"] = ("app CANNOT execute the toolchain directly (expected): orchestrate through adbsh"
+                     if not r["app_can_exec"] else "app CAN execute the toolchain")
+    # --- permisiuni pe prefix (cauza din raportul numpy) ---
+    r["prefix_mode"] = _sh("stat -c '%%a %%U:%%G' %s 2>/dev/null || ls -ld %s" % (ROOT + "/usr", ROOT + "/usr"), 20).strip()[:60]
+    r["world_readable"] = "r-x" in _sh("ls -ld %s 2>/dev/null" % (ROOT + "/usr"), 20) or "a+r" in r["prefix_mode"]
+    # --- marker versiune ---
+    _vm = _sh("cat %s/.tc_version 2>/dev/null" % ROOT, 20)
+    _vm = "".join(ch for ch in _vm if ch.isprintable() and ch != "\x03").strip()
+    r["version_marker"] = _vm[:120] or "(missing - run bootstrap to write it)"
+    # --- veredict ---
+    ok_shell = r["shell_clang"] and r["shell_python"] and r["shell_pip"]
+    if ok_shell and r["app_can_read"]:
+        r["verdict"] = "OK - shell builds, app can read (execute via adbsh, as designed)"
+    elif ok_shell:
+        r["verdict"] = "PARTIAL - shell works but the APP cannot read the prefix: run chmod -R a+rX " + ROOT + "/usr"
+    else:
+        r["verdict"] = "BROKEN - the shell itself cannot build: re-run bootstrap"
+    return r
+
+
 def check():
     """Starea toolchain-ului - verificari FUNCTIONALE, nu doar prezenta fisierelor.
 
     Fiecare test de aici corespunde unei erori REALE intalnite pe device;
     daca unul e rosu, agentul stie exact ce fix lipseste.
+
+    ★ DOUA PERSPECTIVE (fix pentru fals-pozitivul din raportul numpy): toolchain-ul apartine
+    uid-ului 2000 (shell), dar AGENTUL ruleaza ca app (~10300). Vechiul check() verifica doar
+    prin shell - deci raporta "clang=true, make=true, compile_test=true" in timp ce din
+    perspectiva app-ului prefixul era inaccesibil, iar agentul credea ca poate compila.
+    Acum fiecare verificare "poate fi FOLOSIT de cel care o cere?" e evaluata pe AMBELE
+    perspective, iar rezultatul expune explicit `app_can_use` - daca diferă, e o alarma.
     """
     out = _sh("ls " + BIN + " 2>/dev/null", 30)
     present = set(out.split())
@@ -255,6 +303,24 @@ def check():
     # 7. numpy (daca e cerut explicit)
     if "numpy" in " ".join(PKGS):
         need["numpy"] = "numpy" in _sh("ls %s/lib/python3.14/site-packages 2>/dev/null" % ROOT, 30)
+    # ★ 8. PERSPECTIVA APP vs SHELL (raportul numpy, eroarea 2): cel care CERE
+    #    toolchain-ul e agentul (uid app). Verificam daca IL POATE FOLOSI, nu doar
+    #    daca exista. `run-as <pkg>` ruleaza ca app, exact ca tool-urile noastre.
+    try:
+        _pkg = "net.sys32.agent"
+        app_ls = _sh("run-as %s ls %s 2>&1 | head -3" % (_pkg, BIN), 30)
+        app_read = not ("Permission denied" in app_ls or "No such file" in app_ls or "not found" in app_ls)
+        need["app_can_read_prefix"] = app_read
+        # exec: app-ul NU poate executa binare din prefixul altui uid (read != execute)
+        app_exec = _sh("run-as %s sh -c '%s/python3.14 -V' 2>&1" % (_pkg, BIN), 30)
+        need["app_can_exec_python"] = ("Python" in app_exec) and ("denied" not in app_exec.lower())
+        if not need["app_can_exec_python"]:
+            need["app_perspective_hint"] = ("the app CANNOT execute the toolchain directly - it must "
+                "orchestrate it through adbsh/run_su (uid 2000). This is EXPECTED, not a failure.")
+    except Exception as e:
+        need["app_perspective_error"] = str(e)[:100]
+    # ★ 9. MARKER DE VERSIUNE (raportul numpy, A2): fara el nu stim ce e instalat
+    need["version_marker"] = "YES" in _sh("test -f %s/.tc_version && echo YES || echo NO" % ROOT, 20)
     return need
 
 
@@ -1141,8 +1207,21 @@ def bootstrap_direct(packages=None, progress=None):
 
     # copiez staging -> prefix (in /data/local/tmp, scris de shell)
     print("[toolchain] instalez in prefix via shell...")
-    _sh("mkdir -p '%s/usr' && cp -a '%s/.' '%s/usr/' && chmod -R 755 '%s/usr/bin' '%s/usr/lib' 2>/dev/null; echo COPIED"
-        % (ROOT, STAGE, ROOT, ROOT, ROOT), 1800)
+    # ★ PERMISIUNI (raportul numpy, eroarea 2+4): prefixul e creat de shell cu drwxrws--- (grup
+    # shell) -> app-ul nu poate nici macar CITI fisierele, desi toolchain-ul e instalat. Facem
+    # prefixul world-readable la final, ca app-ul sa vada binarele (executia rămâne a shell-ului:
+    # read != execute pentru alt uid, si asta e normal - agentul ORCHESTREAZA prin adbsh).
+    _sh("mkdir -p '%s/usr' && cp -a '%s/.' '%s/usr/' && chmod -R a+rX '%s/usr' 2>/dev/null; echo COPIED"
+        % (ROOT, STAGE, ROOT, ROOT), 1800)
+
+    # ★ MARKER DE VERSIUNE (raportul numpy, A2): fara el nu putem sti CE e instalat
+    # si daca prefixul de pe disc corespunde ultimului bootstrap. Scris dupa copiere.
+    try:
+        _v = "bootstrap=%s\npackages=%d\n" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), len(todo))
+        _sh("printf '%s' > %s/.tc_version && chmod 644 %s/.tc_version; echo MKDONE" % (_v.replace("'", ""), ROOT, ROOT), 30)
+        print("[toolchain] marker versiune: %s/.tc_version" % ROOT)
+    except Exception as _e:
+        print("[toolchain] nu am putut scrie markerul: %s" % str(_e)[:60])
 
     # FIXURI OBLIGATORII dupa instalare. Fiecare corespunde unei erori REALE:
     #  1. RUNPATH      - .deb-urile au /data/data/com.termux/... hardcodat
@@ -1262,6 +1341,8 @@ if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
     if cmd == "check":
         print(json.dumps(check(), indent=2))
+    elif cmd == "doctor":
+        print(json.dumps(doctor(), indent=2))
     elif cmd == "preflight":
         print(json.dumps(preflight(), indent=2))
     elif cmd == "profile":

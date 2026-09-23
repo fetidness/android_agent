@@ -2080,3 +2080,78 @@ REZULTAT: 6/6 corecte
 **Lectia:** cand un tool comunica prin protocol binar, **nu presupune semantica campurilor** —
 dumpuieste pachetele brute si citeste-le. Raportul agentului a diagnosticat perfect COMPORTAMENTUL
 (13 reproduceri, tools neafectate, output plauzibil), dar cauza tehnica cerea un nivel mai jos.
+---
+
+## Etapa 44 - TOOLCHAIN: PERSPECTIVA dubla + disciplina de terminare (din raportul numpy)
+
+**Context:** agentul a compilat numpy 2.3.5 de la 0 (SUCCES) dar a lovit o serie de probleme pe care
+si le-a documentat singur in `workspace/npy/RAPORT_numpy_android.md`. Raportul e exemplar pentru ca
+pune PE PRIMUL LOC eroarea proprie, nu pe cea tehnica.
+
+### Cea mai grava eroare (auto-diagnosticata de agent)
+
+> *"Am confundat «un pas intermediar a reusit» cu «task-ul e gata». Criteriul de terminare era
+> `import numpy` functioneaza; eu l-am inlocuit mintal cu «bootstrap a zis OK»."*
+
+Costul: **un tur pierdut complet** - agentul a livrat un mesaj de "progres" in loc de rezultatul cerut,
+iar operatorul a trebuit sa-l intrebe de ce s-a oprit.
+
+### Eroarea tehnica: status VERDE cu prefix GOL
+
+`toolchain status` raporta `clang=true, make=true, compile_test=true` in timp ce
+`/data/local/tmp/tpm/usr/bin` avea **0 fisiere** din perspectiva app-ului.
+
+**Cauza:** toolchain-ul e instalat de **uid 2000 (shell)** si e consumat de **app (~10300)**.
+`check()` verifica doar prin shell - deci "totul OK" insemna "OK pentru ALT user decat cel care cere".
+
+### Optimizarile aplicate
+
+| # | Ce | Unde |
+|---|----|------|
+| **A1** | `check()` verifica **AMBELE perspective**: `app_can_read_prefix`, `app_can_exec_python` + hint explicit ca "app nu poate executa" e NORMAL, nu defect | toolchain.py |
+| **A2** | `chmod -R a+rX` automat la finalul bootstrap-ului (prefixul era `drwxrws---`, app-ul nu putea nici citi) | toolchain.py |
+| **A3** | marker de versiune `$ROOT/.tc_version` (fara el nu stim CE e instalat) | toolchain.py |
+| **A3b** | `python-ensurepip-wheels` in PKGS (in repo Termux `python-pip` NU exista) | toolchain.py |
+| **A4** | `pip_install` instaleaza intai **build deps** (meson, meson-python, Cython, ninja) si foloseste `--no-build-isolation` DOAR daca deps sunt deja in prefix (verificat, nu presupus) | agent.py |
+| **A5** | timp pe faze: `[phases] total Xs` la fiecare pip_install | agent.py |
+| **A6** | **`action=doctor`** - health check per-uid: poate SHELL-ul sa compileze? poate APP-ul sa citeasca/execute? + verdict | toolchain.py + agent.py |
+
+### Reguli noi in system prompt (recomandarea C din raport)
+
+```
+STOPPING CRITERION: before you call a task done, state WHAT the finish line is
+(e.g. `python -c "import numpy"` exits 0). The task is NOT done because a tool
+printed OK - it is done when the FINAL verification returns the result asked for.
+After EVERY step that reports success, check the EFFECT on disk, not the status.
+NEVER end a turn with "I did X, next comes Y" when the operator asked for Y.
+
+SHELL-OWNED RESOURCES: the toolchain belongs to uid 2000. As an app you can READ
+its files but CANNOT execute them - run through `adbsh`/`/run_su`.
+A `status` that looks green from the shell perspective does not mean YOU can use it.
+```
+
+### TREI bug-uri gasite la integrare (pe care raportul nu le putea sti)
+
+| Bug | Simptom | Fix |
+|-----|---------|-----|
+| `doctor` lipsea din **enum-ul schemei** | agentul: *"actiune necunoscuta: doctor"* desi handler-ul exista | adaugat in enum + descriere |
+| `doctor` lipsea din **lista inline a `_run`** | `_run` are actiunile hardcodate pentru exec inline; `doctor` cadea pe branch-ul "necunoscut" | adaugat `elif _act == "doctor"` |
+| `shell_ls_count` folosea `len()` pe string | raporta **3** binare in loc de **239** | `int()` + curatare artefacte protocol |
+
+> **LECTIE DE INTEGRARE:** cand adaugi o actiune intr-un tool care are (a) schema cu `enum`,
+> (b) dispatcher in agent.py, (c) lista inline in `_run`, (d) CLI in modul - trebuie atinse TOATE
+> patru locuri. Lipsa unuia produce "actiune necunoscuta" desi codul pare complet.
+
+### VERIFICAT
+
+```
+toolchain action=doctor ->
+  shell_ls_count: 239        shell_clang: true    shell_python: true   shell_pip: true
+  app_can_read: true         app_can_exec: false
+  prefix_mode: 2775 shell:shell                   world_readable: true
+  verdict: OK - shell builds, app can read (execute via adbsh, as designed)
+```
+
+> **Nota despre iteratie:** instalarea unui APK nou NU reincarca `agent.py` in procesul Python deja
+> pornit (agentul ruleaza bucla cu fisierul incarcat la startup). Dupa orice schimbare de assets:
+> `am force-stop` + `am start` + **reactivare accessibility**.

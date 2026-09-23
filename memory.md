@@ -1084,3 +1084,31 @@ P: portul adbd local nu e mereu 5555 -> se detectează din `getprop service.adb.
 - OK: integrity guard in agent.py: prefix `echo __MK<ts>__; <cmd>`, daca markerul lipseste -> drain + retry o data, markerul e sters din output
 - P: /home/gab/Desktop/agent/temp/raport_buffer_adbsh.md (raportul agentului) si /tmp/adb_client.py.before-fix
 - LECTIE: cand un tool comunica prin protocol binar, NU presupune semantica campurilor - dumpuieste pachetele brute si citeste-le
+
+TRAP: `select()` pe un socket ADB care returneaza "ready to read" cu un header de 24 bytes fragmentat -> citirea directa a headerului arunca exceptie si arde tot timeout-ul -> citeste bucla pana ai 24 bytes, tolereaza recv() partiale
+
+OK: `/home/gab/android/platform-tools/adb` nu e in PATH -> foloseste calea absoluta `/home/gab/android/platform-tools/adb -s RZGL102X5AT exec-out cat ...` pentru a citi fisiere de pe device
+
+TRAP: `git commit -F -` cu input prin subprocess: mesajul multi-linii se transmite corect doar cu `input=msg, text=True`; fara `text=True` (bytes) encode-ul difera -> foloseste intotdeauna `capture_output=True, text=True, input=msg
+
+OK: bumping an Android app's assets marker (.assets_vNN in MainActivity.kt) with `sed -i` silently no-ops from this headless bash tool (empty output, no error) -> sed/grep/sort pipelines intermittently return nothing here -> edit the marker with python (open/re.sub/write) and verify with grep -o, never trust sed's silence.
+
+TRAP: this Linux bash tool intermittently returns completely empty output for commands that DID run (build_app.sh, sed, grep) -> looks like failure/no-op but side effects applied -> wrap in `bash -lc "... 2>&1 | tail"` via subprocess and verify the EFFECT (file mtime, grep of the file) instead of the exit/out.
+
+OK: an Android app caches its loaded python assets per-process (agent.py/toolchain.py loaded into libpyexec.so at start) -> editing the file on device or reinstalling does NOT change running behaviour until force-stop -> after any agent.py/toolchain.py change: adb shell am force-stop net.sys32.agent; am start -n net.sys32.agent/.MainActivity; re-enable accessibility.
+
+TRAP: an inline action dispatcher in agent.py `_run()` hardcodes its supported toolchain subcommands (if/elif on `_act`) separately from the tool's JSON enum and from toolchain.py's own CLI -> adding a new action needs THREE edits (enum, _run inline elif, toolchain.py function+CLI) -> action otherwise returns "actiune necunoscuta" despite being implemented.
+
+## 2026-09-23 - OPTIMIZARI din raportul numpy (perspectiva dubla + disciplina)
+- OK: `toolchain action=doctor` - health check per-uid: poate SHELL-ul sa compileze? poate APP-ul sa citeasca/execute? + verdict
+- TRAP: toolchain-ul e instalat de uid 2000 si consumat de app -> `status` verde din perspectiva shell NU inseamna ca app-ul il poate folosi; `check()` verifica acum ambele (app_can_read_prefix, app_can_exec_python) + hint ca "app nu poate executa" e NORMAL
+- OK: bootstrap face acum `chmod -R a+rX` automat pe prefix (era drwxrws--- -> app-ul nu putea nici citi)
+- OK: marker de versiune `$ROOT/.tc_version` scris la bootstrap; fara el nu stim CE e instalat
+- OK: `python-ensurepip-wheels` in PKGS (in repo Termux `python-pip` NU exista)
+- OK: pip_install instaleaza intai build deps (meson meson-python Cython ninja) si foloseste --no-build-isolation DOAR daca deps sunt deja in prefix (verificat, nu presupus)
+- OK: reguli noi in system prompt: STOPPING CRITERION (task gata doar cand VERIFICAREA FINALA da rezultatul cerut, nu cand un tool zice OK) + SHELL-OWNED RESOURCES (toolchain-ul e al shell-ului; app doar citeste, executa prin adbsh)
+- TRAP: cand adaugi o actiune intr-un tool trebuie atinse 4 locuri: (a) enum in schema, (b) dispatcher in agent.py, (c) lista inline din _run (are actiunile hardcodate!), (d) CLI in modul. Lipsa unuia = "actiune necunoscuta" desi codul pare complet
+- TRAP: instalarea unui APK nou NU reincarca agent.py in procesul Python deja pornit -> dupa orice schimbare de assets: am force-stop + am start + REACTIVARE accessibility
+- TRAP: editarea `MainActivity.kt` cu sed prin tool-ul bash poate da output gol si NU aplica -> foloseste python (re.search + replace + write) si verifica rezultatul
+- TRAP: ghilimelele duble in descrierile de tool (schema JSON) rup string-ul Python -> foloseste ghilimele simple in textul din descriere
+- P: /home/gab/Desktop/agent/docs/raport_numpy_android.md -> raportul agentului (auto-diagnostic exemplar)
