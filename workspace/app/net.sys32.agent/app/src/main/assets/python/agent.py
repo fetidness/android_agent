@@ -1610,7 +1610,28 @@ def run_adbsh_tool(cmd, timeout=20):
                 # ★ FIX: NU limita la 60s - bootstrap/build-urile depasesc lejer
                 # (bug real: min(int(timeout),60) facea ca ORICE comanda lunga sa
                 #  expire garantat -> agentul credea ca adbsh e mort)
+                # ★ INTEGRITY GUARD (fix for the 'output lags one call' report): prefix a UNIQUE
+                # marker and require it back. If it is missing, the socket still held leftovers and
+                # the answer belongs to a previous command - we drain and run ONCE more. The marker
+                # is stripped from the returned text, so the model never sees it.
+                import time as _t
+                _mk = "__MK" + str(int(_t.time()*1000) % 10**9) + "__"
+                _wrapped = "echo " + _mk + "; " + _wrapped
                 _out = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
+                if _mk not in _out:
+                    # leftovers confirmed: drain hard, retry ONCE, then report honestly
+                    try: _ADBCONN._drain()
+                    except Exception:
+                        try: _ADBCONN.s.settimeout(0.4); _ADBCONN._recv(0.4)
+                        except Exception: pass
+                    _out2 = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
+                    if _mk in _out2 or _out2.strip():
+                        _out = _out2
+                    else:
+                        _out = ("[adb] WARNING: the session returned mismatched output twice "
+                                "(protocol desync). Command NOT confirmed: " + cmd[:80])
+                if _mk in _out:
+                    _out = _out.replace(_mk + "\n", "", 1).replace(_mk, "", 1)
                 # daca a iesit gol/timeout, verificam sanatatea sesiunii si reconectam o data
                 if ("depasit" in _out and "procesul poate continua" in _out) and not _out.strip().startswith("["):
                     pass

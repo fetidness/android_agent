@@ -2020,3 +2020,63 @@ Optimizarile confirmate **in APK** (citite din zip).
 
 > **⚠️ CAPCANA:** markerul `.assets_vNN` din `MainActivity.kt` trebuie INCREMENTAT la fiecare
 > modificare de assets, altfel app-ul foloseste copia VECHE de pe device.
+---
+
+## Etapa 43 - FIX BUG DE BUFFER `adbsh` (output cu un apel in urma)
+
+**Simptom (raportat de agent dupa compilarea numpy):** tool-ul `adbsh` returna output-ul comenzii
+**PRECEDENTE**, nu al celei curente. Lag fix de exact o iteratie, reprodus de **13 ori consecutiv**.
+Comportament inselator: output-ul era intotdeauna **complet si plauzibil** — doar din alt apel.
+Tools neafectate: `multi`, `bash`, `python`, `bg`. Doar `adbsh`.
+
+**Raport complet:** `temp/raport_buffer_adbsh.md` (agentul l-a scris singur, cu transcript de reproduceri).
+
+### Cauza reala (NU ce presupunea raportul)
+
+Protocolul ADB are **doua** campuri de id in fiecare pachet. Verificat cu pachete brute pe device:
+```
+Noi:  A_OPEN (a0=id_NOSTRU=1,  a1=0)              <- cerem o sesiune
+adbd: A_OKAY (a0=id_LOR=1850,  a1=id_NOSTRU=1)    <- id-ul NOSTRU e in a1!
+adbd: A_WRTE (a0=id_LOR=1850,  a1=id_NOSTRU=1)
+adbd: A_CLSE (a0=id_LOR=1850,  a1=id_NOSTRU=1)
+```
+
+Codul vechi filtra `if a0 != 0:` — adica **accepta pachete din ORICE sesiune**. Resturile ramase
+in socket de la comanda anterioara (drenare incompleta) se lipeau la raspunsul curent → **lag de
+exact un apel**. Raportul a dat 3 ipoteze (asincronie sesiune / ring buffer / reutilizare FD);
+niciuna nu era corecta — era **campul de id gresit**.
+
+> **⚠️ TRAP — capcana proprie:** prima incercare de fix a fost `if a0 != lid:` (logica inversa).
+> Rezultat: TOATE comenzile dadeau timeout (14.58s pentru un simplu `echo`), pentru ca filtrarea
+> respingea tot. Diagnosticul care a salvat: dump-ul pachetelor brute, care arata `a0=1850 a1=1`.
+
+### Fixurile aplicate (3)
+
+| # | Fix | Detaliu |
+|---|-----|---------|
+| 1 | **filtrare pe `a1`** (id-ul nostru) | `if c in (A_OKAY,A_WRTE,A_CLSE) and a1 != lid: continue` — pachetele straine sunt DROPATE, niciodata adaugate la raspuns |
+| 2 | **`_drain()` sigur** | `select()` + citiri partiale tolerate (24-byte header poate veni fragmentat); prima versiune folosea `_recv(0.2)` si ardea tot timeout-ul |
+| 3 | **`A_OKAY` cu id-uri inversate** | `self._send(A_OKAY, a1, a0)` — protocol ADB corect |
+
+Plus in `agent.py`: **integrity guard** — fiecare comanda `adbsh` primeste un marker unic
+(`echo __MK<ts>__; <cmd>`); daca markerul lipseste din raspuns, sesiunea e desincronizata ->
+drain + re-rulare O DATA, apoi raportare onesta. Markerul e eliminat din output.
+
+### VERIFICAT
+
+| Test | Rezultat |
+|------|----------|
+| `echo` simplu (durata) | **0.58s** (era 14.58s cu fix-ul gresit) |
+| 6 comenzi consecutive cu markere unice (manual, pe device) | **6/6 CORECTE** |
+| Acelasi test END-TO-END prin agent | **6/6 CORECTE**, zero lag |
+
+```
+apel 1: stiut=MK1_71021 primit='MK1_71021\npayload_1' -> OK
+apel 2: stiut=MK2_71591 primit='MK2_71591\npayload_2' -> OK
+...
+REZULTAT: 6/6 corecte
+```
+
+**Lectia:** cand un tool comunica prin protocol binar, **nu presupune semantica campurilor** —
+dumpuieste pachetele brute si citeste-le. Raportul agentului a diagnosticat perfect COMPORTAMENTUL
+(13 reproduceri, tools neafectate, output plauzibil), dar cauza tehnica cerea un nivel mai jos.

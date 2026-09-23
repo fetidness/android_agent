@@ -1055,3 +1055,32 @@ DEAD: `adb shell input text <str>` cu paranteze sau caractere speciale -> rup sh
 TRAP: `uiautomator dump` pe ecranul agentului in timpul unui task lung -> arata doar "message the agent", ecran gol -> citeste progresul real din /sdcard/Download/Agent/context.json de pe device, nu din dump.
 
 OK: parsare /proc/net/tcp pe Android cu uid 2000 -> porturile sunt HEX, nu zecimale -> converteste cu `$((16#hex))` si filtreaza starea 01=ESTABLISHED pentru conexiuni active.
+
+TRAP: `pkill -f <pattern>` pe acest desktop omoara si procesul care ruleaza comanda -> foloseste `pkill -f --older 5` sau verifica PID-ul si omoara doar copiii
+
+OK: verificarea integrarii in APK la build Android -> `unzip -p app.apk assets/python/agent.py | grep <pattern>` confirma ca optimizarile au ajuns in zip fara sa instalezi pe device
+
+TRAP: plafonul output-ului de tool (~8000 chars) taie mijlocul pastrand capetele -> logul de pe disc era plafonat la fel, deci mijlocul nu exista nicaieri -> foloseste tool-ul `read` cu offset/limit/budget/grep, nu citiri repetate
+
+P: /home/gab/Desktop/agent/readme.md e fisierul de documentatie al proiectului (92KB+) -> la fisiere de aceasta marime foloseste `read` cu grep=regex intai pentru harta, apoi offset/limit pe sectiunea de interes
+
+OK: verificarea starii git inainte de commit -> `git status --short` arata si fisierele .bak ne-ignorate -> adauga `*.bak*` in .gitignore si sterge backup-urile locale inainte de `git add -A
+
+P: ADB protocol local (adbd 127.0.0.1:1234) răspunde la A_OPEN(a0=lid_nostru,a1=0) cu A_OKAY/A_WRTE/A_CLSE având a0=id_LOR (~1850, nu lid), a1=lid_nostru -> filtrarea se face pe a1, nu pe a0; `a0!=0` acceptă resturi din sesiunea anterioară (output cu un apel în urmă), `a0==lid` respinge tot (timeout 15s la echo); A_OKAY se trimite inversat self._send(A_OKAY,a1,a0).
+
+TRAP: testarea unui modul Python din /data/data/<pkg>/files pe device ca uid 2000 (adbsh) -> PermissionError 13; copiază scriptul+cheile în /sdcard/Download/Agent sau /data/local/tmp și patch calea hardcodată F=/data/data/... (cheile adbkey/adbkey.pub sunt în /sdcard/Download/Agent).
+
+P: adb_client.py din agentul sys32 are F="/data/data/net.sys32.agent/files" hardcodat pentru adbkey/adbkey.pub -> la rulare în afara sandbox-ului app-ului trebuie înlocuit cu F="/sdcard/Download/Agent".
+
+P: portul adbd local nu e mereu 5555 -> se detectează din `getprop service.adb.tcp.port` (aici 1234) sau scanând 5555/55555/5556 pe 127.0.0.1.
+
+## 2026-09-23 - FIX bug buffer adbsh (output cu un apel in urma)
+- CAUZA: filtrul de pachete ADB folosea `a0` (id-ul adbd) in loc de `a1` (id-ul NOSTRU) -> `if a0 != 0` accepta pachete din ORICE sesiune -> resturile comenzii anterioare se lipeau la raspunsul curent = lag de exact 1 apel (13 reproduceri in raportul agentului)
+- OK: protocol ADB verificat cu pachete brute: noi trimitem A_OPEN(a0=lid, a1=0), adbd raspunde A_OKAY/A_WRTE/A_CLSE(a0=id_LOR, a1=lid) -> id-ul nostru e in a1
+- OK: fix 1 = filtrare `a1 != lid` (pachetele straine DROPATE, niciodata adaugate); fix 2 = `_drain()` cu select() + citiri partiale tolerate; fix 3 = `self._send(A_OKAY, a1, a0)` (id-uri inversate)
+- TRAP: prima incercare `if a0 != lid:` = logica INVERSA -> TOATE comenzile timeout (14.58s pt un echo) pentru ca respingea tot -> diagnosticul corect a venit din dump-ul pachetelor brute
+- TRAP: `_drain()` cu `_recv(0.2)` (timeout mic) transforma un header partial in exceptie si ardea tot timeout-ul -> foloseste select() + bucla de citire a headerului de 24 bytes
+- OK: verificat 6/6 comenzi consecutive cu markere unice (manual pe device + E2E prin agent); `echo` in 0.58s
+- OK: integrity guard in agent.py: prefix `echo __MK<ts>__; <cmd>`, daca markerul lipseste -> drain + retry o data, markerul e sters din output
+- P: /home/gab/Desktop/agent/temp/raport_buffer_adbsh.md (raportul agentului) si /tmp/adb_client.py.before-fix
+- LECTIE: cand un tool comunica prin protocol binar, NU presupune semantica campurilor - dumpuieste pachetele brute si citeste-le

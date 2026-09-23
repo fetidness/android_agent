@@ -238,14 +238,64 @@ class Adb:
                                        "sau ruleaza: adb tcpip 1234 de pe PC")
             else:
                 raise RuntimeError("neasteptat %#x a0=%d" % (cmd,a0))
+    def _drain(self):
+        """Empties leftovers from ALREADY-CLOSED sessions before opening a new one.
+        Safe by construction: it reads a packet ONLY when select() says data is ready, and it
+        handles SHORT reads (a TCP segment may carry only part of the 24-byte header) instead of
+        treating them as errors - the first version called _recv(0.2), whose small timeout turned
+        a partial header into an exception, retried, and burned the whole command timeout."""
+        try:
+            import select as _sel
+            idle = 0
+            while idle < 2:
+                r,_,_ = _sel.select([self.s], [], [], 0.05)
+                if not r:
+                    idle += 1
+                    continue
+                # read a whole packet, tolerating short reads
+                try:
+                    self.s.settimeout(0.3)
+                    h = b""
+                    while len(h) < 24:
+                        c = self.s.recv(24-len(h))
+                        if not c: return
+                        h += c
+                    cmd,a0,a1,ln,ck,mg = struct.unpack("<6I", h)
+                    d = b""
+                    while len(d) < ln:
+                        c = self.s.recv(min(65536, ln-len(d)))
+                        if not c: break
+                        d += c
+                except Exception:
+                    return          # socket busy/unusable: leave it alone
+                if cmd == A_WRTE:
+                    try: self._send(A_OKAY, a0, 0)
+                    except Exception: return
+                elif cmd == A_CLSE:
+                    try: self._send(A_CLSE, a0, 0)
+                    except Exception: return
+                idle = 0
+        except Exception:
+            pass
+
     def shell(self, cmd, timeout=15):
-        """Ruleaza o comanda shell. La iesire INCHIDE INTOTDEAUNA sesiunea
-        (A_CLSE), altfel adbd pastreaza stream-ul deschis si urmatorul apel
-        primeste raspunsuri amestecate / se blocheaza (bug real: conexiuni
-        TIME_WAIT + timeout-uri de 30-60s la tot ce trecea prin adbsh)."""
+        """Runs ONE shell command over a shell-v2 stream and returns its output.
+
+        SESSION ID DISCIPLINE (this is what fixes the 'output lags by one call' bug):
+        adbd answers an A_OPEN with A_OKAY/A_WRTE/A_CLSE carrying the id WE chose (`lid`).
+        Older data left in the socket from a PREVIOUS session arrives with a DIFFERENT id.
+        The previous version accepted `a0 != 0` - i.e. any session - so leftovers were
+        appended to the CURRENT answer: the command returned the PREVIOUS command's output,
+        consistently one call behind (13 reproductions in the field report).
+        Now every packet is matched against `lid`; foreign packets are DROPPED and drained,
+        never mixed into this answer."""
         self.lid += 1; lid=self.lid
+        # ★ PRE-FLUSH: golim orice reziduu de protocol ramas in socket INAINTE de a deschide
+        # sesiunea noua. Fara asta, un rest de la comanda anterioara (adbd lent, timeout de
+        # drenare prea scurt) intra in raspunsul curent -> "output cu un apel in urma".
+        self._drain()
         self._send(A_OPEN, lid, 0, ("shell,v2,raw:"+cmd).encode()+b"\0")
-        out=b""; end=time.time()+timeout; closed=False; timed_out=False
+        out=b""; end=time.time()+timeout; closed=False; timed_out=False; foreign=0
         try:
             while time.time()<end:
                 try: c,a0,a1,d = self._recv(max(1,int(end-time.time())))
@@ -253,29 +303,48 @@ class Adb:
                     timed_out=True; break
                 except Exception:
                     break
+                # ★ STRICT SESSION MATCH. Protocol fact, verified on the device: we OPEN with
+                # (a0=OUR id, a1=0) and adbd answers with (a0=ITS id, a1=OUR id). So the field that
+                # identifies OUR session is a1 - checking a0 (the old `a0 != 0`, i.e. "any session")
+                # let leftovers from the previous command into this answer: the 'lag by one call'
+                # bug of the field report. Checking a0==lid is equally wrong (it would reject
+                # everything and time out).
+                if c in (A_OKAY, A_WRTE, A_CLSE) and a1 != lid:
+                    foreign += 1
+                    if c == A_WRTE:
+                        try: self._send(A_OKAY, a0, a1)   # keep the foreign writer moving
+                        except Exception: break
+                    continue                             # never append it to `out`
                 if c == A_OKAY: pass
                 elif c == A_WRTE:
-                    if a0 != 0 and d:
+                    if d:
                         if d[0] in (1,2) and len(d)>5: out += d[5:]
                         else: out += d
-                    try: self._send(A_OKAY, lid, 0)
+                    try: self._send(A_OKAY, a1, a0)       # reply with the ids SWAPPED (adbd's id first)
                     except Exception: break
                 elif c == A_CLSE:
                     closed=True; break
         finally:
             # ★ inchidem sesiunea DOAR daca nu s-a inchis deja singura
             if not closed:
-                try: self._send(A_CLSE, lid, 0)
-                except Exception: pass
-                # drenare: consumam pachetele rămase ale acestei sesiuni ca sa nu
-                # se amestece cu raspunsul urmatoarei comenzi
-                try:
-                    self.s.settimeout(0.4)
-                    for _ in range(64):
-                        try: self._recv(0.3)
-                        except Exception: break
+                try: self._send(A_CLSE, a1 if 'a1' in dir() else lid, a0 if 'a0' in dir() else 0)
                 except Exception:
-                    pass
+                    try: self._send(A_CLSE, lid, 0)
+                    except Exception: pass
+            # ★ DRENARE DETERMINISTA: golim socket-ul COMPLET (pana la timeout scurt
+            # consecutiv), nu 64 de pachete cu 0.3s - resturile erau exact sursa lag-ului.
+            try:
+                self.s.settimeout(0.15)
+                idle=0
+                while idle < 3:                     # 3 citiri consecutive fara date = gol
+                    try:
+                        self._recv(0.15); idle=0
+                    except Exception:
+                        idle += 1
+            except Exception:
+                pass
+            try: self.s.settimeout(8)
+            except Exception: pass
         txt = out.decode(errors="replace")
         # ★ curat artefactele protocolului shell_v2 (ex. "\x03\x01\x00\x00\x00\x00"
         # ramase la finalul fiecarui raspuns) - altfel agentul vede "output amestecat"
