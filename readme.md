@@ -11,7 +11,7 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 - **Kotlin** pentru UI + bridge + accessibility
 - **DeepSeek API** pentru creier
 
-### Ce poti face (10 tool-uri)
+### Ce poti face (12 tool-uri)
 
 | Tool | Ce face | Uid |
 |------|---------|-----|
@@ -21,7 +21,8 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 | `python` | stdlib + pachete pure-Python | 10362 |
 | `bash` | shell in sandbox-ul app | 10362 |
 | `smart` | auto-router python/bash | 10362 |
-| `read` | citeste fisiere mari (paginat) | 10362 |
+| `read` | **citire cu BUGET GARANTAT** (path/offset/limit/budget/grep) — nu se taie niciodata | 10362 |
+| **`multi`** | **BATCH: 2-6 operatiuni independente intr-UN apel** (economie ~60-97% tokeni) | 10362 |
 | `look` | analiza imagini (vision) | — |
 | `bg` | **gestionar de procese in fundal** (start/status/log/kill/list/clean) — OBLIGATORIU pentru orice comanda >30s | 10362 |
 | `toolchain` | compilare C/C++ nativa pe telefon (clang-21, samu, pkg Termux) | 10362 |
@@ -36,6 +37,9 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
    `run-as` alte app-uri, `screencap`, `logcat`
 
 > **NU folosi `adbsh` pentru ce face `android`/`python`** — e 10x mai lent si poate rate-limita.
+6. **Mai multe verificari independente** → `multi` **O SINGURA DATA** (fiecare
+   cerere retrimite TOT contextul: 2-6 ops intr-un apel = economie ~60-97% tokeni)
+
 
 ### Unde sunt fisierele (pe device)
 ```
@@ -1883,3 +1887,136 @@ care iti spune carui job apartine si cand a inceput."
 
 **Verificat:** toate cele 6 actiuni testate (start/status/log/kill/list/clean);
 statusul foloseste `/proc/<pid>/stat` (prinde si procesele zombie).
+
+---
+
+## Etapa 38 - OPTIMIZARI DE COST (citirea fisierelor mari + tool `read`)
+
+**Problema (masurata):** output-ul unui tool call se taie la ~8000 chars (capetele raman, mijlocul dispare).
+Marcajul promitea „NOT LOST: textul complet e in logs/...log", dar **logul de pe disc era plafonat la fel** →
+mijlocul nu exista nicaieri. Citirea unui fisier de 92 KB a costat ~20 de pasi de re-citire.
+
+**Cauza rădăcină:** `TOOLMAX=1800` (fereastra) era prea mic pentru o citire deliberata, iar `_store()` scria
+logul fara sa verifice ca e complet.
+
+**Fixuri:**
+| # | Ce | Detaliu |
+|---|----|---------|
+| 1 | `CHUNK` configurabil | `AGENT_CHUNK` (default 7000) ridica plafonul ferestrei; `0` = comportamentul vechi |
+| 2 | `_budget()` | alege plafonul corect per apel |
+| 3 | `_cut()` spune adevarul | scrie `NOT LOST` **doar** daca logul e verificat complet; altfel `LOST - RE-RUN` |
+| 4 | `_store()` verifica | `os.path.getsize(p) == len(o.encode())`, nu presupune |
+| 5 | **tool `read`** | citire paginata cu **buget GARANTAT** (`path/offset/limit/budget/grep`) + footer `NEXT: offset=N` |
+| 6 | avertisment preventiv | la 90% din buget, **o singura data per task** |
+
+**Metoda de lucru pentru fisiere mari (in system prompt):**
+```
+(1) read cu grep = regex   -> harta fisierului cu numere de linie, in UN apel
+(2) read cu offset/limit   -> doar sectiunea de interes
+```
+
+**MASURAT:** citirea `readme.md` (92.621 chars): **18 pasi -> 2 pasi**, input **4.82M -> 0.418M chars (-91%)**.
+
+---
+
+## Etapa 39 - OPTIMIZARI DE COST (batching + densitate)
+
+**Principiul descoperit (masurat):** API-ul DeepSeek e **stateless** → la fiecare cerere se retrimite TOT
+contextul. O sesiune de 348 mesaje = **64M chars input** (~16M tokeni), adica **187x** contextul final.
+Deci costul real nu sunt pasii, ci **numarul de cereri x masa contextului**.
+
+**Componenta contextului (masurata):** 53.2% output-uri de tool, **36.3% codul trimis de agent**,
+10.2% text assistant. Deci 89.5% din context e produs de agent, nu de operator.
+
+| # | Optimizare | Efect |
+|---|-----------|-------|
+| 1 | **tool `multi`** | 2-6 operatiuni independente intr-UN apel; cap 6 ops, plafon 2000/entry, plafon 7000 total; **eroarea unei operatiuni NU opreste restul** |
+| 2 | regula **BATCH** in prompt | „daca pasul B nu citeste ce a scris pasul A, sunt in ACELASI `multi`"; NU batchuieste dependent/greu/poate-atarna |
+| 3 | regula **CODE DENSITY** | codul din tool_call arguments se retrimite la fiecare cerere → cod minim, fara comentarii decorative |
+| 4 | regula **DENSITY RULE** | etichete de ~60-90 chars, verb + obiect |
+| 5 | **cache HIT** afisat | per task in footer + in `/ctx` (din `usage.prompt_cache_hit_tokens`) |
+
+> **TRAP:** `print()` in bucle NU economiseste tokeni — scrie pe stdout, nu intra in context.
+> Doar `m['content']` si `tool_calls[].arguments` se retrimit.
+
+**MASURAT pe task-uri reale:** 13 operatiuni in 5 apeluri (-62% apeluri); pe 10 op. `-82%` input,
+pe 50 op. `-97%`.
+
+---
+
+## Etapa 40 - FEREASTRA REALA + COMPACTARE DEZACTIVATA
+
+**Avertisment FALS (reparat):** `CTXWINDOW` era hardcodat la `128000`, dar modelul `deepseek-flash`
+(DeepSeek-V4.1-Flash) are **`context_window=1048576` (1M)**. Un context de 160.4k tokeni raporta
+**125%** si declansa alerta rosie desi era la **15%**.
+
+**Sursa de adevar = API-ul:**
+```bash
+curl -s https://api.deepseek.com/models -H "Authorization: Bearer $KEY"
+#   -> deepseek-flash: context_window=1048576, max_output_tokens=393216
+```
+
+**Fixuri:**
+- `CTXWINDOW=1048576` (verificat in API, nu ghicit)
+- `ctx_check_window()` la startup: intreaba API-ul si **corecteaza singur** constanta daca diferă;
+  daca reteaua cade, pastreaza constanta locala si NU blocheaza startup-ul
+- `ctx_warn()`: avertisment **ROSU** la **90%** din fereastra, o singura data per trecere,
+  re-armat sub 80%; **NU comprima si NU sterge nimic**
+
+**COMPACTARE DEZACTIVATA (decizie operator):** `CTXBUDGET=0` + `compact_history()` devine **no-op**
+(chiar si cu `force=True` de la `/compact`). Motivul: comprimarea inlocuia output-urile grele cu
+pointeri catre `archive/`, deci informatia ramanea pe disc dar **dispareа din context**.
+Operatorul vrea memoria inserata la startup sa rămâna **INTREAGA pana la `/reset`**.
+
+**Verificat:** dupa 50 de mesaje x 8000 chars, **0 pointeri noi**, memoria intacta.
+
+---
+
+## Etapa 41 - TESTUL DECISIV (audit de securitate cu uid 2000)
+
+**Task (fara indicii tehnice):** „audit de securitate complet, folosind **intensiv adbsh cu uid 2000**:
+permisiuni periculoase, servicii in fundal, conexiuni de retea, fisiere accesibile doar ca shell,
+starea SELinux/verity/root. Verdict cu riscuri concrete."
+
+**REZULTAT:** audit de **6500 chars**, **23 operatiuni in 12 apeluri API**
+(7 `adbsh` uid=2000 + 5 `multi` + 1 python); `multi` a grupat 15 operatiuni.
+
+**Comenzi privilegiate rulate cu uid 2000:** `dumpsys cpuinfo`, `appops`, `/proc/net/tcp`
+(cu conversie hex `$((16#hex))`), `getenforce`, `getprop` verity/boot, `ls /dev/socket`, `id`.
+
+**Economie masurata:** **-45% apeluri**, **-59% input** (~428k tokeni).
+
+**VERIFICARE INDEPENDENTA a dovezilor** (toate confirmate):
+| Afirmatie agent | Verificare | Rezultat |
+|-----------------|-----------|----------|
+| SELinux Enforcing | `getenforce` | ✅ Enforcing |
+| `su` absent | `ls /system/bin/su` | ✅ ABSENT |
+| Bootloader locked | `getprop ro.boot.flash.locked` | ✅ 1 |
+| Verity enforcing | `getprop ro.boot.veritymode` | ✅ enforcing |
+| Agentul are 3 permisiuni | `dumpsys package` | ✅ granted=true, USER_SET |
+
+**Riscuri reale identificate de agent:**
+1. **(ridicat)** `net.sys32.agent` are camera+microfon+locatie SI e debuggable
+2. **(mediu)** `/data/local/tmp` e `0777` world-writable
+3. **(scazut)** 469 pachete instalate, suprafata mare de atac
+
+**Artifact:** `temp/audit-securitate-SM-A366B.md`
+
+---
+
+## Etapa 42 - SINCRONIZARE `agent.py` (Android) cu optimizarile
+
+Toate optimizarile din etapele 38-41 sunt in **`assets/python/agent.py`** (creierul agentului Android),
+adaptate pentru particularitatile telefonului (NU copiate 1:1):
+
+| Desktop | Android |
+|---------|---------|
+| `bash(cmd, cwd)` — 2 argumente | `run_bash_tool(cmd)` — 1 argument |
+| `py(code, cwd)` | `run_tool(code)` |
+| tool-uri standard | + `run_android_tool`, `run_adbsh_tool`, `run_toolchain_tool`, `bg_tool` |
+
+**Build:** `./build_app.sh` → BUILD SUCCESSFUL, instally, `.assets_v83` extras pe device.
+Optimizarile confirmate **in APK** (citite din zip).
+
+> **⚠️ CAPCANA:** markerul `.assets_vNN` din `MainActivity.kt` trebuie INCREMENTAT la fiecare
+> modificare de assets, altfel app-ul foloseste copia VECHE de pe device.

@@ -384,34 +384,125 @@ DURW=7   # widest _dur() value: "1:00:00" (7 chars)
 REFW=10  # widest log file name in the step line (longer names end with …)
 SZW=8    # width of the output-size box (and of the phase box in the live line)
 TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","1800"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
-CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","1000000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
+# CHUNK: when the caller emits MORE than this many chars in one tool call, the output is NOT cut at
+# TOOLMAX but at CHUNK - so a long, deliberate read (a big file split into parts) is not decapitated
+# in the middle. Raise it with AGENT_CHUNK; set AGENT_CHUNK=0 to keep the old TOOLMAX behaviour.
+CHUNK=int(os.environ.get("AGENT_CHUNK","7000"))      # budget per tool call, in characters (0 = disable)
+BUDGETWARN=float(os.environ.get("AGENT_BUDGETWARN","0.9"))   # warn once per task above this share of CHUNK
+BUDGETWARNED=[False]   # re-armed at the start of every task, so it cannot repeat in the same task
+# The model's REAL context window. VERIFIED against the API, not guessed:
+#   GET https://api.deepseek.com/models -> deepseek-flash: context_window=1048576 (1M)
+#   (max_output_tokens=393216). A hardcoded 128000 here caused a FALSE "125% of the window"
+#   warning when the session was really at ~15%. If the model ever changes, re-check the API.
+CTXWINDOW=int(os.environ.get("AGENT_CTXWINDOW","1048576"))   # 1M tokens, confirmed by the API
+CTXWARN=int(os.environ.get("AGENT_CTXWARN","90"))            # warn (RED, loud) at this % of the window
+CTXBUDGET=0   # COMPRESSION IS DISABLED, by the operator's explicit decision: no automatic
+#   compaction and none via /compact. The context grows until **the operator** gives /reset, so the
+#   MEMORY block inserted at startup stays present, byte for byte, for the ENTIRE session.
+#   Set AGENT_CTXBUDGET to a number only if you deliberately want the old behaviour back.
 CTXKEEP=24         # how many recent messages are never compressed
 LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted between sessions)
 ARCH=os.path.join(WORK,"archive")     # COMPLETE snapshots of the history, before every compression
 VERBOSE=[os.environ.get("AGENT_VERBOSE")=="1"]   # /verbose: re-prints code + output in the terminal
 THINKMIN=float(os.environ.get("AGENT_THINKMIN","0"))   # MINIMUM time "Thinking..." stays on screen (0 = the printed time is exactly the measured one). It never delays a tool step.
-def _cut(o,ref=None):
-    """What goes INTO THE WINDOW: the first TOOLMAX*3/4 chars + the last TOOLMAX/4 chars (the tail is where
-    the tracebacks and the conclusion show up), plus a POINTER to the complete text on disk.
-    Nothing is lost: the original is at `ref` and can be read at any time with a tool call."""
-    if len(o)<=TOOLMAX: return o
-    h,t=TOOLMAX*3//4,TOOLMAX//4
-    mid="[... "+str(len(o)-TOOLMAX)+" chars in the middle, NOT LOST: the complete text "+(("in "+ref) if ref else "in the complete output")+" ...]"
+def _budget():
+    """How much of a tool output fits IN THE WINDOW for this call. CHUNK raises it so a
+    deliberate long read is not decapitated; AGENT_CHUNK=0 falls back to TOOLMAX."""
+    return CHUNK if CHUNK and CHUNK>TOOLMAX else TOOLMAX
+def _cut(o,ref=None,complete=False):
+    """What goes INTO THE WINDOW: the first 3/4 of the budget + the last 1/4 (the tail is where the
+    tracebacks and the conclusion show up), plus a POINTER to the complete text on disk.
+    `complete` says whether the pointer REALLY holds the whole text (see _store): if it does not,
+    the marker says so instead of promising a file that is itself cut - that promise was wrong
+    before and cost whole sessions of re-reading."""
+    b=_budget()
+    if len(o)<=b: return o
+    h,t=b*3//4,b//4
+    hidden=str(len(o)-b)
+    if ref and complete:
+        mid="[... "+hidden+" chars in the middle, NOT LOST: the complete text in "+ref+" (open it and read by offset) ...]"
+    elif ref:
+        mid="[... "+hidden+" chars in the middle, LOST (the log "+ref+" is itself truncated; nothing else holds it) - RE-RUN the step in smaller parts ...]"
+    else:
+        mid="[... "+hidden+" chars in the middle, LOST (no log was written) - RE-RUN the step in smaller parts ...]"
     return o[:h]+"\n"+mid+"\n"+o[-t:]
 def _store(o):
-    """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None)."""
-    if len(o)<=TOOLMAX: return o,None
+    """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None).
+    The file is written in full and then VERIFIED by size; the window marker is only allowed to say
+    NOT LOST when the file on disk really contains every byte."""
+    b=_budget()
+    if len(o)<=b:
+        # Preventive warning, ONCE PER TASK: the output still fits, but one step like this bigger and the
+        # middle is gone. Said now, while it can still be acted on (chunk it / use the `read` tool).
+        # Measured: it fires rarely (1 in 251 outputs in a long session), so it is signal, not noise.
+        if len(o)>b*BUDGETWARN and not BUDGETWARNED[0]:
+            BUDGETWARNED[0]=True
+            print(OF+"   [budget] this step returned "+str(len(o))+" chars, close to the "+str(b)+
+                  "-char window limit - one step bigger loses its middle. Split it (emit <"+str(int(b*BUDGETWARN))+
+                  " chars per step) or read the rest with the `read` tool."+N)
+        return o,None
     os.makedirs(LOGDIR,exist_ok=True)
     p=os.path.join(LOGDIR,"tool_"+datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")+".log")
-    try: open(p,"w",encoding="utf-8").write(o)
-    except Exception: return o[:TOOLMAX],None
-    return _cut(o,os.path.relpath(p,WORK)),p
+    complete=False
+    try:
+        with open(p,"w",encoding="utf-8") as f: f.write(o)
+        complete=(os.path.getsize(p)==len(o.encode("utf-8")))   # verified, not assumed
+    except Exception:
+        return _cut(o,None,False),None
+    return _cut(o,os.path.relpath(p,WORK),complete),p
 def _tokm(m):
     s=str(m.get("content") or "")
     for tc in (m.get("tool_calls") or []): s+=str((tc.get("function") or {}).get("arguments") or "")
     return len(s)//4
 def ctx_tokens(): return sum(_tokm(m) for m in M)
+CTXWARNED=[False]   # warns ONCE per crossing (re-arms if the context shrinks, i.e. after /reset)
+CTXWINDOW_VERIFIED=[False]
+def ctx_check_window():
+    """Asks the API what the model's context window REALLY is and corrects CTXWINDOW if the local
+    constant is wrong. Why it exists: a hardcoded window (128000) produced a false '125% of the
+    window' warning when the session was really at 15%. One cheap call at startup, cached for the
+    session; if the network fails, the local constant stays - never a crash."""
+    global CTXWINDOW
+    if CTXWINDOW_VERIFIED[0]: return
+    CTXWINDOW_VERIFIED[0]=True
+    try:
+        r=urllib.request.Request("https://api.deepseek.com/models",headers={"Authorization":"Bearer "+K})
+        d=json.loads(urllib.request.urlopen(r,timeout=20).read())
+        mid=os.environ.get("DS_MODEL","deepseek-flash")
+        for m in (d.get("data") or []):
+            if m.get("id")==mid:
+                w=int(m.get("context_window") or 0)
+                if w and w!=CTXWINDOW:
+                    print(OF+"   [ctx] the API reports a "+_K(w)+" window for "+mid+" (local constant was "+_K(CTXWINDOW)+") - corrected."+N)
+                    CTXWINDOW=w
+                break
+    except Exception:
+        pass    # keep the local constant: never block the startup on this
+def ctx_warn():
+    """LOUD RED warning when the context approaches the model window. It does NOT compress, does NOT
+    touch the history and does NOT stop anything - it only tells the operator it is time for /reset.
+    Fires once per crossing, so it cannot spam every round."""
+    pct=100.0*ctx_tokens()/CTXWINDOW if CTXWINDOW else 0.0
+    if pct>=CTXWARN:
+        if not CTXWARNED[0]:
+            CTXWARNED[0]=True
+            bar="\u2588"*40
+            print("\n"+R+"   "+bar+N)
+            print(R+"   \u26a0 CONTEXT AT "+("%.0f"%pct)+"% OF THE WINDOW ("+_K(ctx_tokens())+"/"+_K(CTXWINDOW)+" tok)"+N)
+            print(R+"   \u26a0 Time to /reset: the next requests may be rejected by the API."+N)
+            print(R+"   \u26a0 I did NOT compress or delete anything - the memory stays intact."+N)
+            print(R+"   "+bar+N+"\n")
+    elif pct<CTXWARN-10:
+        CTXWARNED[0]=False      # re-arm once we drop well below (e.g. after /reset)
 def compact_history(force=False):
+    """DISABLED on purpose (operator decision). It used to move heavy tool outputs and old steps to
+    disk and replace them with pointers, so the window stayed small. The operator wants the memory -
+    inserted ONCE at startup - to stay present, untouched, until THEY say /reset, so this now does
+    nothing at all: neither automatically nor via /compact. Kept as a function because the call sites
+    exist; returning 0 = 'nothing was compressed'."""
+    return 0
+def _compact_history_DISABLED(force=False):
+    """The old lossless compression, kept for reference only - never called."""
     """LOSSLESS COMPRESSION. When the live window goes over CTXBUDGET tokens:
     1) the COMPLETE history is archived (untouched) in archive/ctx_<date>.json;
     2) the window keeps stubs with a POINTER to the archive (message index, size, start/end),
@@ -444,7 +535,7 @@ def compact_history(force=False):
     return after<before
 SPIN=("⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏")
 # ---------------- task UI: one timer for the WHOLE task + labelled steps ----------------
-TASK={"t0":None,"n":0,"steps":0,"think":0.0,"tool":0.0,"chars":0,"tok_in":0,"tok_out":0,"err":False}   # one "task" = one operator request
+TASK={"t0":None,"n":0,"steps":0,"think":0.0,"tool":0.0,"chars":0,"tok_in":0,"tok_out":0,"cache":0,"err":False}   # one "task" = one operator request
 LIVE={"phase":"idle","desc":"","col":None,"n":0,"t":0.0,"dt":0.0}              # what the live line is printing right now
 def _clk(t):
     """Seconds -> mm:ss (or h:mm:ss above an hour); used for the timings in the UI."""
@@ -529,7 +620,8 @@ def brief(code):
 def _task_head(q=""):
     """Opens a task: the timer starts HERE and does not stop until the final answer.
     No labels are prepared here: each one is produced from the code of that very step (see brief)."""
-    TASK.update(t0=time.time(),steps=0,think=0.0,tool=0.0,chars=0,tok_in=0,tok_out=0,n=TASK["n"]+1,err=False)
+    TASK.update(t0=time.time(),steps=0,think=0.0,tool=0.0,chars=0,tok_in=0,tok_out=0,cache=0,n=TASK["n"]+1,err=False)
+    BUDGETWARNED[0]=False   # fresh task: the budget warning may fire once again
     LIVE.update(phase="think",desc="",col=None,n=0,t=time.time())
     t=" TASK #"+str(TASK["n"])+" "
     w=len(t)+6   # a little wider than the text (a few dashes of air), still compact
@@ -546,7 +638,9 @@ def _task_foot(stare="done"):
     ph=TASK["think"]+TASK["tool"]
     other=max(0.0,tot-ph)   # time NOT covered by any _spin: HTTP request, parsing, compact_history/save_ctx, rounding
     b=G+"  ·  "+str(TASK["steps"])+(" step" if TASK["steps"]==1 else " steps")+"  ·  total "+C+_dur(tot)+N+G+" = thinking "+_dur(TASK["think"])+" + tool "+_dur(TASK["tool"])+" + other "+_dur(other)+N
-    b+=G+"  ·  tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" = "+_K(TASK["tok_in"]+TASK["tok_out"])+" this task"+N
+    b+=G+"  ·  tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" = "+_K(TASK["tok_in"]+TASK["tok_out"])+" this task"
+    if TASK["tok_in"]: b+=" \u00b7 cache HIT "+("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"]))
+    b+=N
     return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+N+b
 
 def _live(i):
@@ -720,7 +814,9 @@ TC=E+"[38;5;216m";TCB=E+"[38;5;180;48;5;236m"   # TC=calling a tool (warm amber)
 T=[{"type":"function","function":{"name":"python","description":"Run Python 3 code on this Linux machine, returns stdout/stderr. Use stdlib only. BEST for: structured parsing (JSON/INI/KeyValues), logic, aggregations in memory, complex data structures, anything needing decisions. SLOW for multi-million-line streams; for those use `bash` or the `smart` router.","parameters":{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}}},
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
-   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}}]
+   {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},
+   {"type":"function","function":{"name":"read","description":"Read a file by LINE RANGE with a GUARANTEED character budget: it never returns more than `budget` chars (default 6000), so the answer is never cut in the middle. ALWAYS prefer this over `python open().read()` or `print()` loops when reading a big file: those get truncated at the window limit and you lose the middle. Returns the text plus a footer telling you the EXACT next offset to continue from. Best practice for a long file: first call with `grep` to find the section, then read only that range.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file to read (absolute or relative to the cwd)"},"offset":{"type":"integer","description":"first line to read, 1-based (default 1)"},"limit":{"type":"integer","description":"how many lines to read at most (default: as many as fit the budget)"},"budget":{"type":"integer","description":"max characters to return, default 6000 - keep it under ~7000 so nothing is cut"},"grep":{"type":"string","description":"optional regex: return only lines matching it (with their line numbers), then read around them"},"numbered":{"type":"boolean","description":"prefix every line with its number (default true - makes offsets reusable)"}},"required":["path"]}}},
+   {"type":"function","function":{"name":"multi","description":"BATCH: run SEVERAL small, independent operations in ONE call and get ONE consolidated answer. Use it whenever you need 2-6 quick reads/listings/stat-like steps that do NOT depend on each other: it costs ONE request instead of one per operation (each request re-sends the whole context, so batching is the single biggest cost saver). Keep each entry SMALL (a listing, a short cat, a status). Do NOT bundle heavy pipelines here: if an entry can crash or is long, use a normal per-step tool so a failure stays isolated and visible.","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines, stdlib only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output (e.g. env, ls, git status)"}},"required":["kind","body"]}}},"required":["ops"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
   "1) `python`: run Python 3 code (stdlib only). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
@@ -730,14 +826,14 @@ TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps):
   "Never pipe a huge file through python line by line if a single awk/grep does it; never parse JSON with grep when python json.loads is right there. "
   "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - that was measured at 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
 
-M=[{"role":"system","content":TOOLGUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
-  "WHILE WORKING (mandatory, never skip): BEFORE EVERY python tool call you MUST put a FULL, COMPLETE sentence in the `content` field, in the operator\u2019s language, telling what you are about to do and why. There is NO word limit and NO character limit: NEVER cut, shorten or abbreviate it with \u201c...\u201d or \u201c\u2026\u201d - the operator must always see the WHOLE sentence he needs to follow you. NEVER send a tool call with empty content. Markdown is NOT allowed in that sentence. "
-  "VISION: you have a second tool, `look(path, prompt)` - it sends an IMAGE file to the same model with THINKING ENABLED and returns what is REALLY in it. Use it whenever the operator asks you to see/analyze a screen, a screenshot, a chart or a photo: first capture it (e.g. `xwd -root -out shot.xwd` then convert with ffmpeg to png), then call look on the png. Never guess what an image contains - look at it. "
-  "STEP LABELS: the FIRST line of every python tool call is a comment (lowercase) - the terminal prints it as the label of that step, so write WHAT the step does, clearly and COMPLETELY, in the language of the operator (Romanian), never `# step 1` or `# test`. There is NO word limit: write the full label, do not cut it. "
-  "The terminal UI shows a live task timer (from the operator's request to your final answer, split into thinking vs tool time) and one labelled line per finished step; no code and no output unless the operator toggles /verbose. "
-  "CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. "
-  "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
-  "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
+M=[{"role":"system","content":TOOLGUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. " +
+  "WHILE WORKING (mandatory, never skip): BEFORE EVERY python tool call you MUST put a FULL, COMPLETE sentence in the `content` field, in the operator\u2019s language, telling what you are about to do and why. There is NO word limit and NO character limit: NEVER cut, shorten or abbreviate it with \u201c...\u201d or \u201c\u2026\u201d - the operator must always see the WHOLE sentence he needs to follow you. NEVER send a tool call with empty content. Markdown is NOT allowed in that sentence. " +
+  "VISION: you have a second tool, `look(path, prompt)` - it sends an IMAGE file to the same model with THINKING ENABLED and returns what is REALLY in it. Use it whenever the operator asks you to see/analyze a screen, a screenshot, a chart or a photo: first capture it (e.g. `xwd -root -out shot.xwd` then convert with ffmpeg to png), then call look on the png. Never guess what an image contains - look at it. " +
+  "STEP LABELS: the FIRST line of every python/bash tool call is a comment (lowercase) - the terminal prints it as that step\u2019s label. Say WHAT the step does, in the operator\u2019s language (Romanian), never `# step 1` or `# test`. DENSITY RULE (this is billed, the label is part of the context sent on EVERY later request): one short line, the essential verb + object, no trailing explanation, no restating the task, no repeating the previous label. Aim for ~60-90 chars; a label that needs 200 is usually two steps or an explanation that belongs in the answer, not in the label. Completeness of INFORMATION, not of prose. " +
+  "The terminal UI shows a live task timer (from the operator's request to your final answer, split into thinking vs tool time) and one labelled line per finished step; no code and no output unless the operator toggles /verbose. " +
+  "CODE DENSITY (the code you send is billed on EVERY later request): the `code`/`cmd` field of a tool call stays in the context forever and is re-sent each round - in a long session it is a third of the total input. So write the SHORTEST code that does the job: no decorative comments (only the one required label line), no re-printing data you already printed, no re-implementing something a stdlib call does in one line, no boilerplate headers. Prefer one clear line over five explained lines. This does NOT mean fewer steps or bigger pipelines: it means each step carries only the code it needs. " +"BATCH SMALL STEPS (biggest cost saver): every request re-sends the WHOLE context, so each extra step costs the full history again. When you need 2-6 quick, INDEPENDENT things (a listing, a short cat, a status, a git branch, an env value), do NOT spend 6 steps: use the `multi` tool ONCE with the list of ops. Rule of thumb: if step B would not read anything step A printed, they belong in the SAME `multi` call. DO NOT batch when the next step depends on the previous output, when an entry is heavy/long or can hang, or when the operator asked to see each step individually - a failure must stay isolated and visible. Small steps are GOOD for reliability; the only waste is running them one request at a time. " +"CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. READING BIG FILES (do not get truncated): every tool output above ~7000 chars is CUT IN THE MIDDLE and the middle is NOT recoverable - the log on disk is cut by the same limit. So NEVER read a large file with `python: print(open(f).read())` or a `for` loop over its lines: you WILL lose the middle and waste steps re-reading. Use the `read` tool instead: it takes path/offset/limit/budget and returns at most `budget` chars (default 6000) with a footer giving the EXACT next offset. For a file you do not know yet, do it in TWO moves: (1) `read` with `grep` = a regex (e.g. '^#{2,3} ') to get the map with line numbers in ONE call, (2) `read` with offset/limit on just the section you need. When you must emit a long list yourself, chunk it: count the chars of what you print and stop below ~7000, then continue in the NEXT step. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. " +
+  "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. " +
+  "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. " +
   "FINAL MESSAGE: it is rendered as FULL rich Markdown in a 256-colour terminal, so use it heavily and correctly: headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, ==highlight==, > blockquote, --- rules, numbered and bulleted lists, task lists (- [x]), links [text](url), tables with | pipes |, and fenced code blocks with a language tag. Write the final answer in Romanian, complete and well structured."}]
 CTX=os.path.join(WORK,CTXNAME)   # the history lives in the working folder (temp), permanently
 LEGACY=os.path.join(os.path.dirname(os.path.abspath(__file__)),"context.json")  # the old location (next to the script)
@@ -801,7 +897,7 @@ def print_usage_compact(usage):
     h =usage.get("prompt_cache_hit_tokens") or 0
     rz=cd.get("reasoning_tokens") or 0
     SESS["in"]+=pt; SESS["out"]+=ct; SESS["rounds"]+=1
-    TASK["tok_in"]+=pt; TASK["tok_out"]+=ct   # same server numbers, accumulated for THIS task
+    TASK["tok_in"]+=pt; TASK["tok_out"]+=ct; TASK["cache"]+=h   # same server numbers, accumulated for THIS task
     if h: SESS["cache_hit"]+=h
     line="\u25aa tok \u2191%s \u2193%s"%(_K(pt),_K(ct))
     if pt and h: line+=" \u00b7 hit %d%%"%int(100.0*h/pt)
@@ -951,6 +1047,79 @@ def _looks_like_error(o):
     if re.search(r"\b(error|exception|failed|non-zero exit status|command not found|no such file)\b", lo): return True
     return False
 
+def tool_read(a):
+    """Reads a file by line range with a GUARANTEED character budget, so nothing is ever cut in the
+    middle. Prints at most `budget` chars (default 6000, hard ceiling 7000 = below the window limit)
+    and then a footer with the EXACT line to continue from. With `grep` it returns only the matching
+    lines (with line numbers) so a big file is searched once and read only around the hits."""
+    path=a.get("path","") or ""
+    off=max(1,int(a.get("offset") or 1)); lim=a.get("limit") or 0
+    bud=int(a.get("budget") or 6000); bud=max(500,min(bud,7000))   # hard ceiling: never reach the window limit
+    num=bool(a.get("numbered",True)); g=a.get("grep") or ""
+    try: raw=open(path,encoding="utf-8",errors="replace").read()
+    except Exception as e: return "[read] "+e.__class__.__name__+": "+str(e)
+    lines=raw.split("\n"); total=len(lines)
+    if g:
+        try: rx=re.compile(g)
+        except re.error as e: return "[read] bad regex: "+str(e)
+        sel=[(i+1,lines[i]) for i in range(total) if rx.search(lines[i])]
+        head="[read] "+path+" | grep "+repr(g)+" -> "+str(len(sel))+" hits in "+str(total)+" lines"
+        out=[head]; used=len(head)
+        for n,l in sel:
+            row=str(n).rjust(5)+"| "+l
+            if used+len(row)+1>bud: out.append("  ... more hits; narrow the regex or use offset"); break
+            out.append(row); used+=len(row)+1
+        return "\n".join(out)
+    if off>total: return "[read] "+path+" has only "+str(total)+" lines (offset "+str(off)+" is past the end)"
+    out=[]; used=0; i=off-1; last=off-1
+    while i<total:
+        if lim and (i-(off-1))>=lim: break
+        row=(str(i+1).rjust(5)+"| "+lines[i]) if num else lines[i]
+        # +1 for the newline that joins it
+        if used+len(row)+1>bud: break
+        out.append(row); used+=len(row)+1; last=i; i+=1
+    nxt=last+2                     # 1-based line AFTER the last one printed
+    foot="[read] "+path+" | lines "+str(off)+"-"+str(last+1)+" of "+str(total)+" | "+str(used)+"/"+str(bud)+" chars"
+    if nxt<=total: foot+=" | NEXT: offset="+str(nxt)+(" limit="+str(lim) if lim else "")
+    else: foot+=" | END OF FILE"
+    return foot+"\n"+"\n".join(out)
+
+def tool_multi(a):
+    """BATCH runner: several SMALL independent operations in ONE tool call, ONE consolidated answer.
+    Why it exists: every request re-sends the whole context, so 6 little steps cost 6x the context;
+    run as one call they cost once. Design rules that keep it SAFE:
+      - each entry is independent (no entry can depend on a previous one's output),
+      - each entry is small and short-lived (a listing, a short cat, a status),
+      - one entry failing NEVER aborts the others (its error is shown in place),
+      - the total output is budgeted, so the answer cannot grow past the window limit."""
+    ops = a.get("ops") or []
+    if not isinstance(ops, list) or not ops: return "[multi] give a list of 1-6 ops"
+    ops = ops[:6]                                   # hard cap: 6 entries max
+    out = ["[multi] " + str(len(ops)) + " operations, ONE call (cost: 1 request instead of " + str(len(ops)) + ")"]
+    for n, op in enumerate(ops, 1):
+        kind = (op.get("kind") or "bash").strip()
+        body = str(op.get("body") or "")
+        nm = (op.get("name") or "").strip() or (kind + " " + str(n))
+        head = "--- [" + str(n) + "] " + nm + " (" + kind + ") ---"
+        if not body.strip():
+            out.append(head + "\n(empty body - skipped)"); continue
+        try:
+            if kind == "python":
+                r = py(body, os.getcwd())
+            else:
+                r = bash(body, os.getcwd())
+            r = (r or "").rstrip()
+        except Exception as e:
+            r = "!! FAILED (isolated, the others still ran): " + e.__class__.__name__ + ": " + str(e)
+        # per-entry cap so one huge entry cannot blow the whole answer
+        if len(r) > 2000:
+            r = r[:1400] + "\n[... " + str(len(r)-1800) + " chars omitted - read it with the `read` tool if you need it ...]\n" + r[-400:]
+        out.append(head + "\n" + (r if r else "(no output)"))
+    res = "\n".join(out)
+    if len(res) > 7000:
+        res = res[:6600] + "\n[... total capped; run fewer/smaller ops ...]"
+    return res
+
 def call_tool(c):
 
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
@@ -974,6 +1143,16 @@ def call_tool(c):
             return run_tool(code)
         # fallback: ce a dat modelul, indiferent de engine
         return run_tool(code) if code.strip() else run_bash_tool(cmd)
+    if fn=="multi":
+        o=tool_multi(a)
+        TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o))
+        _show_step("multi "+str(len(a.get("ops") or []))+" ops",o,TASK["steps"])
+        return o
+    if fn=="read":
+        o=tool_read(a)
+        TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o))
+        _show_step("read "+a.get("path","")+("  grep="+a.get("grep","") if a.get("grep") else "  @"+str(a.get("offset") or 1)),o,TASK["steps"])
+        return o
     return run_tool(a.get("code",""))
 def ask(messages=None, tools=None):
     _msgs = M if messages is None else messages
@@ -1191,6 +1370,7 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
 
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
+ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
 print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
 print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
 while 1:
@@ -1204,7 +1384,7 @@ while 1:
         print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
         print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
         print(G+"     /ctx                context window + archives/logs on disk"+N)
-        print(G+"     /compact            compress the context now"+N)
+        print(G+"     /compact            (disabled) context is never compressed - memory stays intact until /reset"+N)
         print(G+"     /verbose            toggle full code/output of each step"+N)
         print(G+"     /reset              erase the conversation history"+N)
         print(G+"     /help, /?           this list"+N)
@@ -1214,11 +1394,15 @@ while 1:
     if q=="/ctx":
         _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
         _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
-        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok | compress threshold "+_K(CTXBUDGET)+"tok (0=off) | steps kept intact: last "+str(CTXKEEP)+N)
+        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok = "+("%.0f"%(100.0*ctx_tokens()/CTXWINDOW))+"% of "+_K(CTXWINDOW)+" ("+str(CTXWARN)+"% = red warning) | compression OFF (context grows until /reset)"+N)
+        _hit="n/a"
+        if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
+        print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
         print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
     if q=="/compact":
-        ok=compact_history(force=True); save_ctx()
-        print(G+"   [compact] "+("done, context compressed WITHOUT loss (the original is in archive/)" if ok else "nothing to compress / archiving failed - I touched nothing")+N); continue
+        print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, "
+              "not on request), so the memory inserted at startup stays intact until you give /reset. "
+              "Nothing was changed."+N); continue; continue
     if q=="/verbose":
         VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
     if q=="/mem":
@@ -1252,7 +1436,7 @@ while 1:
             print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
             print(_task_foot("stopped: empty answer"));break
         tries=0
-        M.append(m);save_ctx()
+        M.append(m);save_ctx();ctx_warn()
         if m.get("tool_calls"):
             _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
             _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
@@ -1264,7 +1448,7 @@ while 1:
             for c in m["tool_calls"]:
                 code=json.loads(c["function"]["arguments"] or "{}").get("code","")
                 o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
-                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
+                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
         else:
             print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
             print(_task_foot())

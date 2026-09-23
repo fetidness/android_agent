@@ -465,37 +465,121 @@ DURW=7   # widest _dur() value: "1:00:00" (7 chars)
 REFW=10  # widest log file name in the step line (longer names end with …)
 SZW=8    # width of the output-size box (and of the phase box in the live line)
 TOOLMAX=int(os.environ.get("AGENT_TOOLMAX","6000"))   # how much of a tool output stays IN THE WINDOW (head+tail); the rest goes to disk, with a pointer
-CTXBUDGET=int(os.environ.get("AGENT_CTXBUDGET","1000000"))   # ~tokens: above this it is compressed WITHOUT LOSS (0 = never)
+# CHUNK: the budget per tool call, in characters. It raises the window limit above TOOLMAX so a
+# deliberate long read is not decapitated in the middle. AGENT_CHUNK=0 keeps the old TOOLMAX behaviour.
+CHUNK=int(os.environ.get("AGENT_CHUNK","7000"))
+BUDGETWARN=float(os.environ.get("AGENT_BUDGETWARN","0.9"))   # warn once per task above this share of CHUNK
+BUDGETWARNED=[False]   # re-armed at the start of every task, so it cannot repeat in the same task
+# The model's REAL context window. VERIFIED against the API, not guessed:
+#   GET https://api.deepseek.com/models -> deepseek-flash: context_window=1048576 (1M)
+#   A hardcoded 128000 here caused a FALSE "125% of the window" warning at ~15% real usage.
+CTXWINDOW=int(os.environ.get("AGENT_CTXWINDOW","1048576"))   # 1M tokens, confirmed by the API
+CTXWARN=int(os.environ.get("AGENT_CTXWARN","90"))            # warn (RED, loud) at this % of the window
+CTXBUDGET=0   # COMPRESSION IS DISABLED, by the operator's explicit decision: no automatic
+#   compaction and none via /compact. The context grows until **the operator** gives /reset, so the
+#   MEMORY block inserted at startup stays present, byte for byte, for the ENTIRE session.
 CTXKEEP=24         # how many recent messages are never compressed
 LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted between sessions)
 ARCH=os.path.join(WORK,"archive")     # COMPLETE snapshots of the history, before every compression
 VERBOSE=[os.environ.get("AGENT_VERBOSE")=="1"]   # /verbose: re-prints code + output in the terminal
 NOSPIN=[os.environ.get("AGENT_NOSPIN")=="1"]     # /nospin: NO live/redrawn line at all (clean scrollback on a phone)
 THINKMIN=float(os.environ.get("AGENT_THINKMIN","0"))   # MINIMUM time "Thinking..." stays on screen (0 = the printed time is exactly the measured one). It never delays a tool step.
-def _cut(o,ref=None):
-    """What goes INTO THE WINDOW: the first TOOLMAX*3/4 chars + the last TOOLMAX/4 chars (the tail is where
-    the tracebacks and the conclusion show up), plus a POINTER to the complete text on disk.
-    Nothing is lost: the original is at `ref` and can be read at any time with a tool call."""
-    if len(o)<=TOOLMAX: return o
-    h,t=TOOLMAX*3//4,TOOLMAX//4
-    _tot=len(o)
-    mid=("[... "+str(_tot-TOOLMAX)+" chars omitted here (NOT LOST). Read them with: "
-         +"read path="+(ref if ref else "<file>")+" offset="+str(h)+" limit="+str(TOOLMAX)+" (then increase offset to continue) ...]")
+def _budget():
+    """How much of a tool output fits IN THE WINDOW for this call. CHUNK raises it above TOOLMAX so a
+    deliberate long read is not decapitated; AGENT_CHUNK=0 falls back to the old TOOLMAX behaviour."""
+    return CHUNK if CHUNK and CHUNK>TOOLMAX else TOOLMAX
+def _cut(o,ref=None,complete=False):
+    """What goes INTO THE WINDOW: the first 3/4 of the budget + the last 1/4 (the tail is where the
+    tracebacks and the conclusion show up), plus a POINTER to the complete text on disk.
+    `complete` says whether the pointer REALLY holds the whole text (see _store): if it does not,
+    the marker says so instead of promising a file that is itself cut."""
+    b=_budget()
+    if len(o)<=b: return o
+    h,t=b*3//4,b//4
+    _hidden=str(len(o)-b)
+    if ref and complete:
+        mid=("[... "+_hidden+" chars omitted here (NOT LOST). Read them with: "
+             +"read path="+ref+" offset="+str(h)+" limit="+str(b)+" ...]")
+    elif ref:
+        mid=("[... "+_hidden+" chars omitted here, LOST (the log "+ref+" is itself truncated) - "
+             +"RE-RUN the step in smaller parts ...]")
+    else:
+        mid=("[... "+_hidden+" chars omitted here, LOST (no log was written) - RE-RUN the step in smaller parts ...]")
     return o[:h]+"\n"+mid+"\n"+o[-t:]
 def _store(o):
-    """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None)."""
-    if len(o)<=TOOLMAX: return o,None
+    """Writes the COMPLETE output into a log on disk and returns (what enters the window, path|None).
+    The file is written in full and then VERIFIED by size; the marker only says NOT LOST when the file
+    on disk really holds every byte."""
+    b=_budget()
+    if len(o)<=b:
+        # Preventive warning, ONCE PER TASK: the output still fits, but one step like this bigger and the
+        # middle is gone. Said now, while it can still be acted on (chunk it / use the `read` tool).
+        if len(o)>b*BUDGETWARN and not BUDGETWARNED[0]:
+            BUDGETWARNED[0]=True
+            print(OF+"   [budget] this step returned "+str(len(o))+" chars, close to the "+str(b)+
+                  "-char limit - one step bigger loses its middle. Split it or use the `read` tool."+N)
+        return o,None
     os.makedirs(LOGDIR,exist_ok=True)
     p=os.path.join(LOGDIR,"tool_"+datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")+".log")
-    try: open(p,"w",encoding="utf-8").write(o)
-    except Exception: return o[:TOOLMAX],None
-    return _cut(o,os.path.relpath(p,WORK)),p
+    complete=False
+    try:
+        with open(p,"w",encoding="utf-8") as f: f.write(o)
+        complete=(os.path.getsize(p)==len(o.encode("utf-8")))
+    except Exception:
+        return _cut(o,None,False),None
+    return _cut(o,os.path.relpath(p,WORK),complete),p
 def _tokm(m):
     s=str(m.get("content") or "")
     for tc in (m.get("tool_calls") or []): s+=str((tc.get("function") or {}).get("arguments") or "")
     return len(s)//4
 def ctx_tokens(): return sum(_tokm(m) for m in M)
+CTXWINDOW_VERIFIED=[False]
+def ctx_check_window():
+    """Asks the API what the model's context window REALLY is and corrects CTXWINDOW if the local
+    constant is wrong. A hardcoded window produced a false '125% of the window' warning at ~15% real
+    usage. One cheap call at startup, cached for the session; if the network fails the local constant
+    stays - it never blocks the startup."""
+    global CTXWINDOW
+    if CTXWINDOW_VERIFIED[0]: return
+    CTXWINDOW_VERIFIED[0]=True
+    try:
+        r=urllib.request.Request("https://api.deepseek.com/models",headers={"Authorization":"Bearer "+K})
+        d=json.loads(urllib.request.urlopen(r,timeout=20).read())
+        mid=os.environ.get("DS_MODEL","deepseek-flash")
+        for m in (d.get("data") or []):
+            if m.get("id")==mid:
+                w=int(m.get("context_window") or 0)
+                if w and w!=CTXWINDOW:
+                    print(OF+"   [ctx] the API reports a "+_K(w)+" window for "+mid+" (local was "+_K(CTXWINDOW)+") - corrected."+N)
+                    CTXWINDOW=w
+                break
+    except Exception:
+        pass
+CTXWARNED=[False]
+def ctx_warn():
+    """LOUD RED warning when the context approaches the model window. It does NOT compress, does NOT
+    touch the history and does NOT stop anything - it only tells the operator it is time for /reset.
+    Fires once per crossing, so it cannot spam every round."""
+    pct=100.0*ctx_tokens()/CTXWINDOW if CTXWINDOW else 0.0
+    if pct>=CTXWARN:
+        if not CTXWARNED[0]:
+            CTXWARNED[0]=True
+            bar="\u2588"*40
+            print("\n"+R+"   "+bar+N)
+            print(R+"   \u26a0 CONTEXT AT "+("%.0f"%pct)+"% OF THE WINDOW ("+_K(ctx_tokens())+"/"+_K(CTXWINDOW)+" tok)"+N)
+            print(R+"   \u26a0 Time to /reset: the next requests may be rejected by the API."+N)
+            print(R+"   \u26a0 I did NOT compress or delete anything - the memory stays intact."+N)
+            print(R+"   "+bar+N+"\n")
+    elif pct<CTXWARN-10:
+        CTXWARNED[0]=False
 def compact_history(force=False):
+    """DISABLED on purpose (operator decision). It used to move heavy tool outputs and old steps to
+    disk and replace them with pointers, so the window stayed small. The operator wants the memory -
+    inserted ONCE at startup - to stay present, untouched, until THEY say /reset, so this now does
+    nothing at all: neither automatically nor via /compact. Returning 0 = 'nothing was compressed'."""
+    return 0
+def _compact_history_DISABLED(force=False):
+    """The old lossless compression, kept for reference only - never called."""
     """LOSSLESS COMPRESSION. When the live window goes over CTXBUDGET tokens:
     1) the COMPLETE history is archived (untouched) in archive/ctx_<date>.json;
     2) the window keeps stubs with a POINTER to the archive (message index, size, start/end),
@@ -528,7 +612,7 @@ def compact_history(force=False):
     return after<before
 SPIN=("⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏")
 # ---------------- task UI: one timer for the WHOLE task + labelled steps ----------------
-TASK={"t0":None,"n":0,"steps":0,"think":0.0,"tool":0.0,"chars":0,"tok_in":0,"tok_out":0,"err":False}   # one "task" = one operator request
+TASK={"t0":None,"n":0,"steps":0,"think":0.0,"tool":0.0,"chars":0,"tok_in":0,"tok_out":0,"cache":0,"err":False}   # one "task" = one operator request
 LIVE={"phase":"idle","desc":"","col":None,"n":0,"t":0.0,"dt":0.0}              # what the live line is printing right now
 def _clk(t):
     """Seconds -> mm:ss (or h:mm:ss above an hour); used for the timings in the UI."""
@@ -613,7 +697,8 @@ def brief(code):
 def _task_head(q=""):
     """Opens a task: the timer starts HERE and does not stop until the final answer.
     Prints the operator line "You > <message>", one blank line, then the TASK box."""
-    TASK.update(t0=time.time(),steps=0,think=0.0,tool=0.0,chars=0,tok_in=0,tok_out=0,n=TASK["n"]+1,err=False)
+    TASK.update(t0=time.time(),steps=0,think=0.0,tool=0.0,chars=0,tok_in=0,tok_out=0,cache=0,n=TASK["n"]+1,err=False)
+    BUDGETWARNED[0]=False   # fresh task: the budget warning may fire once again
     LIVE.update(phase="think",desc="",col=None,n=0,t=time.time())
     t=" TASK #"+str(TASK["n"])+" "
     w=len(t)+6   # a little wider than the text (a few dashes of air), still compact
@@ -826,7 +911,8 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control. Only on the Android build. Includes the 'ui' tool: SEE and CONTROL other apps. Actions: read (returns a COMPACT text list, ~10x smaller than JSON; params: max, depth, textonly), find (SEARCH a node by text WITHOUT reading the whole screen - USE THIS FIRST when looking for a contact/button/field; returns matches with center coordinates), settext (type into a field), click, tap, swipe, scroll, back/home/recents, openapp, windows, wake (keep screen on for UI work), sleep (release), service (status). Also FULL generic SDK access via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell with uid=2000(shell) on this very phone, run FROM the app with no PC. Only on the Android build. Runs a raw shell command as the privileged shell user, which app code cannot: pm grant/revoke runtime permissions, appops set, settings put secure/global, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop/setprop (read), svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as on debuggable apps, ifconfig/ip, cat /proc/net/*. This bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing. Runs the command and returns stdout+stderr. Prefer ONE command per call; combine with && if needed.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long-running work (builds, downloads, servers, llama.cpp). NEVER use raw nohup/& through adbsh - you WILL lose track of the process, read a stale log and get confused by mixed output. This tool keeps a persistent REGISTRY: every job gets a unique id, its own timestamped log file and a tracked PID. Actions: start (cmd=<shell command>, name=<label>) launches and registers; status shows what is ACTUALLY running right now (checks /proc, not guesses) with duration and log size; log (job=<id>, lines=N) shows the LAST lines of THAT job's log only; kill (job=<id>) stops it; list shows all jobs ever; clean removes finished ones. RULE: for any command that can take more than ~30 seconds, use action=start, then poll with action=status and action=log - never read a log file blindly, and never assume an old log is current.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"COMPILE TOOLCHAIN: install and use a complete native build stack ON the phone (clang 21, make, cmake, ninja/samu, python, pip, git, rust, libc++, openssl...) WITHOUT PC and WITHOUT Termux. Use action=status to see what is installed; action=bootstrap to download+install everything (through the Termux package repo, ~500MB, done once); action=pip_install to pip-install a PyPI package INCLUDING C/C++ extensions (the toolchain compiles them natively); action=compile to build a C/C++ file into a shared library; action=env to get the environment variables (PATH, CC, CXX, CFLAGS, LDFLAGS...). ALWAYS run action=preflight BEFORE any big build (10-second test of C, C++, math linking, SSL, make, cmake) - it catches every linking problem upfront instead of after minutes of compiling. Use action=profile to get ready-made flags for cmake/cflags/ldflags (libc++, bionic libm, target API, rpath already correct) instead of discovering them by trial. Use action=fix after anything reinstalls Termux packages (re-applies all environment repairs). action=env-file writes the persistent environment. This makes the phone a self-sufficient build machine: numpy, scipy-level packages, llama.cpp, any compiler-requiring pip package can be built here.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | bootstrap | pip_install | compile | env | tpm","enum":["status","bootstrap","pip_install","compile","env","tpm","preflight","profile","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pandas, pillow). For tpm: termux package (e.g. nano)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 300 for compile, max 3600)"}},"required":["action"]}}},
-   {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
+   {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
+   {"type":"function","function":{"name":"multi","description":"BATCH: run SEVERAL small, independent operations in ONE call and get ONE consolidated answer. Use it whenever you need 2-6 quick reads/listings/stat-like steps that do NOT depend on each other: it costs ONE request instead of one per operation (each request re-sends the whole context, so batching is the single biggest cost saver). Keep each entry SMALL. Do NOT bundle heavy pipelines here: if an entry can crash or is long, use a normal per-step tool so a failure stays isolated and visible.","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
   "1) `python`: run Python 3 code. Has the full stdlib PLUS pre-installed: requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve, python-dateutil, six, pyyaml, toml, packaging, typing-extensions. NO pip, you CANNOT install more (numpy/pandas/cryptography are NOT available - do not try). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
@@ -895,8 +981,20 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
   "WHILE WORKING (mandatory, never skip): BEFORE EVERY python tool call you MUST put a FULL, COMPLETE sentence in the `content` field, in the operator\u2019s language, telling what you are about to do and why. There is NO word limit and NO character limit: NEVER cut, shorten or abbreviate it with \u201c...\u201d or \u201c\u2026\u201d - the operator must always see the WHOLE sentence he needs to follow you. NEVER send a tool call with empty content. Markdown is NOT allowed in that sentence. "
   "VISION: you have a second tool, `look(path, prompt)` - it sends an IMAGE file to the same model with THINKING ENABLED and returns what is REALLY in it. Use it whenever the operator asks you to see/analyze a screen, a screenshot, a chart or a photo: first capture it (e.g. `xwd -root -out shot.xwd` then convert with ffmpeg to png), then call look on the png. Never guess what an image contains - look at it. "
-  "STEP LABELS: the FIRST line of every python tool call is a comment (lowercase) - the terminal prints it as the label of that step, so write WHAT the step does, clearly and COMPLETELY, in the language the operator is currently using (mirror their language: if they write English, use English; if Romanian, use Romanian), never `# step 1` or `# test`. There is NO word limit: write the full label, do not cut it. "
+  "STEP LABELS: the FIRST line of every python/bash tool call is a comment (lowercase) - the terminal prints it as that step’s label. Say WHAT the step does, in the language the operator is currently using (mirror them), never `# step 1` or `# test`. DENSITY RULE (this is billed, the label is part of the context sent on EVERY later request): one short line, the essential verb + object, no trailing explanation, no restating the task, no repeating the previous label. Aim for ~60-90 chars; a label that needs 200 is usually two steps. Completeness of INFORMATION, not of prose. "
   "The terminal UI shows a live task timer (from the operator's request to your final answer, split into thinking vs tool time) and one labelled line per finished step; no code and no output unless the operator toggles /verbose. "
+  "BATCH SMALL STEPS (biggest cost saver): every request re-sends the WHOLE context, so each extra "
+  "step costs the full history again. When you need 2-6 quick, INDEPENDENT things (a listing, a short cat, "
+  "a status), do NOT spend 6 steps: use the `multi` tool ONCE with the list of ops. Rule of thumb: if step B "
+  "would not read anything step A printed, they belong in the SAME `multi` call. DO NOT batch when the next "
+  "step depends on the previous output, when an entry is heavy/long or can hang, or when the operator asked "
+  "to see each step - a failure must stay isolated and visible. Small steps are GOOD for reliability; the "
+  "only waste is running them one request at a time. "
+  "CODE DENSITY (the code you send is billed on EVERY later request): the `code`/`cmd` field of a tool call "
+  "stays in the context forever and is re-sent each round. So write the SHORTEST code that does the job: no "
+  "decorative comments (only the one required label line), no re-printing data you already printed, no "
+  "boilerplate. This does NOT mean fewer steps or bigger pipelines: it means each step carries only the code "
+  "it needs. "
   "CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. "
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
@@ -976,7 +1074,7 @@ def print_usage_compact(usage):
     h =usage.get("prompt_cache_hit_tokens") or 0
     rz=cd.get("reasoning_tokens") or 0
     SESS["in"]+=pt; SESS["out"]+=ct; SESS["rounds"]+=1
-    TASK["tok_in"]+=pt; TASK["tok_out"]+=ct   # same server numbers, accumulated for THIS task
+    TASK["tok_in"]+=pt; TASK["tok_out"]+=ct; TASK["cache"]+=h   # same server numbers, accumulated for THIS task
     if h: SESS["cache_hit"]+=h
     line="\u25aa tok \u2191%s \u2193%s"%(_K(pt),_K(ct))
     if pt and h: line+=" \u00b7 hit %d%%"%int(100.0*h/pt)
@@ -991,6 +1089,7 @@ def flush_task_tokens():
     if not SESS["rounds"] and not lines: return
     print()   # blank line: the token block is separate from the "TASK #N done" footer above it
     for ln in lines: print(G+"   "+ln+N)
+    if TASK["tok_in"]: print(G+"   \u25aa this task cache HIT "+("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"]))+" (higher = cheaper)"+N)
     si,so=SESS["in"],SESS["out"]
     cum="   \u25aa session tok \u2191%s \u2193%s = %s"%(_K(si),_K(so),_K(si+so))
     if si: cum+=" \u00b7 hit %d%%"%int(100.0*SESS["cache_hit"]/si)
@@ -1594,6 +1693,45 @@ def run_android_tool(tool, action, params):
 
 
 
+def run_multi_tool(ops):
+    """BATCH runner: several SMALL independent operations in ONE tool call, ONE consolidated answer.
+    Why: every request re-sends the whole context, so 6 little steps cost 6x the context; run as one
+    call they cost once. Design rules that keep it SAFE on the phone:
+      - each entry is independent (no entry depends on a previous one's output),
+      - each entry is small and short-lived (a listing, a short cat, a status),
+      - one entry failing NEVER aborts the others (its error is shown in place),
+      - the total output is budgeted, so the answer cannot grow past the window limit."""
+    if not isinstance(ops, list) or not ops:
+        o = "[multi] give a list of 1-6 ops"
+        n=TASK["steps"]+1; TN[0]+=1; TASK.update(steps=n,chars=TASK["chars"]+len(o))
+        _show_step("multi (no ops)", o, n); return o
+    ops = ops[:6]                     # hard cap: 6 entries max
+    out = ["[multi] " + str(len(ops)) + " operations, ONE call (cost: 1 request instead of " + str(len(ops)) + ")"]
+    for k, op in enumerate(ops, 1):
+        kind = (op.get("kind") or "bash").strip()
+        body = str(op.get("body") or "")
+        nm = (op.get("name") or "").strip() or (kind + " " + str(k))
+        head = "--- [" + str(k) + "] " + nm + " (" + kind + ") ---"
+        if not body.strip():
+            out.append(head + "\n(empty body - skipped)"); continue
+        try:
+            r = run_tool(body) if kind == "python" else run_bash_tool(body)
+            r = (r or "").rstrip()
+        except Exception as e:
+            r = "!! FAILED (isolated, the others still ran): " + e.__class__.__name__ + ": " + str(e)
+        # per-entry cap so one huge entry cannot blow the whole answer
+        if len(r) > 2000:
+            r = r[:1400] + "\n[... " + str(len(r)-1800) + " chars omitted - use the `read` tool if you need them ...]\n" + r[-400:]
+        out.append(head + "\n" + (r if r else "(no output)"))
+    o = "\n".join(out)
+    if len(o) > 7000:
+        o = o[:6600] + "\n[... total capped; run fewer/smaller ops ...]"
+    n=TASK["steps"]+1
+    dsc="multi: "+str(len(ops))+" ops"; col=HCLR[sum(map(ord,dsc))%len(HCLR)]
+    TN[0]+=1; TASK.update(steps=n,chars=TASK["chars"]+len(o))
+    _show_step("multi "+str(len(ops))+" ops", o, n)
+    return o
+
 def call_tool(c):
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
     endpoint (thinking ON). Both increment the SAME step counter and print the SAME column
@@ -1608,6 +1746,8 @@ def call_tool(c):
         return run_bash_tool(a.get("cmd",""))
     if fn=="read":
         return run_read_tool(a.get("path",""), a.get("offset",0), a.get("limit",4000))
+    if fn=="multi":
+        return run_multi_tool(a.get("ops") or [])
     if fn=="smart":
         cmd=a.get("cmd","") or ""; code=a.get("code","") or ""
         eng,why=route(cmd,code)
@@ -2028,6 +2168,7 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
 
 
 refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
+ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
 # --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
 def _ctr(txt, visible):
     return txt   # aliniat la stanga (cerut de operator)
@@ -2063,11 +2204,13 @@ while 1:
     if q=="/ctx":
         _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
         _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
-        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok | compress threshold "+_K(CTXBUDGET)+"tok (0=off) | steps kept intact: last "+str(CTXKEEP)+N)
+        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok = "+("%.0f"%(100.0*ctx_tokens()/CTXWINDOW))+"% of "+_K(CTXWINDOW)+" ("+str(CTXWARN)+"% = red warning) | compression OFF (context grows until /reset)"+N)
+        _hit="n/a"
+        if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
+        print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
         print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
     if q=="/compact":
-        ok=compact_history(force=True); save_ctx()
-        print(G+"   [compact] "+("done, context compressed WITHOUT loss (the original is in archive/)" if ok else "nothing to compress / archiving failed - I touched nothing")+N); continue
+        print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, not on request), so the memory inserted at startup stays intact until you give /reset. Nothing was changed."+N); continue
     if q in ("/nospin","/spin"):
         NOSPIN[0]=(q=="/nospin"); print(G+"   [ui] "+("NOSPIN: no live line at all - the terminal scrollback stays clean (recommended on a phone)" if NOSPIN[0] else "live line back on (spinner + timer rewritten in place)")+N); continue
     if q=="/verbose":
@@ -2184,7 +2327,7 @@ while 1:
             print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
             print(_task_foot("stopped: empty answer"));break
         tries=0
-        M.append(m);save_ctx()
+        M.append(m);save_ctx();ctx_warn()
         if m.get("tool_calls"):
             _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
             _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
@@ -2196,7 +2339,7 @@ while 1:
             for c in m["tool_calls"]:
                 code=json.loads(c["function"]["arguments"] or "{}").get("code","")
                 o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
-                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx()
+                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
         else:
             print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
             print(_task_foot())

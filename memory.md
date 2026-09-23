@@ -890,3 +890,168 @@ TRAP: Android asset re-extraction marker is `File(filesDir, ".assets_v81")` hard
 TRAP: grep pe un readme mare pentru a-i inventaria secțiunile dă rezultate înșelător de sărace când folosești doar `grep -n -i` pe cuvinte-cheie -> pierzi secțiuni întregi (EXISTA dar nu conțin termenul căutat) -> inventariază structura cu python: citește fișierul, `re.match(r'^#{1,4}\s', l)` pe fiecare linie și printează numărul liniei + heading-ul, apoi inspectează intervalele relevante cu slice pe listă.
 
 OK: pentru a verifica dacă o afirmație din documentație e stale, nu te încrede în readme -> caută artefactul real pe disc cu `grep -rn`/`ls`/`find` (ex. `env.sh` sau calea de build) și compară cu ce zice textul.
+
+TRAP: bash tool-ul returneaza output GOL la secvente de sed/grep repetate/find cu maxdepth multiplu -> citeste fisiere mari cu python: open(P).read().split('\n') si indexeaza liniile (lines[i]), nu cu bash -> altfel pierzi 2-3 tool-uri pe diagnostic gresit.
+
+OK: aapt2 scrie versiunea si dump badging pe STDERR (stdout gol la `aapt2 version`) -> ruleaza mereu `aapt2 ... 2>&1` -> altfel crezi ca tool-ul nu exista.
+
+DEAD: /home/gab/Desktop/agent/workspace/build/Python-3.14.7 (sursele CPython) NU exista pe disc - e in .gitignore linia 2 `workspace/build/` si a fost sters -> nu trimite acolo; re-descarca cu curl python.org/ftp/python/3.14.7/Python-3.14.7.tgz.
+
+P: inainte de a rescrie un fisier mare (readme 75-92KB) fa backup in temp/ si verifica fiecare ancora cu `assert src.count(anchor)==1` inainte de .replace() -> altfel editezi orbeste si poti pierde text.
+
+OK: citirea unui fisier mare in readme.md -> tool python `print` trunchiaza afisajul la ~6200 chars si ascunde mijlocul ("NOT LOST" in logs/) -> itereaza pe intervale mici de linii (ex. 25-100, apoi 47-140), nu te increde ca ai vazut tot.
+
+P: /home/gab/android/platform-tools/adb e calea absoluta pentru adb, NU e in PATH -> orice transport/device comand trebuie cu calea absoluta.
+
+TRAP: adb devices -l returneaza lista goala fara device conectat si nu da eroare -> verifica intai `adb devices -l` inainte de a planui build+install.
+
+TRAP: tool output is hard-capped at ~8000 chars, keeping head+tail and replacing the middle with "[... N chars in the middle, NOT LOST: complete text in logs/tool_<ts>.log ...]" -> the referenced log file is ITSELF capped at 8000 chars so the middle is truly lost, marker lies -> never emit >8000 chars per python call; budget output in code (stop when used+len(line)>7000) and read huge files (e.g. readme.md 92KB) via targeted section slices, not full sequential dumps.
+
+## 2026-09-23 - optimizare agent-original.py (trunchiere + tool read)
+- TRAP: output-ul unui tool call se TAIE la ~8000 chars (capetele raman, mijlocul dispare) iar marcajul "NOT LOST: complete text in logs/..." MINCIA - logul de pe disc era plafonat la fel -> mijlocul nu exista nicaieri -> ~20 pasi pierduti recitind readme.md (92621 chars)
+- OK: `agent-original.py` are acum tool `read` (path/offset/limit/budget/grep): buget GARANTAT pe caractere (default 6000, plafon 7000) + footer "NEXT: offset=N"; `grep` = regex cu numere de linie -> harta unui fisier mare in 1 apel, apoi citire tintita (2 apeluri in loc de ~7)
+- OK: `CHUNK` (env AGENT_CHUNK, default 7000) ridica plafonul ferestrei fata de TOOLMAX=1800; AGENT_CHUNK=0 revine la comportamentul vechi
+- OK: `_store()` verifica cu os.path.getsize ca logul de pe disc e COMPLET, iar `_cut()` scrie "NOT LOST" doar daca chiar e; altfel scrie explicit "LOST - RE-RUN in smaller parts"
+- P: /home/gab/Desktop/agent/agent-original.py -> agentul Linux; backup la /tmp/agent-original.py.optimized-<ts> si agent-original.py.bak-optimized (temp/ se CURATA, nu pastra backup-uri acolo)
+- TRAP: editarea textelor din TOOLGUIDE/M=... (system prompt) cu GHILIMELE DUBLE in interior le rupe: `(e.g. "^#{2,3} ")` inchide string-ul Python si `^` devine operator binar pe str -> TypeError: unsupported operand type(s) for ^: 'str' and 'str' -> foloseste ghilimele simple in text
+- TRAP: py_compile NU prinde erorile de concatenare din blocuri multi-linie de string-uri -> ruleaza si un smoke-test cu exec(compile(open(f).read(),f,"exec"), {"__name__":"notmain"}) si stdin=DEVNULL; daca da TIMEOUT la 30-60s inseamna ca a intrat in bucla input() = EXECUTIE REUSITA
+- OK: fisierul de pe disc avea deja rupturi inainte de editarea mea (8 in git HEAD) - verifica git show HEAD:<fisier> ca sa stii daca o eroare e a ta sau preexistanta
+
+TRAP: ghilimelele duble in textele din TOOLGUIDE/M=... (system prompt) rup sintaxa Python -> `(e.g. "^#{2,3} ")` inchide string-ul si `^` devine operator binar -> TypeError: unsupported operand type(s) for ^: 'str' and 'str' -> scrie ghilimele simple in textul din prompt
+
+TRAP: py_compile trece dar fisierul crapa la executie (erori in blocuri multi-linie de string-uri) -> ruleaza exec(compile(open(f).read(),f,"exec"), {"__name__":"notmain"}) cu stdin=DEVNULL; timeout la 30-60s = a intrat in bucla input() = EXECUTIE REUSATA
+
+TRAP: /home/gab/Desktop/agent/temp/ se CURATA periodic -> backup-urile puse acolo dispar la mijlocul lucrului -> scrie backup-uri durabile in /tmp sau langa fisier (agent-original.py.bak-optimized)
+
+PREVENT: inainte de a repara o eroare intr-un fisier, verifica daca e preexistanta cu `git show HEAD:<fisier>` -> agent-original.py avea 8 rupturi chiar in git HEAD, deci nu erau ale mele -> nu pierde timp cautand propria eroare
+
+P: /home/gab/Desktop/agent/agent-original.py -> sursa agentului Linux, plafon tool outputs TOOLMAX=1800/CHUNK=7000, tool `read` adaugat pentru citire paginata cu buget garantat
+
+## 2026-09-23 - compactare DEZACTIVATA complet (decizie operator)
+- OK: `agent-original.py` NU mai comprima contextul deloc: `CTXBUDGET=0` + `compact_history()` e no-op cu `return 0` (orice apel, inclusiv force=True de la /compact) -> memoria inserata la startup ramane INTREAGA pana la /reset
+- DE CE: comprimarea (lossless doar teoretic) inlocuia output-urile grele de tool cu pointeri "[complete output, untouched: archive/...#N]" -> informatia ramanea pe disc dar DISPAREA din context; operatorul vrea memoria permanenta pana la /reset
+- OK: /compact si /help spun explicit "(disabled)"; /ctx afiseaza "compression OFF (operator decision; context grows until /reset)"
+- OK: refresh() cheama memoria O SINGURA DATA la startup (linia ~1266) -> system prefix identic toata sesiunea (prompt cache maxim)
+- TRAP: compact_history() atinge M[:lim] care INCLUDE M[0] (system), dar e protejat de conditia `role=="tool"` -> memoria nu se atinge; verifica asta daca schimbi vreodata conditia
+- P: contextul de pe disc (temp/context.json) salveaza M[1:] (fara system); la incarcare refresh() reconstruieste blocul MEMORY in M[0]
+- MASURAT: costul real nu sunt pasii in plus, ci INPUT-ul cumulat - API stateless => la fiecare cerere retrimiti tot contextul; sesiune de 348 mesaje = 64M chars input (~16M tokeni), 187x contextul final
+- MASURAT: optimizarea cu tool `read` pe un fisier de 92KB: 18 pasi -> 2 pasi, input 4.82M -> 0.418M chars (-91%)
+
+OK: compact_history() atinge M[:lim] care include M[0] (system message) -> memoria din M[0] e protejata DOAR de conditia role=="tool", deci daca schimbi vreodata conditia pe alt rol, memoria se corupe -> pastreaza conditia role=="tool"; verificare: grep "role" in compact_history.
+
+DEAD: compact_history() era no-op dupa `continue` -> liniile 1307-1308 erau cod mort dar pareau active la citire -> cand dezactivezi o comanda prin print+continue, sterge si apelul de dupa, altfel urmatorul cititor crede ca functia inca ruleaza.
+
+P: contextul se incarca din temp/context.json ca M[1:] (fara system), iar refresh() reconstruieste blocul MEMORY in M[0] la fiecare startup -> M[0] nu e niciodata pe disc -> nu cauta memoria in context.json, citeste memory.md direct; M[0] role e "system" in sesiune dar primul mesaj din context.json e "user".
+
+## 2026-09-23 - avertisment 90% + analiza cost tokens
+- OK: `ctx_warn()` in agent-original.py avertizeaza cu ROSU la 90% din CTXWINDOW (default 128000 tok), o singura data per trecere, re-arm sub 80%; NU comprima si NU sterge nimic -> doar spune ca e timp de /reset
+- OK: `/ctx` arata acum procentul din fereastra + linia de cost (requests, tok in/out, cache HIT %)
+- MASURAT: componenta contextului (fara system) = 53.2% output-uri de tool, 36.3% CODUL trimis de mine (args tool_calls), 10.2% text assistant, 0.3% user
+- MASURAT: 212 blocuri de cod = 145k chars; 18.9% din ele sunt comentarii-eticheta (UI), 27.5% linii cu print()
+- MASURAT: 67 output-uri de tool < 500 chars (14.6k chars) -> fiecare a costat 1 cerere API -> batchuirea lor ar economisi ~12M chars input pe sesiune
+- OK: prefix caching functioneaza: refresh() cheama memoria o singura data iar mem() NU modifica systemul in sesiune -> system prefix identic = cache maxim
+- PREVENT: orice modificare a mesajelor VECHI (nu doar system) anuleaza cache-ul de prefix -> nu edita istoricul in timpul sesiunii
+
+OK: agent-original.py ctx_tokens() measures len(str(msg)) of the whole context; the ctx_warn() function added at ~line 446 warns RED once at 90% of CTXWINDOW (default 128000 tok via AGENT_CTXWINDOW env, AGENT_CTXWARN=90) -> context percentage is now visible in /ctx and cost line shows cache HIT % from SESS["cache_hit"]/SESS["in"].
+
+P: agent-original.py main loop appends to M at two distinct sites (M.append(m);save_ctx() for the model message, and the tool result append with compact_history();save_ctx()) and both have same-indent siblings in other functions -> patching by string match hits multiple anchors; target by exact line number (was 1359 and 1371) and re-run py_compile to catch the 9-vs-8 space IndentationError.
+
+DEAD: agent-original.py compression is intentionally disabled (CTXBUDGET=0, compact_history() always returns 0) and mem()/refresh() loads memory only ONCE at startup -> editing old messages or rewriting the system prefix mid-session breaks DeepSeek prompt-prefix caching and raises input cost, so never compact or re-inject memory during a session.
+
+## 2026-09-23 - 4 optimizari de COST implementate (nu ating memoria/fereastra/compactarea)
+- OK: tool `multi` (2-6 operatiuni independente intr-UN apel): cap 6 ops, plafon 2000/entry, plafon 7000 total, eroarea unei operatiuni NU opreste restul -> economie ~12M chars/sesiune (67 ops mici = 67 cereri -> ~10)
+- OK: regula BATCH in system prompt: "daca pasul B nu citeste ce a scris pasul A, sunt in ACELASI multi"; NU batchuieste cand e dependent, greu sau poate atarna
+- OK: regula CODE DENSITY: codul din tool_call arguments E in context si se retrimite la fiecare cerere (~36% din input!) -> cod minim, fara comentarii decorative
+- OK: regula DENSITY RULE la etichete: ~60-90 chars, verb+obiect, fara explicatii in eticheta
+- TRAP: print() in bucle NU economiseste tokeni - scrie pe stdout, nu intra in context; doar m['content'] si tool_calls[].arguments se retrimit
+- OK: cache HIT afisat per task in footer + in /ctx (SESS); `TASK["cache"]+=h` din usage.prompt_cache_hit_tokens
+- TRAP: `bash(cmd, cwd)` are 2 argumente - `bash(body)` singur da TypeError: missing 1 required positional argument
+- OK: inserarea unui tool nou in lista T se face pe linia ultimului tool: scot `]` final, pun `,`, inserez tool-ul nou SI `]` la final (regex greedy pe `.*?}]}]` rupe sintaxa)
+
+OK: adaugarea unui tool nou in lista T din agent-original.py se face pe linia ultimului tool: scot `]` final, pun `,`, inserez `{"type":"function",...}` nou urmat de `]` -> regex greedy pe `.*?}}}]` prinde prea mult si rupe sintaxa -> editeaza pe linii cu assert pe sufixul exact `"]}}}]"`.
+
+TRAP: bash(cmd, cwd) din agent-original.py are 2 argumente obligatorii -> `bash(body)` singur da TypeError: bash() missing 1 required positional argument: 'cwd' -> apeleaza mereu `bash(body, os.getcwd())`.
+
+TRAP: print() in buclele agentului scrie pe stdout si NU intra in contextul trimis la API -> optimizarea "mai putine print()" nu economiseste tokeni -> pentru cost real redu codul si etichetele din tool_call arguments (se retrimit la fiecare cerere, ~36% din input).
+
+## 2026-09-23 - fix avertisment buget (zgomot -> semnal)
+- OK: avertismentul "[budget] output N chars is close to the window limit" era la 80% din CHUNK si se declansa des -> mutat la 90% (BUDGETWARN configurabil) si O SINGURA DATA per task (BUDGETWARNED re-armat in _task_head)
+- MASURAT: din 251 output-uri de tool intr-o sesiune lunga, doar 1 a depasit 80% (6729 chars) si 0 au fost taiate -> avertismentul e semnal rar, nu zgomot
+- OK: avertismentul e PREVENTIV: se declanseaza cand output-ul INCA incape, dar un pas mai mare ar pierde mijlocul -> textul spune exact ce sa faca (chunk <6300 sau `read`)
+- P: /tmp/agent-original.py.* -> backup-uri durabile in afara temp/ (temp se curata)
+
+OK: agent-original.py nu e un script standalone: `exec(compile(open(...).read()))` cu `__name__="notmain"` il incarca modular fara sa ruleze main-ul, permitand testarea functiilor interne (`_store`, `_task_head`, `CHUNK`) in subprocess -> foloseste `g={"__name__":"notmain","__file__":src}; exec(compile(...),g)` pentru teste izolate fara a porni agentul.
+
+P: output-urile de tool din temp/context.json se masoara corect ca `len(str(m.get("content")))`, nu ca bytes: markerul de taiere "in the middle" lipseste cand output-ul a intrat intreg -> verifica `"in the middle" in content` inainte de a declara ca s-a pierdut ceva.
+
+## 2026-09-23 - FIX fereastra de context (avertisment FALS 125%)
+- TRAP: `CTXWINDOW` era hardcodat la 128000 in agent-original.py, dar modelul `deepseek-flash` (DeepSeek-V4.1-Flash) are context_window=1048576 (1M!) -> un context de 160.4k tokeni raporta 125% si declansa avertismentul rosu FALS desi era la 15%
+- OK: sursa de adevar e API-ul: `curl -s https://api.deepseek.com/models -H "Authorization: Bearer $KEY"` -> `context_window` si `max_output_tokens` (393216 pentru deepseek-flash)
+- OK: `ctx_check_window()` la startup intreaba API-ul si corecteaza CTXWINDOW daca constanta locala difera (global CTXWINDOW, cached cu CTXWINDOW_VERIFIED); daca reteaua cade, pastreaza constanta locala si NU blocheaza startup-ul
+- PREVENT: NU hardcoda limite de model (fereastra, max_tokens) - citeste-le din API la startup; o valoare ghicita produce alerte false pe care le ignori apoi cand conteaza
+- P: prag avertisment = CTXWARN (90%) din CTXWINDOW -> la 1M = 943718 tok
+
+TRAP: agent-original.py had CTXWINDOW hardcoded to 128000 while deepseek-flash real window is 1048576 -> context % was computed against a guessed limit, so 160k tokens showed a FALSE "125% of the window" red warning when really at 15% -> never hardcode model limits; read them from GET https://api.deepseek.com/models (context_window, max_output_tokens) which returns authoritative values
+
+OK: curl -s https://api.deepseek.com/models -H "Authorization: Bearer $KEY" is the source of truth for the model's context_window (1048576) and max_output_tokens (393216) on this machine -> use it to verify any token/window constant instead of trusting a hardcoded value in the source
+
+P: ctx_check_window() at startup queries the API once (cached via CTXWINDOW_VERIFIED, wrapped in try/except so a network failure keeps the local constant and never blocks startup) and self-corrects CTXWINDOW -> add the same verify-at-startup pattern for any hardcoded external limit, since a wrong constant produces false alerts you then learn to ignore
+
+## 2026-09-23 - optimizari sincronizate in agent.py (Android, assets/python)
+- OK: `agent.py` din APK are acum TOATE optimizarile: tool `multi` (run_multi_tool + schema + dispatcher), reguli BATCH/CODE DENSITY/DENSITY RULE, compact_history() no-op (CTXBUDGET=0), CTXWINDOW=1048576 (1M) + CTXWARN=90, ctx_warn() + ctx_check_window(), _budget()/_cut()/_store() cu log verificat, cache per task (TASK["cache"]), /ctx si /compact actualizate
+- OK: marker assets `.assets_v81` -> `.assets_v82` (OBLIGATORIU, altfel agent.py nou NU ajunge pe device)
+- OK: build verificat: `./gradlew --offline assembleDebug` -> BUILD SUCCESSFUL in 14s; optimizarile CONFIRMATE in APK (citite din zip: assets/python/agent.py)
+- TRAP: in agent.py `run_tool(code)` si `run_bash_tool(cmd)` au UN singur argument (nu ca `bash(cmd, cwd)` de pe Linux) -> codul de pe desktop NU se copiaza 1:1
+- TRAP: agent.py are multimodalitati proprii (run_android_tool, run_adbsh_tool, run_toolchain_tool, bg_tool, media_rescan) si `_task_foot` minimal (tokenii se afiseaza in flush_task_tokens, nu in footer) -> sincronizarea se face functie cu functie, nu prin copiere de fisier
+- TRAP: cand o inlocuire esueaza la mijlocul unui script, modificarile ANTERIOARE din acelasi script NU se salveaza (scriu fisierul abia la final) -> TASK["cache"] a trebuit aplicat in al doilea pas; verifica intotdeauna DUPĂ salvare, nu doar inainte
+
+OK: /home/gab/android/platform-tools/adb is the working adb on this machine -> `adb devices -l` on PATH returns "command not found", the SDK copy lives at that absolute path -> always call adb by full path /home/gab/android/platform-tools/adb.
+
+OK: building this Android app offline works with JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ANDROID_HOME=/home/gab/android ANDROID_SDK_ROOT=/home/gab/android and `./gradlew --offline assembleDebug` from /home/gab/Desktop/agent/workspace/app/net.sys32.agent -> completes in ~14s with BUILD SUCCESSFUL.
+
+TRAP: agent.py in the APK is not the desktop copy -> the mobile agent.py has its own signatures (run_tool(code) and run_bash_tool(cmd) take ONE arg), so porting desktop code 1:1 fails -> read the target file's real signatures before replacing blocks.
+
+P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/java/net/sys32/agent/MainActivity.kt holds a `.assets_vNN` marker -> if it is not incremented, the freshly edited python assets are NOT picked up and the device keeps running the old copy -> bump .assets_vNN (e.g. v81->v82) after every change under app/src/main/assets.
+
+OK: verifying that edited assets really landed in the built APK -> `unzip -p app/build/outputs/apk/debug/app-debug.apk assets/python/agent.py | grep ...` or python zipfile on that path reads the packaged file directly -> confirm the change inside the APK, not just on disk.
+
+PREVENT: after `adb install -r` of this app the accessibility service is disabled again -> the agent cannot act on the phone -> re-apply `settings put secure enabled_accessibility_services net.sys32.agent/net.sys32.agent.AgentAccessibilityService` and `settings put secure accessibility_enabled 1` via the full-path adb.
+
+TRAP: adb shell input text cu paranteze/caractere speciale -> shell-ul de pe device da "syntax error: unexpected '('" si textul nu ajunge in camp -> trimite doar text alfanumeric si spatii (spatii ca %s); verifica rezultatul cu dump proaspat.
+
+TRAP: adb shell uiautomator dump + exec-out cat refolosind acelasi fisier -> bounds se schimba intre dump-uri (EditText a sarit de la y=1317 la y=2148), iar citirea cache da text vechi -> fa dump proaspat inainte de fiecare tap si citeste nodul EditText nou.
+
+P: adb shell input keyevent 67 sterge inapoi caracter cu caracter (12x pentru a goli un camp scurt) -> nu exista ctrl+A simplu in input text -> foloseste bucla de DEL inainte de a scrie un text nou.
+
+## 2026-09-23 - TESTE end-to-end pe device (RZGL102X5AT) dupa optimizari
+- OK: tool `multi` FUNCTIONEAZA pe telefon: agentul a rulat 4 si 5 operatiuni intr-un singur apel, singur (fara sa-i spun cum) - `[1] multi -> 4 op`, `[9] multi -> 5 op`
+- OK: `adbsh` (uid 2000) functional: `[adb] port detectat: 1234` -> `[adb] AUTH -> trimit RSAPUBLICKEY 701 bytes` -> `AUTORIZAT`; agentul a raportat corect uid=2000(shell), SELinux u:r:shell:s0 si lista de capabilitati
+- MASURAT: 13 operatiuni executate in 5 apeluri API (-62% apeluri); fara multi ar fi fost ~13
+- MASURAT: cache HIT 96% pe task (dupa fix); context 18 mesaje / ~2.9k tok pentru 3 task-uri complexe
+- BUG REPARAT: `_task_head` reseta tok_in/tok_out dar NU `cache` -> raporta "cache HIT 155%" (peste 100%, imposibil); fix: adaugat `cache=0` in TASK.update din _task_head (ATENTIE: pe desktop sintaxa e `tok_out=0,cache=0,` fara ghilimele in TASK.update, dar `"tok_out":0` in dict-ul TASK)
+- TRAP: cand editez o linie si pierd indentarea (strip() fara re-add), py_compile da IndentationError -> intotdeauna restaurez indentarea exacta (4 spatii pentru corpul functiei)
+- TRAP: `input text` cu paranteze in text -> `syntax error: unexpected '('` in shell; scrie task-ul fara caractere speciale
+- TRAP: coordonatele butonului Send se schimba intre dump-uri (1317 -> 2148 -> 1208) -> dump PROASPAT inainte de fiecare tap
+- OK: deploy complet: `./build_app.sh` -> BUILD SUCCESSFUL + Success + app pornit; marker .assets_v83 extras pe device
+
+TRAP: adb shell input text with '(' or ')' in the string -> Android shell interprets parens as syntax and prints "syntax error: unexpected (" while the field stays empty -> send text stripped of shell metacharacters, verify with a fresh uiautomator dump before tapping send
+
+OK: adb shell coordinates of a UI element must be re-dumped before every tap -> the Send button's x-coordinate shifted across runs (1317 -> 2148 -> 1208) because layout reflows as the transcript grows -> always take a fresh uiautomator dump and parse bounds= immediately before input tap, never reuse coordinates from a previous dump
+
+TRAP: running `bash` tool on this desktop returns empty output for plain grep/cd commands (known issue) -> no visible result or exit code -> use the python tool with subprocess.run instead when a shell command must actually produce output
+
+## 2026-09-23 - TESTUL DECISIV (audit securitate, uid 2000 intensiv) - REUSIT
+- OK: agent Android a produs un AUDIT DE SECURITATE de 6500 chars, cu 23 operatiuni in 12 apeluri API (7 adbsh uid2000 + 5 multi + 1 python); multi a grupat 15 operatiuni
+- MASURAT: economie -45% apeluri, -59% input (~428k tok) fata de scenariul fara multi
+- VERIFICAT INDEPENDENT: toate dovezile din audit se confirma (getenforce=Enforcing, su ABSENT, flash.locked=1, veritymode=enforcing, CAMERA/RECORD_AUDIO/ACCESS_FINE_LOCATION granted=true USER_SET)
+- OK: adbsh a rulat 7 comenzi privilegiate (dumpsys cpuinfo, appops, /proc/net/tcp cu conversie hex, getenforce, getprop verity, pm list packages, ls /dev/socket) - toate cu uid 2000
+- OK: agentul a identificat singur riscuri REALE: app-ul propriu are toate 3 permisiunile sensibile + e debuggable; /data/local/tmp e 0777 world-writable
+- P: auditul salvat la /home/gab/Desktop/agent/temp/audit-securitate-SM-A366B.md
+- TRAP: `input text` cu paranteze/caractere speciale -> "syntax error: unexpected '('"; scrie task-ul cu cuvinte (unu/doi/trei) in loc de cifre/paranteze
+- TRAP: ecranul se poate derula in timpul task-ului -> dump-ul poate arata doar "message the agent"; verifica PROGRESUL prin context.json de pe device, nu doar prin uiautomator dump
+
+DEAD: `adb shell input text <str>` cu paranteze sau caractere speciale -> rup shell-ul cu "syntax error: unexpected '('" -> scrie task-ul doar cu litere/cifre si spatii (inlocuieste "(1)" cu "unu"), niciodata paranteze in input text.
+
+TRAP: `uiautomator dump` pe ecranul agentului in timpul unui task lung -> arata doar "message the agent", ecran gol -> citeste progresul real din /sdcard/Download/Agent/context.json de pe device, nu din dump.
+
+OK: parsare /proc/net/tcp pe Android cu uid 2000 -> porturile sunt HEX, nu zecimale -> converteste cu `$((16#hex))` si filtreaza starea 01=ESTABLISHED pentru conexiuni active.

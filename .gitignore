@@ -59,3 +59,8 @@ temp/
 key.txt
 **/key.txt
 .deepseek_agent_key
+
+# backups locale (nu intra in repo)
+*.bak
+*.bak-*
+*.bak.*
