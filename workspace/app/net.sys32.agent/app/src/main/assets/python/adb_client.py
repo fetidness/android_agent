@@ -122,8 +122,28 @@ class Adb:
             if not c: break
             d+=c
         return cmd,a0,a1,d
+    def close(self):
+        """Inchide conexiunea curat."""
+        try:
+            if self.s:
+                self.s.close()
+        except Exception:
+            pass
+        self.s = None
+
     def connect(self):
         self.s = socket.create_connection((self.host,self.port), timeout=8)
+        # ★ KEEPALIVE: tine socket-ul viu intre comenzi (fara el, adbd inchide
+        # conexiunea idle si urmatorul apel face reconnect -> dialog nou "Allow")
+        try:
+            self.s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            if hasattr(socket, "TCP_KEEPIDLE"):
+                self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+                self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 6)
+        except Exception:
+            pass
         print("[adb] TCP conectat", flush=True)
         self._send(A_CNXN, A_VERSION, 256*1024, b"host::features=shell_v2,cmd,stat_v2\0")
         _auth_left = 3          # ★ anti-bucla: adbd retrimite AUTH_TOKEN daca semnatura e rea

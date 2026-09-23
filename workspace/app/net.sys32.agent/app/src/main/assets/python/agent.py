@@ -1462,21 +1462,35 @@ def run_adbsh_tool(cmd, timeout=20):
                 if _ADBCONN is None:
                     _ADBCONN=_ADBCLI.Adb(); _ADBCONN.connect()
                 else:
-                    # verificam daca socket-ul e inca viu; reconectam DOAR daca a murit
-                    doomed=False
+                    # ★ VERIFICARE DE LIVENESS CONSERVATOARE.
+                    # Inainte: orice exceptie sau orice byte rezidual de protocol
+                    # (ex. EAGAIN de la MSG_PEEK pe socket non-blocant) era tratat
+                    # ca "socket mort" -> reconectare -> adbd cerea DIN NOU
+                    # aprobarea "Allow USB debugging" la fiecare comanda.
+                    # Acum: consideram conexiunea moarta DOAR daca:
+                    #   - socket-ul e None, sau
+                    #   - recv(MSG_PEEK) returneaza EXACT b"" (EOF real)
+                    doomed = False
                     try:
-                        _s=_ADBCONN.s
+                        _s = _ADBCONN.s
                         if _s is None:
-                            doomed=True
+                            doomed = True
                         else:
                             import select as _sel
-                            r,_,_=_sel.select([_s],[],[],0)
+                            r, _, _ = _sel.select([_s], [], [], 0)
                             if r:
-                                peek=_s.recv(1, 0x02)  # MSG_PEEK
-                                if peek==b"":
-                                    doomed=True
+                                try:
+                                    peek = _s.recv(1, 0x02)   # MSG_PEEK (nu consuma)
+                                    if peek == b"":           # EOF real = inchis
+                                        doomed = True
+                                except BlockingIOError:
+                                    pass                      # EAGAIN nu e moarte
+                                except OSError as _oe:
+                                    # doar erorile de socket-inchis conteaza
+                                    if getattr(_oe, "errno", None) in (9, 104, 107):
+                                        doomed = True
                     except Exception:
-                        doomed=True
+                        pass                                  # NU presupune moarte
                     if doomed:
                         try: _ADBCONN.close()
                         except Exception: pass
@@ -1499,9 +1513,13 @@ def run_adbsh_tool(cmd, timeout=20):
                 # daca a iesit gol/timeout, verificam sanatatea sesiunii si reconectam o data
                 if ("depasit" in _out and "procesul poate continua" in _out) and not _out.strip().startswith("["):
                     pass
-                if _out.strip().startswith("[adb] comanda a depasit") or _out.strip() == "":
+                # ★ RE-TRIMITERE doar daca e DOVEDIT ca socket-ul a murit.
+                # Inainte: la orice output gol -> ping() -> close+connect NOU ->
+                # adbd cerea din nou aprobarea (exact ce deranja operatorul).
+                if _out.strip() == "":
                     try:
                         if not _ADBCONN.ping():
+                            # ping-ul a esuat = socket mort -> O SINGURA reconectare
                             try: _ADBCONN.close()
                             except Exception: pass
                             _ADBCONN = _ADBCLI.Adb(); _ADBCONN.connect()
@@ -1514,12 +1532,20 @@ def run_adbsh_tool(cmd, timeout=20):
             finally:
                 _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
         except Exception as e:
-            # la eroare de conexiune: aruncam obiectul ca sa reconecteze curat la urmatorul apel
-            try:
-                globals()["_ADBCONN"]=None
-            except Exception:
-                pass
-            return "adbsh error: "+str(e)
+            # ★ IMPORTANT: NU aruncam conexiunea la orice eroare! Majoritatea
+            # erorilor sunt de EXECUTIE (comanda a eșuat, timeout de comanda),
+            # nu de socket. Daca o aruncam, urmatorul apel face connect() NOU
+            # -> adbd cere DIN NOU aprobarea "Allow USB debugging" (enervant).
+            # Pastram conexiunea si o aruncam DOAR daca ping-ul arata ca e moarta.
+            _e = str(e)
+            _dead = any(k in _e.lower() for k in
+                        ("closed", "broken pipe", "connection reset", "bad file descriptor"))
+            if _dead:
+                try:
+                    globals()["_ADBCONN"] = None
+                except Exception:
+                    pass
+            return "adbsh error: " + _e
     try:
         o=_spin(_run, phase="tool", desc=dsc, col=HCLR[sum(map(ord,dsc))%len(HCLR)])
     except Exception as e:

@@ -834,3 +834,9 @@ OK: on this machine ADB_KEY wire format for adbd is little-endian struct.pack('<
 TRAP: adbd on this Samsung/Android16 rejects repeated AUTH_RSAPUBLICKEY connections with 'adbd_auth: prompt currently pending, skipping' (a stuck Allow-USB-debugging dialog) and then hangs the client socket at ESTABLISHED with Send-Q>0 -> only a reboot (or physical revoke+dialog) clears it; adb revoke + kill-server + tcpip toggle do NOT.
 
 DEAD: running /data/data/<pkg>/files/python/*.py as shell (uid 2000) on this device - no python3 binary on PATH and the deleted toolchain at /data/local/tmp/tpm/usr/bin/python3 is gone -> test app code only via run-as <pkg> with the libpyexec.so loader.
+
+TRAP: bash tool here intermittently returns completely EMPTY output (rc and text both blank) for commands that actually succeeded, incl. `pkill`/`adb start-server`/`git clone` -> do not conclude "command failed/hung"; re-run the same command via the python tool (subprocess.run capture_output) or check side effects (pgrep, file contents) before retrying.
+
+TRAP: adb `shell 'cmd'` hangs forever (no output, rc never returns) when adbd is stuck in an AUTH loop -> always wrap adb shell calls in `timeout N adb ...` from subprocess and use `pkill -9 -f platform-tools/adb` + `adb start-server` to recover the server.
+
+OK: AOSP source for the real ADB auth protocol is fetchable from this machine via `git clone --depth 1 https://android.googlesource.com/platform/packages/modules/adb /tmp/adbtest` and single files via `curl -s 'https://android.googlesource.com/platform/<proj>/+/refs/heads/main/<path>?format=TEXT' | base64 -d` -> use this instead of guessing protocol formats.
