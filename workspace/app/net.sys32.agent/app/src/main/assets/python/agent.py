@@ -824,7 +824,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"bash","description":"Run a BASH shell command (bash -lc) on this Linux machine, returns combined stdout/stderr. Use it when the task is a TEXT STREAM / SHELL PIPELINE: grep/awk/sed/sort/uniq/wc/find/du/cut, processing a large file that flows line by line, filtering logs, parallel work with xargs -P. Measured: on big streams bash is ~1.3-1.6x faster than Python and uses far less memory. NOT for structured parsing or logic - use `python` for that.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give it ONE command and it decides BY ITSELF which engine runs it faster (python vs bash) using the measured heuristics, then runs it. It answers in one field: engine (\"bash\" or \"python\"), cmd (a shell command if bash) and code (Python code if python). Prefer this tool when you are unsure; it removes the guesswork. It also reports which engine it picked and why.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer a question about what is really in it. Use it when the operator asks to analyze/see a screen or an image.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control. Only on the Android build. Includes the 'ui' tool: SEE and CONTROL other apps. Actions: read (returns a COMPACT text list, ~10x smaller than JSON; params: max, depth, textonly), find (SEARCH a node by text WITHOUT reading the whole screen - USE THIS FIRST when looking for a contact/button/field; returns matches with center coordinates), settext (type into a field), click, tap, swipe, scroll, back/home/recents, openapp, windows, wake (keep screen on for UI work), sleep (release), service (status). Also FULL generic SDK access via reflection: action=\"eval\" runs ANY class/method/field. Also: services (list all 300+ system services), info (list methods of a class), plus ready shortcuts. camera (list/photo), location (last/providers), battery, clipboard (get/set), notifications, vibration, text-to-speech, volume, wifi status, device info, installed apps (list/launch), sending intents, reading system settings. Pass the action and its parameters directly.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
-   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell with uid=2000(shell) on this very phone, run FROM the app with no PC. Only on the Android build. Runs a raw shell command as the privileged shell user, which app code cannot: pm grant/revoke runtime permissions, appops set, settings put secure/global, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop/setprop (read), svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as on debuggable apps, ifconfig/ip, cat /proc/net/*. This bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing. Runs the command and returns stdout+stderr. Prefer ONE command per call; combine with && if needed.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},
+   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell with uid=2000(shell) on this very phone, run FROM the app with no PC. Only on the Android build. Runs a raw shell command as the privileged shell user, which app code cannot: pm grant/revoke runtime permissions, appops set, settings put secure/global, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop/setprop (read), svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as on debuggable apps, ifconfig/ip, cat /proc/net/*. This bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing. Runs the command and returns stdout+stderr. Prefer ONE command per call; combine with && if needed.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long-running work (builds, downloads, servers, llama.cpp). NEVER use raw nohup/& through adbsh - you WILL lose track of the process, read a stale log and get confused by mixed output. This tool keeps a persistent REGISTRY: every job gets a unique id, its own timestamped log file and a tracked PID. Actions: start (cmd=<shell command>, name=<label>) launches and registers; status shows what is ACTUALLY running right now (checks /proc, not guesses) with duration and log size; log (job=<id>, lines=N) shows the LAST lines of THAT job's log only; kill (job=<id>) stops it; list shows all jobs ever; clean removes finished ones. RULE: for any command that can take more than ~30 seconds, use action=start, then poll with action=status and action=log - never read a log file blindly, and never assume an old log is current.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"COMPILE TOOLCHAIN: install and use a complete native build stack ON the phone (clang 21, make, cmake, ninja/samu, python, pip, git, rust, libc++, openssl...) WITHOUT PC and WITHOUT Termux. Use action=status to see what is installed; action=bootstrap to download+install everything (through the Termux package repo, ~500MB, done once); action=pip_install to pip-install a PyPI package INCLUDING C/C++ extensions (the toolchain compiles them natively); action=compile to build a C/C++ file into a shared library; action=env to get the environment variables (PATH, CC, CXX, CFLAGS, LDFLAGS...). ALWAYS run action=preflight BEFORE any big build (10-second test of C, C++, math linking, SSL, make, cmake) - it catches every linking problem upfront instead of after minutes of compiling. Use action=profile to get ready-made flags for cmake/cflags/ldflags (libc++, bionic libm, target API, rpath already correct) instead of discovering them by trial. Use action=fix after anything reinstalls Termux packages (re-applies all environment repairs). action=env-file writes the persistent environment. This makes the phone a self-sufficient build machine: numpy, scipy-level packages, llama.cpp, any compiler-requiring pip package can be built here.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | bootstrap | pip_install | compile | env | tpm","enum":["status","bootstrap","pip_install","compile","env","tpm","preflight","profile","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pandas, pillow). For tpm: termux package (e.g. nano)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 300 for compile, max 3600)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}}]
 
@@ -874,6 +874,16 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
  " COMPILE STACK: this phone is a SELF-SUFFICIENT BUILD MACHINE. The 'toolchain' tool installs (once, via the Termux repo) a full native compiler stack: clang 21, make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl, zlib. Use toolchain action=status to see what is present; action=bootstrap to install the whole stack (~500MB, one time, no PC, no Termux app needed); action=pip_install package=<name> to pip-install ANY PyPI package INCLUDING ones with C/C++/Fortran extensions (they get compiled natively here); action=compile source=<file.c> out=<file.so> to build C/C++ into a shared library; action=env to print PATH/CC/CXX/CFLAGS/LDFLAGS; action=tpm package=<name> to install any Termux binary (nano, htop, jq...). RULE: when a task needs a library that is not installed, do NOT give up - install it: pip_install for Python packages (compiles extensions), tpm for CLI tools, compile for your own C/C++ code. Prefer the already-installed pure-Python tools first; reach for the toolchain when something must be compiled or installed. "
+ "LONG-RUNNING WORK (CRITICAL): NEVER launch a build/download/server with raw `nohup ... &` or "
+ "`cmd &` through adbsh/bash - you WILL lose track of it, then read a STALE log and get confused "
+ "by mixed output (this really happened: an old build kept writing to the same log while a new "
+ "one started). ALWAYS use the `bg` tool: bg(action=start, cmd=..., name=...) to launch, "
+ "bg(action=status) to see what is ACTUALLY running (it checks /proc, not guesses) with duration "
+ "and log size, bg(action=log, job=<id>) to read THAT job's log only, bg(action=kill|clean) to "
+ "stop/clean. Rule of thumb: any command that can take more than ~30 seconds goes through `bg`. "
+ "Before starting a NEW run of the same thing, check bg(action=status) and kill leftovers. "
+ "Never assume a log file is current - always read it through bg(action=log) which tells you "
+ "which job it belongs to and when it started. "
  "RUNNING SCRIPTS FOR THE OPERATOR: when a build was done and the operator needs to RUN something "
  "(a compiled binary, llama.cpp, a GGUF model, a chat script, anything under /data/local/tmp), "
  "tell them to use /run_su <script> [args] - it runs with SHELL rights (uid=2000), so it can see "
@@ -1262,6 +1272,157 @@ def _looks_like_error(o):
     return False
 
 _ADBCLI=None
+# ============================================================================
+# GESTIONAR DE PROCESE IN FUNDAL (rezolva "output amestecat" / "procese uitate")
+#
+# Problema reala (din conversatie): agentul lansa build-uri cu `nohup ... &`,
+# apoi CITEACEA log-uri vechi crezand ca sunt actuale, sau nu stia ce procese
+# mai ruleaza -> "output amestecat", "log-ul e din configuratia veche",
+# "vechiul build inca rula in fundal". Cauza: nu exista un REGISTRU.
+#
+# Solutia: fiecare proces lansat prin `bg` primeste:
+#   - un JOB ID si un LOG cu timestamp (unic, imposibil de confundat)
+#   - o linie in /sdcard/Download/Agent/bg.json (registru persistent)
+#   - un PID (pentru liveness/kill)
+# Statusul se verifica prin `bg status` (vazut din registru, nu ghicit).
+# Orice log vechi e marcat ca atare (started/finished/duration).
+# ============================================================================
+
+BG_REG = "/sdcard/Download/Agent/bg.json"
+BG_LOG = "/data/local/tmp/bg"
+
+
+def _bg_load():
+    try:
+        with open(BG_REG, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _bg_save(d):
+    try:
+        os.makedirs(os.path.dirname(BG_REG), exist_ok=True)
+        with open(BG_REG, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+
+
+def bg_tool(a):
+    """Gestionar de procese in fundal. Actiuni:
+       start <cmd> [name]  - lanseaza in fundal cu log unic + registru
+       status             - ce ruleaza acum (PID viu?), cu durata si marimea log-ului
+       log <job> [n]      - ultimele n linii din log-ul ACELUI job (nu ghicit)
+       kill <job>         - opreste job-ul (proces + copii)
+       clean              - sterge job-urile terminate si log-urile lor
+       list               - toate job-urile (inclusiv terminate)
+    """
+    act = (a.get("action") or "status").strip()
+    reg = _bg_load()
+
+    if act == "start":
+        cmd = (a.get("cmd") or "").strip()
+        if not cmd:
+            return "lipseste 'cmd'"
+        name = (a.get("name") or "job").strip().replace(" ", "_")[:24]
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        jid = "%s_%s" % (name, ts)
+        log = "%s/%s.log" % (BG_LOG, jid)
+        # rulam prin adbsh: script cu nohup, PID inregistrat, log unic
+        sh = ("mkdir -p %s; cd /data/local/tmp; "
+              "nohup /system/bin/sh -c %s > %s 2>&1 & echo $!") % (
+                  BG_LOG, _shell_q(cmd), _shell_q(log))
+        try:
+            out = run_adbsh_tool(sh, 60)
+        except Exception as e:
+            return "start error: %s" % e
+        import re as _re
+        m = _re.search(r"(\d{4,})", out or "")
+        pid = int(m.group(1)) if m else 0
+        reg[jid] = {"pid": pid, "name": name, "cmd": cmd, "log": log,
+                    "started": time.strftime("%Y-%m-%d %H:%M:%S"), "ts": time.time(),
+                    "status": "running"}
+        _bg_save(reg)
+        return ("job pornit: %s\n  pid=%d\n  log=%s\n"
+                "  (verifica progresul cu bg action=status, apoi bg action=log job=%s)"
+                % (jid, pid, log, jid))
+
+    if act in ("status", "list"):
+        rows = []
+        for jid, j in reg.items():
+            pid = j.get("pid", 0)
+            # liveness REAL (nu presupus): /proc/<pid> exista si nu e zombie
+            alive = "?"
+            try:
+                st = run_adbsh_tool(
+                    "test -d /proc/%d && (cat /proc/%d/stat 2>/dev/null | cut -d' ' -f3) || echo DEAD"
+                    % (pid, pid), 30).strip()
+                alive = "RUNNING" if st and st not in ("DEAD", "Z") else "DONE"
+            except Exception:
+                pass
+            try:
+                sz = run_adbsh_tool("wc -c < %s 2>/dev/null || echo 0" % j["log"], 30).strip().split()[0]
+            except Exception:
+                sz = "0"
+            dur = int(time.time() - j.get("ts", time.time()))
+            rows.append("%-28s %-8s pid=%-6d %4ds  log=%s bytes  | %s"
+                        % (jid, alive, pid, dur, sz, j.get("cmd", "")[:40]))
+            if alive == "DONE" and j.get("status") == "running":
+                j["status"] = "done"; j["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        _bg_save(reg)
+        if not rows:
+            return "niciun job inregistrat (bg action=start pentru a lansa unul)"
+        if act == "status":
+            rows = [r for r in rows if "RUNNING" in r] or ["(niciun job activ; vezi bg action=list)"]
+        return "JOBURI:\n" + "\n".join(rows)
+
+    if act == "log":
+        jid = (a.get("job") or "").strip()
+        n = int(a.get("lines") or 40)
+        if not jid:
+            return "lipseste 'job' (vezi bg action=list)"
+        j = None
+        for k in reg:
+            if k == jid or k.startswith(jid):
+                j = reg[k]; jid = k; break
+        if not j:
+            return "job necunoscut: %s" % jid
+        out = run_adbsh_tool("tail -n %d %s 2>/dev/null" % (n, j["log"]), 60)
+        hdr = ("=== %s (pornit %s, pid %d) ===\n" % (jid, j.get("started"), j.get("pid", 0)))
+        return hdr + (out or "(log gol)")
+
+    if act == "kill":
+        jid = (a.get("job") or "").strip()
+        j = None
+        for k in reg:
+            if k == jid or k.startswith(jid):
+                j = reg[k]; jid = k; break
+        if not j:
+            return "job necunoscut: %s" % jid
+        pid = j.get("pid", 0)
+        run_adbsh_tool("kill -9 %d 2>/dev/null; pkill -9 -P %d 2>/dev/null; echo killed" % (pid, pid), 60)
+        j["status"] = "killed"; j["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        _bg_save(reg)
+        return "job oprit: %s (pid %d)" % (jid, pid)
+
+    if act == "clean":
+        gone = [k for k, j in reg.items() if j.get("status") in ("done", "killed")]
+        for k in gone:
+            try: run_adbsh_tool("rm -f %s" % reg[k]["log"], 30)
+            except Exception: pass
+            reg.pop(k, None)
+        _bg_save(reg)
+        return "curatate %d job-uri terminate" % len(gone)
+
+    return "actiuni: start | status | list | log | kill | clean"
+
+
+def _shell_q(s):
+    """Quoting sigur pentru shell (single quotes)."""
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
 def run_adbsh_tool(cmd, timeout=20):
     """SUPER PUTERI: ruleaza o comanda shell ca user 'shell' (uid=2000) folosind
     clientul ADB scris in Python (adb_client.py), conectat la adbd pe 127.0.0.1:5555.
@@ -1413,6 +1574,8 @@ def call_tool(c):
         return run_tool(code) if code.strip() else run_bash_tool(cmd)
     if fn=="android":
         return run_android_tool(a.get("tool",""), a.get("action",""), a.get("params",{}) or {})
+    if fn=="bg":
+        return bg_tool(a)
     if fn=="adbsh":
         return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
     if fn=="toolchain":

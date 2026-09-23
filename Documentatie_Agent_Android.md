@@ -1474,3 +1474,43 @@ in ordine corecta; taskul nou ruleaza fara HTTPError.
 
 **Bonus:** contextul de pe dispozitiv a fost reparat in-place (nu a fost nevoie
 de `/reset`), deci operatorul nu pierde istoricul.
+
+
+---
+
+## Etapa 37 - tool `bg`: gestionar de procese in fundal (rezolva "output amestecat")
+
+**Simptom raportat de operator:** agentul lansa procese in fundal si apoi
+"uita" de ele, isi amintea pe parcurs, avea output amestecat si comenzi
+amestecate pe fundal de care nu era constient.
+
+**Dovezi din conversatia reala (llama.cpp):**
+- `[73]` "pornit pid=16405" (build lansat cu nohup)
+- `[79]` "Log-ul e incomplet (output-ul e in buffer). Build-ul poate inca ruleaza"
+- `[85]` "se pare ca VECHIUL build inca rula in fundal si scria in build.log (confuzie de output)"
+- `[121]` "Output-ul e din log-ul VECHI de configurare"
+- `[131]` "Output amestecat din nou, dar 8 procese clang active"
+
+**Cauza rădăcină:** NU exista un registru al proceselor. Agentul lansa cu
+`nohup ... &` prin adbsh, apoi citea fisiere de log FARA sa stie carui job
+apartin si daca sunt actuale. Doua build-uri scriau in acelasi log.
+
+**Solutia: tool nou `bg`** (gestionar persistent de joburi):
+| Actiune | Ce face |
+|---------|---------|
+| `start cmd=... name=...` | lanseaza in fundal cu **log unic timestampat** + PID inregistrat |
+| `status` | ce ruleaza ACUM (verifica `/proc/<pid>`, nu ghiceste) + durata + marimea log-ului |
+| `log job=<id> lines=N` | ultimele N linii din log-ul ACELUI job (cu antet: cand a pornit, PID) |
+| `kill job=<id>` | opreste job-ul + copiii |
+| `list` | toate joburile (inclusiv terminate) |
+| `clean` | sterge joburile terminate si log-urile lor |
+
+Registru persistent: `/sdcard/Download/Agent/bg.json`; loguri: `/data/local/tmp/bg/<job>.log`.
+
+**Regula in system prompt:** "orice comanda care poate lua >30s trece prin `bg`;
+NICIODATA `nohup`/`&` brut; inainte de a porni o rulare noua a aceluiasi lucru,
+verifica `bg status` si omoara resturile; citeste log-ul DOAR prin `bg log`,
+care iti spune carui job apartine si cand a inceput."
+
+**Verificat:** toate cele 6 actiuni testate (start/status/log/kill/list/clean);
+statusul foloseste `/proc/<pid>/stat` (prinde si procesele zombie).

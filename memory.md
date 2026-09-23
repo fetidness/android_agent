@@ -810,3 +810,9 @@ TRAP: `cmake . $(python3 toolchain.py profile cmake)` sparge flagurile cu spatii
 DEAD: /data/local/tmp and toolchain binaries (llama.cpp, compiled .so) are NOT reachable from Android app uid (~10300): SELinux denies -> run such scripts through adbsh (uid=2000 shell), not through the app's own subprocess; verify with `id -u` inside the script.
 
 P: adb `input text` does NOT preserve shell quoting (spaces become %s or get eaten) -> to test a command with quoted args on device, verify the field with `uiautomator dump` / screencap before pressing send; a prompt like `-p "Buna, cine esti?"` splits into 4 argv items if quotes are lost.
+
+TRAP: Android WebView terminal app chat is single-flight -> typing a new message while a task runs appends a `user` msg right after an `assistant` msg carrying `tool_calls`, orphaning it -> DeepSeek API returns HTTPError "insufficient tool messages following tool_calls message" and the agent is dead until /reset
+
+OK: diagnose a broken agent context from outside by `adb exec-out cat /sdcard/Download/Agent/context.json` and printing `role` + len(tool_calls) + tool_call_id per msg -> an `assistant` with tool_calls not immediately followed by one `tool` per id is the offending msg -> repair in place and `adb push` it back to avoid forcing a /reset that loses all history.
+
+TRAP: inserting into a single-line Python tool-list T=[...] in agent.py with a regex ending at 'required":["cmd"]}}},' wrongly matches the FIRST occurrence range and splices the new tool into the MIDDLE of the adbsh description string -> SyntaxError invalid syntax; fix: verify the splice offset with src.index on the exact closing brace after the target tool name, or insert at a newline-delimited list boundary, then always run py_compile before writing.
