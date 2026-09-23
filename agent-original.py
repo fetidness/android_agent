@@ -1325,6 +1325,109 @@ def do_learn(trigger="/learn"):
     print(_task_foot("/learn")); flush_task_tokens(); return
 
 
+# ======== ANTI-POISON v1 (patch 2026-09-24) ========
+# Context: pe 23 sept 2026 auto-learn a scris 4 lectii FALSE din 10, pentru ca a
+# rulat DUPA FIECARE task si a salvat IPOTEZE INTERMEDIARE ca si concluzii. Memoria
+# a ajuns sa se AUTO-CONTRAZICA ("dispatchGesture both fail" langa "dispatchGesture works").
+#
+# Acest bloc pune DOUA porti inainte de scrierea in memory.md:
+#   (1) HEDGE  - lectia contine markeri de ipoteza (suspect/probably/Looper issue) -> carantina
+#   (2) CONTRADICTIE - lectia contrazice o lectie existenta pe acelasi subiect -> carantina
+# Lectiile blocate merg in memory_quarantine.md, NICIODATA in memory.md. Curatarea e
+# determinista (0 tokeni, 0 apeluri API).
+QUAR = os.path.join(os.path.dirname(MEM), "memory_quarantine.md")
+HEDGE_RX = [r"\bsuspect", r"\bprobably\b", r"\bposibil", r"\bse pare\b", r"\bmaybe\b",
+            r"\blikely\b", r"\bpoate fi\b", r"\bipotez", r"\bpresupun\b",
+            r"\bneverificat\b", r"\bmight\b", r"\bcould be\b"]
+HEDGE_OK_RX = [r"\bdovedit\b", r"\bverified\b", r"\bconfirmat\b", r"\bproven\b"]
+TOPIC_RX = [r"accessibility", r"performGlobalAction", r"dispatchGesture", r"capabilities",
+            r"screencap", r"screenshot", r"canTakeScreenshot", r"read-only", r"keyevent",
+            r"pendingintent", r"looper", r"threading", r"toolchain", r"numpy",
+            r"reflection", r"subclass", r"adbsh", r"selinux", r"libpyexec", r"aapt2"]
+OPPOSITE_RX = [
+    (r"\b(suspect|probably|se pare|maybe|likely|poate fi)\b.*\b(threading|Looper|issue|cause|cauza)\b",
+     r"\b(NU threading|nu e threading|platform-side|PendingIntent cancellation)\b"),
+    (r"\b(read-only|NU acorda permisiunea de actiune|missing capability|capabilities lack)\b",
+     r"\b(NOT a capability problem|not read-only|NU (e|este) capabilit|nu modifica configul)\b"),
+    (r"\bfix: add android:canTakeScreenshot\b", r"\bXML.*(compilat corect|e corect)\b"),
+]
+
+def _q_topics(line):
+    return set(rx for rx in TOPIC_RX if re.search(rx, line, re.I))
+
+# Verdicte ABSOLUTE despre propriul comportament: o lectie care spune "toate
+# esueaza" / "mereu" / "niciodata" fara dovada explicita e o generalizare facuta
+# in graba, exact tiparul care a otravit memoria pe 23 sept 2026.
+ABSOLUTE_RX = [r"\bboth fail\b", r"\ball (return|fail)", r"\balways\b", r"\bmereu\b",
+               r"\bnever\b", r"\bniciodata\b", r"\bintotdeauna\b", r"\bdo NOTHING\b",
+               r"\bambele\b", r"\btoate\b.*\b(esu|e[șs]ue|fail)", r"\bnici ?un", r"\bfara exceptie\b"]
+PROOF_RX = [r"\bproven\b", r"\bdovedit\b", r"\bverified\b", r"\bconfirmat\b",
+            r"\blogcat\b", r"\btested?\b", r"\bmeasured\b", r"\bmasurat\b"]
+
+def _q_absolute(line):
+    """True daca lectia face o generalizare absoluta FARA dovada citata."""
+    if any(re.search(rx, line, re.I) for rx in PROOF_RX):
+        return False
+    if any(re.search(rx, line, re.I) for rx in HEDGE_OK_RX):
+        return False
+    return any(re.search(rx, line, re.I) for rx in ABSOLUTE_RX)
+
+# Verdicte de "diagnostic inchis": afirma o CAUZA (read-only / lipsa capabilitate /
+# problema de threading) fara sa citeze dovada. Pe 23 sept 2026 fix aceste formulari
+# au produs 4 lectii false dintr-o singura sesiune.
+CAUSE_CLAIM_RX = [r"\bread-only\b", r"\bmissing capability\b", r"\bcapabilities lack\b",
+                  r"\bserviciul e in mod\b", r"\be in mod read", r"\bproblem[aă] de (thread|looper)"]
+CAUSE_PROOF_RX = [r"\blogcat\b", r"\bproven\b", r"\bdovedit\b", r"\bverified\b",
+                  r"\bconfirmat\b", r"\bPendingIntent\b", r"\bSystemActionPerformer\b"]
+
+def _q_hedged(line):
+    """True daca lectia e o IPOTEZA sau un diagnostic nedovedit, nu o concluzie."""
+    if any(re.search(rx, line, re.I) for rx in HEDGE_OK_RX):
+        return False
+    if _q_absolute(line):
+        return True
+    if any(re.search(rx, line, re.I) for rx in HEDGE_RX):
+        return True
+    # verdict de cauza fara dovada citata
+    if any(re.search(rx, line, re.I) for rx in CAUSE_CLAIM_RX) and        not any(re.search(rx, line, re.I) for rx in CAUSE_PROOF_RX):
+        return True
+    return False
+
+def _q_contradicts(new_line, mem_text):
+    """Intoarce linia veche contrazisa, sau None. Doar daca verdictul e despre
+    ACELASI mecanism (subiect comun) si semnalele sunt explicit opuse."""
+    nt = _q_topics(new_line)
+    if not nt:
+        return None
+    for old in mem_text.split("\n"):
+        if not old.startswith(("TRAP:", "OK:", "DEAD:", "P:", "PREVENT:")):
+            continue
+        if not (_q_topics(old) & nt):
+            continue
+        for a, b in OPPOSITE_RX:
+            if (re.search(a, old, re.I) and re.search(b, new_line, re.I)) or (re.search(b, old, re.I) and re.search(a, new_line, re.I)):
+                return old.strip()
+    return None
+
+def quarantine(reason, lines):
+    """Scrie lectiile blocate in memory_quarantine.md - NICIODATA in memory.md."""
+    try:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        fresh = not os.path.exists(QUAR)
+        with open(QUAR, "a", encoding="utf-8") as f:
+            if fresh:
+                f.write("# memory_quarantine.md - lectii BLOCATE de anti-poison\n\n")
+                f.write("Nu au intrat in memory.md fiindca fie contrazic o lectie existenta, fie\n")
+                f.write("contin markeri de incertitudine. Verifica-le; daca sunt corecte, muta-le\n")
+                f.write("manual in memory.md si sterge-le de aici.\n")
+            f.write("\n## " + stamp + " - " + reason + "\n")
+            for l in lines:
+                f.write("- " + l + "\n")
+        return True
+    except Exception:
+        return False
+# ======== END ANTI-POISON v1 ========
+
 def auto_learn_check(task_steps, had_error, task_msgs=None):
     """V4 hybrid auto-learn, run right AFTER a task finishes (only if AUTOLEARN['on']).
     Filter (cheap): only bother on a non-trivial task - enough steps OR an error occurred.
@@ -1399,6 +1502,7 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
         print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
         do_learn("auto-learn"); return
     _saved, _skipped = [], []
+    _q_blocked = []   # ANTI-POISON: lectii blocate -> carantina
     for _ln in _cand:
         # duplicat?
         if _norm(_ln) in _memnorm:
@@ -1416,13 +1520,28 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
             elif _txt.startswith("no valid prefix"): _why = "no prefix"
         if _why:
             _skipped.append((_why, _ln)); continue
-        _saved.append(_ln)
+        # --- ANTI-POISON: porti inainte de a scrie in memory.md ---
+        _qreason = None
+        if _q_hedged(_ln):
+            _qreason = "hedged/uncertain (marker de ipoteza)"
+        else:
+            _qold = _q_contradicts(_ln, _mem)
+            if _qold:
+                _qreason = "contradicts an existing lesson"
+        if _qreason:
+            _q_blocked.append((_qreason, _ln))
+            continue
+
         _memnorm += _norm(_ln)
     if _saved:
         try:
             with open(_tgt, "a", encoding="utf-8") as _f:
                 for _ln in _saved: _f.write("\n" + _ln + "\n")
             print(G+"   [auto-learn] decision: YES - saved "+str(len(_saved))+" lesson(s):"+N)
+            if _q_blocked:
+                print(OF+"   [anti-poison] "+str(len(_q_blocked))+" lesson(s) QUARANTINED -> memory_quarantine.md"+N)
+                for _qr,_ql in _q_blocked: print(OF+"        ? ["+_qr+"] "+_ql[:100]+N)
+                quarantine("auto-learn", [_ql for _, _ql in _q_blocked])
             for _ln in _saved: print(G+"        + "+_ln[:120]+N)
         except Exception as e:
             print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)

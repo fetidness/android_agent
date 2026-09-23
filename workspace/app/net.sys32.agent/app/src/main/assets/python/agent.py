@@ -2187,6 +2187,15 @@ QUAR = os.path.join(os.path.dirname(MEM), "memory_quarantine.md")
 HEDGE_RX = [r"\bsuspect", r"\bprobably\b", r"\bposibil", r"\bse pare\b", r"\bmaybe\b",
             r"\blikely\b", r"\bpoate fi\b", r"\bipotez", r"\bpresupun\b",
             r"\bneverificat\b", r"\bmight\b", r"\bcould be\b"]
+ABSOLUTE_RX = [r"\bboth fail\b", r"\ball (return|fail)", r"\balways\b", r"\bmereu\b",
+               r"\bnever\b", r"\bniciodata\b", r"\bintotdeauna\b", r"\bdo NOTHING\b",
+               r"\bambele\b", r"\btoate\b.*\b(esu|e[ss]ue|fail)", r"\bnici ?un", r"\bfara exceptie\b"]
+PROOF_RX = [r"\bproven\b", r"\bdovedit\b", r"\bverified\b", r"\bconfirmat\b",
+            r"\blogcat\b", r"\btested?\b", r"\bmeasured\b", r"\bmasurat\b"]
+CAUSE_CLAIM_RX = [r"\bread-only\b", r"\bmissing capability\b", r"\bcapabilities lack\b",
+                  r"\bserviciul e in mod\b", r"\be in mod read", r"\bproblem[aă] de (thread|looper)"]
+CAUSE_PROOF_RX = [r"\blogcat\b", r"\bproven\b", r"\bdovedit\b", r"\bverified\b",
+                  r"\bconfirmat\b", r"\bPendingIntent\b", r"\bSystemActionPerformer\b"]
 HEDGE_OK_RX = [r"\bdovedit\b", r"\bverified\b", r"\bconfirmat\b", r"\bproven\b"]
 TOPIC_RX = [r"accessibility", r"performGlobalAction", r"dispatchGesture", r"capabilities",
             r"screencap", r"screenshot", r"canTakeScreenshot", r"read-only", r"keyevent",
@@ -2208,11 +2217,26 @@ OPPOSITE_RX = [
 def _q_topics(line):
     return set(rx for rx in TOPIC_RX if re.search(rx, line, re.I))
 
-def _q_hedged(line):
-    """True daca lectia e o IPOTEZA, nu o concluzie dovedita."""
+def _q_absolute(line):
+    """True daca lectia face o generalizare absoluta FARA dovada citata."""
+    if any(re.search(rx, line, re.I) for rx in PROOF_RX):
+        return False
     if any(re.search(rx, line, re.I) for rx in HEDGE_OK_RX):
         return False
-    return any(re.search(rx, line, re.I) for rx in HEDGE_RX)
+    return any(re.search(rx, line, re.I) for rx in ABSOLUTE_RX)
+
+def _q_hedged(line):
+    """True daca lectia e o IPOTEZA sau un diagnostic nedovedit, nu o concluzie."""
+    if any(re.search(rx, line, re.I) for rx in HEDGE_OK_RX):
+        return False
+    if _q_absolute(line):
+        return True
+    if any(re.search(rx, line, re.I) for rx in HEDGE_RX):
+        return True
+    if any(re.search(rx, line, re.I) for rx in CAUSE_CLAIM_RX) and \
+       not any(re.search(rx, line, re.I) for rx in CAUSE_PROOF_RX):
+        return True
+    return False
 
 def _q_contradicts(new_line, mem_text):
     """Intoarce linia veche contrazisa, sau None. Doar daca verdictul e despre
