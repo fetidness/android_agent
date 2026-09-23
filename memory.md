@@ -806,3 +806,7 @@ DEAD: patching 200+ binaries in one adb-shell loop can end in a segfault (nonzer
 OK: toolchain-ul Termux (/data/local/tmp/tpm/usr) are caile Termux hardcodate in binarele cmake/make (SHELL=/data/data/com.termux/files/usr/bin/sh); patch in-place cu inlocuire de siruri de ACEEASI lungime (padding NUL) si chmod 755 dupa scriere, caile lungi INAINTE de cele scurte; NU patch-ui libpython*/libLLVM (se corup, "Bus error").
 
 TRAP: `cmake . $(python3 toolchain.py profile cmake)` sparge flagurile cu spatii in shell (word-splitting) -> "Unknown argument -lc++_shared"; fix: profile scrie un script shell cu fiecare argument quotat separat (sh prof.sh <src> <build>).
+
+DEAD: /data/local/tmp and toolchain binaries (llama.cpp, compiled .so) are NOT reachable from Android app uid (~10300): SELinux denies -> run such scripts through adbsh (uid=2000 shell), not through the app's own subprocess; verify with `id -u` inside the script.
+
+P: adb `input text` does NOT preserve shell quoting (spaces become %s or get eaten) -> to test a command with quoted args on device, verify the field with `uiautomator dump` / screencap before pressing send; a prompt like `-p "Buna, cine esti?"` splits into 4 argv items if quotes are lost.

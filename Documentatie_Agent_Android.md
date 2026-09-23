@@ -1436,3 +1436,41 @@ Atentie la quoting: ca in orice shell, spatiile se pun intre ghilimele:
 **In system prompt:** agentul e instruit sa recomande `/run_su` cand operatorul
 trebuie sa ruleze ceva compilat (binar, llama.cpp, model GGUF, script de chat)
 si sa scrie lansatorul ca `.sh` in workspace.
+
+
+---
+
+## Etapa 36 - FIX context invalid: `tool_calls` orfane (HTTPError de la API)
+
+**Simptom:** dupa ce operatorul scrie in chat in timpul unui task, orice mesaj
+nou da:
+```
+[API] HTTPError: An assistant message with 'tool_calls' must be followed by
+tool messages responding to each 'tool_call_id'.
+(insufficient tool messages following tool_calls message)
+```
+Agentul devine INUTILIZABIL pana la `/reset`.
+
+**Cauza (reala, reprodusa):** bucla principala face
+`M.append({"role":"user","content":q})` **fara sa verifice** starea istoricului.
+Daca task-ul anterior s-a oprit cu un mesaj `assistant` care declara
+`tool_calls` (ex. bootstrap pornit, apoi API error / intrerupere), acel mesaj
+ramane **orfan**. Mesajul `user` nou se adauga IMEDIAT dupa el -> API-ul
+respinge intreaga cerere (cerinta protocolului: fiecare `tool_call_id` trebuie
+sa aiba un mesaj `tool` inainte de orice alt rol).
+
+**Fix (2 locuri):**
+1. **`sanitize_msgs(msgs)`** - funcție noua care parcurge istoricul si, pentru
+   fiecare `assistant` cu `tool_calls`, verifica ca TOATE id-urile au raspuns
+   `tool` imediat dupa; cele lipsa primesc un mesaj `tool` de completare
+   („not executed - the run was interrupted"). Idempotenta.
+2. Apelata **inainte de fiecare cerere API** (`ask()`) SI **inainte de a adauga
+   un mesaj user nou** in bucla principala. Deci contextul nu mai poate rămâne
+   invalid, indiferent ce face operatorul in timpul unui task.
+
+**Verificat:** pe contextul real care producea eroarea, `sanitize_msgs` a
+reparat 1 tool_call orfan; validarea arata toate perechile `tool_calls`/`tool`
+in ordine corecta; taskul nou ruleaza fara HTTPError.
+
+**Bonus:** contextul de pe dispozitiv a fost reparat in-place (nu a fost nevoie
+de `/reset`), deci operatorul nu pierde istoricul.

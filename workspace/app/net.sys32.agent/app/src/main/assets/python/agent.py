@@ -987,6 +987,58 @@ def flush_task_tokens():
     cum+=" \u00b7 %d rds"%SESS["rounds"]
     print(G+cum+N)
     print("\n")   # 2 blank lines: separate the token block from the next "TU >" prompt (every caller of this returns to input())
+def sanitize_msgs(msgs):
+    """Repara istoricul ca sa fie ACCEPTAT de API-ul DeepSeek.
+
+    Regula API: fiecare mesaj `assistant` cu `tool_calls` TREBUIE urmat imediat
+    de cate un mesaj `tool` pentru FIECARE `tool_call_id`, inainte de orice alt
+    mesaj (user/assistant).
+
+    Cazul real care a produs eroarea HTTPError:
+    operatorul scrie in chat in timp ce un task ruleaza -> mesajul `assistant`
+    cu tool_calls ramane urmat de un mesaj `user` (nu de `tool`) -> API respinge
+    TOT, iar agentul devine inutilizabil pana la /reset.
+
+    Solutia: inseram raspunsuri `tool` lipsa (si, daca e nevoie, mutam/decuplam
+    mesajele user care s-au strecurat intre). Idempotent.
+    """
+    if not msgs:
+        return 0
+    fixed = 0
+    out = []
+    i = 0
+    n = len(msgs)
+    while i < n:
+        m = msgs[i]
+        out.append(m)
+        if m.get("role") == "assistant" and (m.get("tool_calls") or []):
+            ids = [tc.get("id") for tc in m["tool_calls"] if tc.get("id")]
+            # colectez raspunsurile tool care urmeaza IMEDIAT (pana la alt rol)
+            j = i + 1
+            got = {}
+            while j < n:
+                x = msgs[j]
+                if x.get("role") == "tool" and x.get("tool_call_id") in ids:
+                    got[x["tool_call_id"]] = x
+                    out.append(x)
+                    j += 1
+                else:
+                    break
+            # adaug raspunsuri pentru cele lipsa
+            for _id in ids:
+                if _id not in got:
+                    out.append({"role": "tool", "tool_call_id": _id,
+                                "content": "[not executed - the run was interrupted before this "
+                                           "tool call ran. Continue from the last completed step.]"})
+                    fixed += 1
+            i = j
+            continue
+        i += 1
+    if fixed:
+        msgs[:] = out
+    return fixed
+
+
 def complete_pending(msgs):
     """After Ctrl+C, the last assistant message may declare N tool_calls with answers
     for only some of them; the API requires an answer for EVERY declared call."""
@@ -1502,6 +1554,15 @@ def run_toolchain_tool(a):
 def ask(messages=None, tools=None):
     _msgs = M if messages is None else messages
     _tools = T if tools is None else tools
+    # ★ FIX: repara contextul invalid (assistant cu tool_calls fara raspuns tool).
+    # Se intampla cand operatorul scrie in chat in timpul unui task -> API da
+    # HTTPError "insufficient tool messages following tool_calls message".
+    try:
+        _n = sanitize_msgs(_msgs)
+        if _n:
+            print(OF + "   [ctx] " + str(_n) + " tool_call(uri) orfane reparate automat" + N)
+    except Exception:
+        pass
     r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode(),headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
     try:
         d=json.loads(urllib.request.urlopen(r,timeout=600).read()); return d["choices"][0]["message"], d.get("usage")
@@ -1845,6 +1906,15 @@ while 1:
         continue
     if q=="/learn":
         do_learn("/learn"); continue
+    # ★ FIX: daca task-ul anterior s-a oprit cu tool_calls fara raspuns (ex. operatorul
+    # a scris in chat in timpul unui task, sau API error), contextul devine INVALID si
+    # API-ul respinge TOT. Reparam INAINTE de a adauga noul mesaj.
+    try:
+        _n = sanitize_msgs(M)
+        if _n:
+            print(OF + "   [ctx] " + str(_n) + " tool_call(uri) orfane reparate (context valid)" + N)
+    except Exception:
+        pass
     M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
     print(_task_head(q))
     try:
