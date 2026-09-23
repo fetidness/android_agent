@@ -1128,3 +1128,19 @@ DEAD: run_tool/py blocks infinitely when agent.py lacks `if __name__=="__main__"
 TRAP: `import agent` from an external script hangs forever (no output, no error) because module-level `load_ctx()/refresh()/ctx_check_window()` + `while 1: input()` run at import -> cause is the missing __main__ guard, not a lock or network call -> verify any agent-module import with `timeout 20` before assuming it works.
 
 P: /storage/emulated/0 (FUSE/sdcardfs) does not support fcntl locking, so meson/ninja builds fail with `Failed to lock directory .../meson.lock: Function not implemented` -> run native builds (numpy etc.) under /data/local/tmp (f2fs) instead, then copy artifacts back.
+
+TRAP: un script python lansat cu sys.executable=libpyexec.so re-incarca scriptul insusi la fiecare "python -c cod" -> orice cod fara guard `if __name__=="__main__":` reintra in bucla input() si atarna infinit -> pe Android orice tool python trebuie sa aiba guard __main__, verificat cu import 0.2s vs TIMEOUT 60s.
+
+OK: masurarea timpului pe Android: readelf -d / nm / file per fisier costa ~1s/proces; pe ~1000 fisiere = 13+ min -> inlocuieste N subprocese cu O SINGURA trecere Python care citeste ELF-urile (13 min -> 0.3s).
+
+DEAD: `python3` NU exista pe acest Android (prefixul are python3.14); setexec.py care chema python3 nu rula niciodata -> foloseste calea absoluta a interpretorului din prefix, nu numele generic.
+
+## 2026-09-23 - FIX CRITIC guard __main__ + monitor status (ambii agenti)
+- TRAP CRITIC: `agent.py`/`agent-original.py` rulau bucla `input()` la NIVEL DE MODUL, fara `if __name__` -> `py()` lansa `[sys.executable, "-c", cod]` si pe Android sys.executable=libpyexec.so -> interpretorul RE-INCARCA agent.py -> reintra in bucla -> ATARNA infinit; ORICE tool python parea blocat (agentul "statea intepenit")
+- OK: fix = `if __name__ == "__main__":` inainte de blocul de startup; dovedit: import 0.08s (era TIMEOUT)
+- OK: monitor `/watch [sec]` (0 tokeni): thread local citeste registrul bg + /proc/<pid> si scrie pe ECRAN, NU in context; 30 check-uri prin API = ~255k tokeni vs 0 prin monitor
+- OK: optimizari timp: `_patch_runpath` 13min -> 0.3s (readelf per fisier -> o trecere Python); `_fix_libcxx_needed` idem; `check()` runpath idem; `setexec.py` rula NICIODATA (`python3` nu exista pe Android -> python3.14); `_fix_ninja` wrapper in loc de copie; `_fix_meson_exe` adaugat
+- OK: `adb_client` incearca AUTH_SIGNATURE PRIMUL (cheia in user_keys -> CNXN instant), RSAPUBLICKEY fallback; ordinea inversa dadea timeout la fiecare comanda
+- OK: reguli noi in prompt: STOPPING CRITERION (task gata doar cand VERIFICAREA FINALA da rezultatul cerut) + TIMING (un pas care ia secunde ASTEPTA -> investigheaza, nu dormi)
+- P: /tmp/agent-original.py.before-chirurg-<ts> -> backup inainte de modificari
+- PREVENT: dupa ORICE modificare la agent-original.py (fisierul care ma ruleaza) rulez py_compile + test exec cu __name__=notmain si stdin=DEVNULL

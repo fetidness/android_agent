@@ -643,6 +643,68 @@ def _task_foot(stare="done"):
     b+=N
     return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+N+b
 
+# ==================== MONITOR DE STATUS (0 tokeni, fara API) ====================
+# DE CE: verificarea periodica PRIN API ar retrimite tot contextul la fiecare check
+# (~7k tok x 30 check-uri = ~255k tokeni). Acest thread scrie pe ECRAN, nu in context:
+# 0 cereri API, 0 tokeni. Se activeaza cu /watch [sec] sau AGENT_WATCH=1.
+WATCH = {"on": os.environ.get("AGENT_WATCH") == "1",
+         "sec": int(os.environ.get("AGENT_WATCH_SEC", "60") or 60)}
+
+def _watch_snapshot():
+    """Ce joburi de fundal ruleaza ACUM, verificat pe /proc (nu ghicit).
+    Intoarce o lista de tuple (nume, stare, pid, secunde, log). Fara API, fara context."""
+    out = []
+    try:
+        import glob as _g
+        for d in _g.glob("/tmp/agent_bg/*"):
+            n = os.path.basename(d)
+            pid = 0
+            try:
+                pid = int(open(os.path.join(d, "pid")).read().strip())
+            except Exception:
+                pass
+            alive = "?"
+            if pid:
+                try:
+                    st = open("/proc/%d/stat" % pid).read().split(") ", 1)[1].split()[0]
+                    alive = "RUNNING" if st not in ("Z", "X") else "DONE"
+                except Exception:
+                    alive = "DONE"
+            out.append((n, alive, pid, 0, d))
+    except Exception:
+        pass
+    return out
+
+def _watch_loop():
+    """Scrie o linie compacta la fiecare WATCH['sec'] secunde. Doar stdout, niciodata in context."""
+    last = ""
+    while not WATCH.get("stop"):
+        time.sleep(max(10, int(WATCH.get("sec", 60))))
+        if not WATCH.get("on"):
+            continue
+        try:
+            rows = [r for r in _watch_snapshot() if r[1] == "RUNNING"]
+        except Exception:
+            continue
+        if not rows:
+            continue
+        line = "  ".join("%s pid=%d" % (n, p) for n, a, p, d, l in rows)
+        if line == last:
+            continue                    # nimic nou: nu scrie (fara zgomot)
+        last = line
+        try:
+            print("\r\33[K" + SD + "\u23f1 watch " + N + G + line + N, flush=True)
+        except Exception:
+            pass
+
+def _watch_start():
+    if WATCH.get("thread"):
+        return
+    WATCH["stop"] = False
+    th = threading.Thread(target=_watch_loop, daemon=True)
+    WATCH["thread"] = th
+    th.start()
+
 def _live(i):
     """The live line, rewritten in place while the step runs. SIMPLE design:
     spinner + "Thinking..." (or "Running...") + the label of the work + the task clock.
@@ -831,7 +893,9 @@ M=[{"role":"system","content":TOOLGUIDE+" You are a minimal autonomous agent. Us
   "VISION: you have a second tool, `look(path, prompt)` - it sends an IMAGE file to the same model with THINKING ENABLED and returns what is REALLY in it. Use it whenever the operator asks you to see/analyze a screen, a screenshot, a chart or a photo: first capture it (e.g. `xwd -root -out shot.xwd` then convert with ffmpeg to png), then call look on the png. Never guess what an image contains - look at it. " +
   "STEP LABELS: the FIRST line of every python/bash tool call is a comment (lowercase) - the terminal prints it as that step\u2019s label. Say WHAT the step does, in the operator\u2019s language (Romanian), never `# step 1` or `# test`. DENSITY RULE (this is billed, the label is part of the context sent on EVERY later request): one short line, the essential verb + object, no trailing explanation, no restating the task, no repeating the previous label. Aim for ~60-90 chars; a label that needs 200 is usually two steps or an explanation that belongs in the answer, not in the label. Completeness of INFORMATION, not of prose. " +
   "The terminal UI shows a live task timer (from the operator's request to your final answer, split into thinking vs tool time) and one labelled line per finished step; no code and no output unless the operator toggles /verbose. " +
-  "CODE DENSITY (the code you send is billed on EVERY later request): the `code`/`cmd` field of a tool call stays in the context forever and is re-sent each round - in a long session it is a third of the total input. So write the SHORTEST code that does the job: no decorative comments (only the one required label line), no re-printing data you already printed, no re-implementing something a stdlib call does in one line, no boilerplate headers. Prefer one clear line over five explained lines. This does NOT mean fewer steps or bigger pipelines: it means each step carries only the code it needs. " +"BATCH SMALL STEPS (biggest cost saver): every request re-sends the WHOLE context, so each extra step costs the full history again. When you need 2-6 quick, INDEPENDENT things (a listing, a short cat, a status, a git branch, an env value), do NOT spend 6 steps: use the `multi` tool ONCE with the list of ops. Rule of thumb: if step B would not read anything step A printed, they belong in the SAME `multi` call. DO NOT batch when the next step depends on the previous output, when an entry is heavy/long or can hang, or when the operator asked to see each step individually - a failure must stay isolated and visible. Small steps are GOOD for reliability; the only waste is running them one request at a time. " +"CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. READING BIG FILES (do not get truncated): every tool output above ~7000 chars is CUT IN THE MIDDLE and the middle is NOT recoverable - the log on disk is cut by the same limit. So NEVER read a large file with `python: print(open(f).read())` or a `for` loop over its lines: you WILL lose the middle and waste steps re-reading. Use the `read` tool instead: it takes path/offset/limit/budget and returns at most `budget` chars (default 6000) with a footer giving the EXACT next offset. For a file you do not know yet, do it in TWO moves: (1) `read` with `grep` = a regex (e.g. '^#{2,3} ') to get the map with line numbers in ONE call, (2) `read` with offset/limit on just the section you need. When you must emit a long list yourself, chunk it: count the chars of what you print and stop below ~7000, then continue in the NEXT step. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. " +
+  "CODE DENSITY (the code you send is billed on EVERY later request): the `code`/`cmd` field of a tool call stays in the context forever and is re-sent each round - in a long session it is a third of the total input. So write the SHORTEST code that does the job: no decorative comments (only the one required label line), no re-printing data you already printed, no re-implementing something a stdlib call does in one line, no boilerplate headers. Prefer one clear line over five explained lines. This does NOT mean fewer steps or bigger pipelines: it means each step carries only the code it needs. " +"STOPPING CRITERION (a real failure from a build report): before you call a task done, state to yourself WHAT the finish line is (e.g. `python -c \"import numpy\"` exits 0 and prints the version). The task is NOT done because a tool printed OK - it is done when the FINAL verification returns the result that was asked for. After EVERY step that reports success, check the EFFECT on disk (does the file exist? does the command run?), not the status message. If a tool says OK but the effect is missing, treat it as a FAILURE and investigate the tool. NEVER end a turn with \"I did X, next comes Y\" when the operator asked for Y: finish Y. A half-done task reported as progress is worse than an honest \"I am blocked on Z\". " +
+  "TIMING: tools that shell out return in milliseconds here, so a step that takes seconds means it is WAITING (a timeout, a lock, a network call) - investigate the cause instead of waiting it out. Do not sleep between steps: each step already waits exactly as long as its tool needs. " +
+"BATCH SMALL STEPS (biggest cost saver): every request re-sends the WHOLE context, so each extra step costs the full history again. When you need 2-6 quick, INDEPENDENT things (a listing, a short cat, a status, a git branch, an env value), do NOT spend 6 steps: use the `multi` tool ONCE with the list of ops. Rule of thumb: if step B would not read anything step A printed, they belong in the SAME `multi` call. DO NOT batch when the next step depends on the previous output, when an entry is heavy/long or can hang, or when the operator asked to see each step individually - a failure must stay isolated and visible. Small steps are GOOD for reliability; the only waste is running them one request at a time. " +"CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. READING BIG FILES (do not get truncated): every tool output above ~7000 chars is CUT IN THE MIDDLE and the middle is NOT recoverable - the log on disk is cut by the same limit. So NEVER read a large file with `python: print(open(f).read())` or a `for` loop over its lines: you WILL lose the middle and waste steps re-reading. Use the `read` tool instead: it takes path/offset/limit/budget and returns at most `budget` chars (default 6000) with a footer giving the EXACT next offset. For a file you do not know yet, do it in TWO moves: (1) `read` with `grep` = a regex (e.g. '^#{2,3} ') to get the map with line numbers in ONE call, (2) `read` with offset/limit on just the section you need. When you must emit a long list yourself, chunk it: count the chars of what you print and stop below ~7000, then continue in the NEXT step. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. " +
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. " +
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. " +
   "FINAL MESSAGE: it is rendered as FULL rich Markdown in a 256-colour terminal, so use it heavily and correctly: headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, ==highlight==, > blockquote, --- rules, numbered and bulleted lists, task lists (- [x]), links [text](url), tables with | pipes |, and fenced code blocks with a language tag. Write the final answer in Romanian, complete and well structured."}]
@@ -1369,96 +1433,111 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
         print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
 
 
-refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
-ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
-print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
-print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /reset, /exit"+N+"\n")
-while 1:
-    try: q=input(U+" TU > "+IN).strip()
-    except (EOFError,KeyboardInterrupt): print(N);break
-    if q in ("/exit","/quit",""): break
-    if q in ("/help","/?"):
-        _al="ON" if AUTOLEARN["on"] else "OFF"
-        print(G+"   COMMANDS"+N)
-        print(G+"     /learn              update memory now (manual learning)"+N)
-        print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
-        print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
-        print(G+"     /ctx                context window + archives/logs on disk"+N)
-        print(G+"     /compact            (disabled) context is never compressed - memory stays intact until /reset"+N)
-        print(G+"     /verbose            toggle full code/output of each step"+N)
-        print(G+"     /reset              erase the conversation history"+N)
-        print(G+"     /help, /?           this list"+N)
-        print(G+"     /exit, /quit        leave (empty line too)"+N)
-        print(G+"   "+(HINT_LINE)+N)
-        continue
-    if q=="/ctx":
-        _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
-        _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
-        print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok = "+("%.0f"%(100.0*ctx_tokens()/CTXWINDOW))+"% of "+_K(CTXWINDOW)+" ("+str(CTXWARN)+"% = red warning) | compression OFF (context grows until /reset)"+N)
-        _hit="n/a"
-        if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
-        print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
-        print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
-    if q=="/compact":
-        print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, "
-              "not on request), so the memory inserted at startup stays intact until you give /reset. "
-              "Nothing was changed."+N); continue; continue
-    if q=="/verbose":
-        VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
-    if q=="/mem":
-        _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
-    if q=="/reset":
-        M[:]=M[:1]; save_ctx()
-        print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
-    if q.startswith("/auto-learn"):
-        arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
-        if arg in ("on","1","yes"):
-            AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
-        elif arg in ("off","0","no"):
-            AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
-        else:
-            print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
-        continue
-    if q=="/learn":
-        do_learn("/learn"); continue
-    M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
-    print(_task_head(q))
-    try:
-     tries=0
-     while 1:
-        m,u=_spin(ask,phase="think");print_usage_compact(u)
-        if m is None: M.pop();print(_task_foot("interrupted: API error"));break
-        if _empty(m):
-            tries+=1
-            if tries<=EMPTY_RETRY:
-                print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
-                continue
-            print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
-            print(_task_foot("stopped: empty answer"));break
-        tries=0
-        M.append(m);save_ctx();ctx_warn()
-        if m.get("tool_calls"):
-            _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
-            _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
-            _txt=str(m.get("content") or "").strip() or _fb
-            # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
-            if _txt:
-                _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
-                if _clean: print(OF+"   "+N+C+_clean+N)
-            for c in m["tool_calls"]:
-                code=json.loads(c["function"]["arguments"] or "{}").get("code","")
-                o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
-                M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
-        else:
-            print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
-            print(_task_foot())
-            auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
-            flush_task_tokens()
-            break
-    except KeyboardInterrupt:
-        LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
-        print("\r\33[K",end="",flush=True)
-        print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
-        while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
-        complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
-save_ctx()   # on /exit or Ctrl+D the history is already on disk
+if __name__ == "__main__":
+    if WATCH.get("on"):
+        _watch_start()
+    refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
+    ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
+    print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
+    print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /watch, /reset, /exit"+N+"\n")
+    while 1:
+        try: q=input(U+" TU > "+IN).strip()
+        except (EOFError,KeyboardInterrupt): print(N);break
+        if q in ("/exit","/quit",""): break
+        if q in ("/help","/?"):
+            _al="ON" if AUTOLEARN["on"] else "OFF"
+            print(G+"   COMMANDS"+N)
+            print(G+"     /learn              update memory now (manual learning)"+N)
+            print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
+            print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
+            print(G+"     /ctx                context window + archives/logs on disk"+N)
+            print(G+"     /compact            (disabled) context is never compressed - memory stays intact until /reset"+N)
+            print(G+"     /verbose            toggle full code/output of each step"+N)
+            print(G+"     /watch [sec]        status la fiecare N secunde (0 tokeni, doar cat ruleaza un job)"+N)
+            print(G+"     /reset              erase the conversation history"+N)
+            print(G+"     /help, /?           this list"+N)
+            print(G+"     /exit, /quit        leave (empty line too)"+N)
+            print(G+"   "+(HINT_LINE)+N)
+            continue
+        if q=="/ctx":
+            _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
+            _l=[f for f in (os.listdir(LOGDIR) if os.path.isdir(LOGDIR) else []) ]
+            print(G+"   [ctx] window: "+str(len(M))+" messages ~ "+_K(ctx_tokens())+"tok = "+("%.0f"%(100.0*ctx_tokens()/CTXWINDOW))+"% of "+_K(CTXWINDOW)+" ("+str(CTXWARN)+"% = red warning) | compression OFF (context grows until /reset)"+N)
+            _hit="n/a"
+            if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
+            print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
+            print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
+        if q=="/compact":
+            print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, "
+                  "not on request), so the memory inserted at startup stays intact until you give /reset. "
+                  "Nothing was changed."+N); continue
+        if q.startswith("/watch"):
+            _a = q.split()
+            if len(_a) > 1 and _a[1].isdigit(): WATCH["sec"] = max(10, int(_a[1]))
+            WATCH["on"] = not WATCH["on"]
+            if WATCH["on"]:
+                _watch_start()
+                print(G+"   [watch] ON - status la fiecare "+str(WATCH["sec"])+"s, DOAR cat ruleaza ceva."+N)
+                print(G+"   [watch] cost: 0 tokeni (scrie pe ECRAN, nu intra in contextul modelului)."+N)
+            else:
+                print(G+"   [watch] OFF."+N)
+            continue
+        if q=="/verbose":
+            VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
+        if q=="/mem":
+            _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
+        if q=="/reset":
+            M[:]=M[:1]; save_ctx()
+            print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
+        if q.startswith("/auto-learn"):
+            arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
+            if arg in ("on","1","yes"):
+                AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
+            elif arg in ("off","0","no"):
+                AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
+            else:
+                print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
+            continue
+        if q=="/learn":
+            do_learn("/learn"); continue
+        M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
+        print(_task_head(q))
+        try:
+         tries=0
+         while 1:
+            m,u=_spin(ask,phase="think");print_usage_compact(u)
+            if m is None: M.pop();print(_task_foot("interrupted: API error"));break
+            if _empty(m):
+                tries+=1
+                if tries<=EMPTY_RETRY:
+                    print(OF+"   \u26a0 EMPTY answer from the model - retrying ("+str(tries)+"/"+str(EMPTY_RETRY)+")"+N)
+                    continue
+                print(R+"   [empty] the model answered empty "+str(tries)+" times in a row; stopping the step (I do not save the empty message in the history)."+N)
+                print(_task_foot("stopped: empty answer"));break
+            tries=0
+            M.append(m);save_ctx();ctx_warn()
+            if m.get("tool_calls"):
+                _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
+                _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
+                _txt=str(m.get("content") or "").strip() or _fb
+                # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
+                if _txt:
+                    _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
+                    if _clean: print(OF+"   "+N+C+_clean+N)
+                for c in m["tool_calls"]:
+                    code=json.loads(c["function"]["arguments"] or "{}").get("code","")
+                    o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
+                    M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
+            else:
+                print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
+                print(_task_foot())
+                auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
+                flush_task_tokens()
+                break
+        except KeyboardInterrupt:
+            LIVE.update(phase="idle",desc="",col=None,n=0)   # kill the live line first: no "step 00" left stuck on screen
+            print("\r\33[K",end="",flush=True)
+            print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
+            while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
+            complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
+    save_ctx()   # on /exit or Ctrl+D the history is already on disk

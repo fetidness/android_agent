@@ -2168,3 +2168,70 @@ toolchain action=doctor ->
 > **Nota despre iteratie:** instalarea unui APK nou NU reincarca `agent.py` in procesul Python deja
 > pornit (agentul ruleaza bucla cu fisierul incarcat la startup). Dupa orice schimbare de assets:
 > `am force-stop` + `am start` + **reactivare accessibility**.
+---
+
+## Etapa 45 - FIX CRITIC `__main__` + MONITOR DE STATUS (0 tokeni)
+
+### BUG-ul care bloca TOTUL (ore de "timeout" aparent)
+
+`agent.py` rula `refresh()` si bucla `input()` **la nivel de modul**, fara `if __name__ == "__main__"`.
+`py()` lansa `[sys.executable, "-c", cod]`, iar pe Android `sys.executable` = `libpyexec.so` →
+interpretorul **RE-INCARCA agent.py** → reintra in bucla `input()` → **atarna infinit**.
+
+**Efect:** ORICE tool `python`/`run_tool` parea blocat; agentul "statea intepenit dupa task".
+
+**Fix:** un singur `if __name__ == "__main__":` inainte de blocul de startup.
+Acelasi fix aplicat si in `agent-original.py` (agentul Linux):
+`import` = **0.08s** (era blocat infinit).
+
+### OPTIMIZARI DE TIMP (referatul: "fazele de fix au fost mai lungi decat build-ul")
+
+| Operatie | Inainte | Acum | Cauza |
+|----------|---------|------|-------|
+| `_patch_runpath` | **13+ min** | **0.3s** | `readelf -d` per fisier (~1000 spawn-uri) → o singura trecere Python |
+| `_fix_libcxx_needed` | minute | **0.1s** | la fel |
+| `check()` runpath | ~30s | **<1s** | la fel |
+| `setexec.py` | **nu rula deloc** | ruleaza | `python3` NU exista pe Android → `python3.14` |
+| `_fix_ninja` | copie (distrugea originalul) | wrapper script | referatul: "nu mai e recuperabil" |
+| `_fix_meson_exe` | lipsea | wrapper `python3.14 -m mesonbuild.mesonmain` | meson vine ca MODUL |
+| preflight | `cmake_build=false` | **true** | `PREFIX` exportat + filtrare linii `[adb]` |
+
+`adb_client`: incearca **AUTH_SIGNATURE primul** (cheia e in `user_keys` → CNXN imediat),
+`RSAPUBLICKEY` doar fallback. Ordinea inversa producea timeout la fiecare comanda.
+
+### MONITOR DE STATUS: `/watch [sec]` — 0 TOKENI
+
+**Intrebarea operatorului:** "poti adauga un check la fiecare minut? devine costisitor?"
+
+**Masurat:** prin API, 30 de check-uri (build de 30 min) = **~255.000 tokeni input**, fiindca
+fiecare check retrimite TOT contextul. Prin monitor local: **0 tokeni, 0 cereri API**.
+
+**Cum functioneaza:** un thread LOCAL care citeste registrul joburilor de fundal si verifica
+`/proc/<pid>/stat` (nu ghiceste), apoi scrie o linie pe ECRAN (stdout). Nu atinge contextul.
+
+```
+/watch        -> porneste (60s)
+/watch 30     -> la 30 de secunde
+/watch        -> opreste
+AGENT_WATCH=1 -> pornit automat la startup
+```
+
+Exista in AMBELE agenti (Android si Linux). `_watch_loop` scrie DOAR cat ruleaza un job
+(silentios cand nu e nimic de raportat) si doar cand linia se schimba (fara zgomot).
+
+### REGULI NOI IN SYSTEM PROMPT
+
+```
+STOPPING CRITERION: task-ul NU e gata pentru ca un tool a afisat OK - e gata cand
+VERIFICAREA FINALA returneaza rezultatul cerut. Dupa fiecare pas, verifica EFECTUL
+pe disc, nu mesajul de status. Niciodata sa nu inchei un tur cu "am facut X, urmeaza Y".
+
+TIMING: tool-urile care apeleaza shell intorc in milisecunde aici, deci un pas care
+ia secunde inseamna ca ASTEPTA (timeout, lock, retea) - investigheaza cauza in loc
+sa astepti. Nu dormi intre pasi: fiecare pas asteapta exact cat are nevoie tool-ul.
+```
+
+### REZULTAT
+
+numpy 2.5.3 compilat nativ pe telefon (import OK, matmul/svd/fft/random functionale);
+wheel `numpy-2.5.3-cp314-cp314-android_24_arm64_v8a.whl` (7.3 MB).
