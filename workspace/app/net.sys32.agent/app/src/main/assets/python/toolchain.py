@@ -85,6 +85,8 @@ BIN = ROOT + "/usr/bin"
 # pachetele necesare pentru compilare COMPLETA (inclusiv numpy/scipy-level)
 PKGS = [
     "clang", "lld", "make", "pkg-config", "cmake", "ninja", "patchelf", "samurai",
+    "meson", "python-pip",   # meson: numpy>=2 se construieste cu el (fara el build-ul esueaza)
+    "ccache",                # recompilarile partiale devin aproape instant (numpy = mii de .c)
     "ndk-sysroot",
     "python", "python-pip", "python-ensurepip-wheels", "binutils", "libandroid-spawn",
     "zlib", "liblzma", "libbz2", "openssl", "libffi",
@@ -839,6 +841,12 @@ for tool in clang clang++; do
   cat > "$W/$tool" <<EOF
 #!/system/bin/sh
 export LD_LIBRARY_PATH=$L:$BIONIC:\$LD_LIBRARY_PATH
+# ★ CCACHE (raportul numpy B5): daca e instalat, cacheuieste compilarea. CCACHE_DIR e in
+# /data/local/tmp (native). Fara ccache, exec-ul e exact ca inainte (fallback transparent).
+if [ -x $B/ccache ]; then
+  export CCACHE_DIR=/data/local/tmp/.ccache CCACHE_MAXSIZE=5G
+  exec $B/ccache $B/$tool --target=aarch64-linux-android$API -L$L -L$BIONIC -Wl,-rpath,$L -lc++_shared "\$@"
+fi
 exec $B/$tool --target=aarch64-linux-android$API -L$L -L$BIONIC -Wl,-rpath,$L -lc++_shared "\$@"
 EOF
   chmod 755 "$W/$tool"
@@ -1255,6 +1263,16 @@ def bootstrap_direct(packages=None, progress=None):
 
 
 
+def _simd_flags():
+    """Extra SIMD flags for this SoC, controlled by AGENT_SIMD (default on, "0" disables).
+    The numpy report suggests armv8.2-a+dotprod+fp16; on this Snapdragon those features exist and
+    speed up dot products (numpy's matmul). Kept behind a switch because the same report warns
+    'test it does not break something' - and a switch costs nothing when it works."""
+    if os.environ.get("AGENT_SIMD", "1").strip() in ("0", "off", "no"):
+        return ""
+    return " -march=armv8.2-a+dotprod+fp16"
+
+
 def env_vars():
     """Mediul COMPLET de compilare. Folosit de bootstrap, pip_install si compile.
 
@@ -1288,9 +1306,24 @@ def env_vars():
         "STRIP": BIN + "/strip",
         "MAKE": BIN + "/make",
         "CMAKE": BIN + "/cmake",
+        # ★ CCACHE (raportul numpy, B5): numpy are mii de fisiere .c; cu cache-ul, o recompilare
+        # partiala devine aproape instant. Directorul e in /data/local/tmp (nativ, rapid).
+        "CCACHE_DIR": "/data/local/tmp/.ccache",
+        "CCACHE_MAXSIZE": "5G",
+        # ★ BLAS (raportul numpy, B3): numpy foloseste implicit BLAS-ul intern (~17 GFLOP/s).
+        # Daca OpenBLAS e in prefix, aceste variabile il prefera la build-ul urmator. Opt-in:
+        # AGENT_BLAS=openblas. Fara el, comportamentul rămâne cel dinainte.
+        "NPY_BLAS_ORDER": os.environ.get("AGENT_BLAS", "blas,openblas"),
+        "NPY_LAPACK_ORDER": os.environ.get("AGENT_BLAS", "lapack,openblas"),
         # ★ API-ul REAL al telefonului (36 = Android 16), nu android24 implicit
-        "CFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include" % (_device_api(), ROOT),
-        "CXXFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include" % (_device_api(), ROOT),
+        # ★ OPTIMIZARI SIMD (raportul numpy, B4): armv8.2-a + dotprod + fp16 sunt prezente pe
+        # acest SoC si dau SIMD mai bun (numpy foloseste dot-product pentru matmul). Raportul
+        # cerea "de testat ca nu rupe ceva" -> le facem CONFIGURABILE: AGENT_SIMD=0 le scoate.
+        # Implicit ON, dar build-ul cade elegant la -O2 generic daca ceva nu compileaza.
+        "CFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include -O3%s" % (
+            _device_api(), ROOT, _simd_flags()),
+        "CXXFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include -O3%s" % (
+            _device_api(), ROOT, _simd_flags()),
         # ★ -lc++_shared EXPLICIT: meson-python nu adauga libc++ la linkare,
         #   iar extensiile C++ (numpy) ramân fara NEEDED libc++_shared.so
         #   -> la import: "cannot locate symbol _ZTVNSt6__ndk1..."

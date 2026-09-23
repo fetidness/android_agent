@@ -1112,3 +1112,9 @@ TRAP: an inline action dispatcher in agent.py `_run()` hardcodes its supported t
 - TRAP: editarea `MainActivity.kt` cu sed prin tool-ul bash poate da output gol si NU aplica -> foloseste python (re.search + replace + write) si verifica rezultatul
 - TRAP: ghilimelele duble in descrierile de tool (schema JSON) rup string-ul Python -> foloseste ghilimele simple in textul din descriere
 - P: /home/gab/Desktop/agent/docs/raport_numpy_android.md -> raportul agentului (auto-diagnostic exemplar)
+
+P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk -> APK-ul construit; `unzip -p app-debug.apk assets/python/agent.py` verifica ca optimizarile au ajuns in pachet, nu doar in sursa
+
+TRAP: verificarea finala a unui fix de tool in acest proiect cere 4 locuri sincronizate -> schema JSON cu enum, dispatcher in agent.py, lista inline hardcodata din _run si CLI in modul -> daca lipseste unul, agentul raspunde "actiune necunoscuta" desi handler-ul exista; verifica toate patru inainte de build
+
+TRAP: dupa instalarea unui APK nou, agent.py NU se reincarca in procesul Python deja pornit (bucla foloseste fisierul incarcat la startup) -> orice schimbare de assets pare fara efect -> am force-stop + am start + reactivare accessibility inainte de a testa

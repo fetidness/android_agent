@@ -2130,6 +2130,19 @@ its files but CANNOT execute them - run through `adbsh`/`/run_su`.
 A `status` that looks green from the shell perspective does not mean YOU can use it.
 ```
 
+### COMPLETARE: recomandarile B (flux de build) - toate acoperite
+
+Primele doua erau deja implementate; restul au fost adaugate acum.
+
+| # | Propunere | Implementare |
+|---|-----------|--------------|
+| **B1** | build in /data/local/tmp, nu pe FUSE | deja: `TMPDIR=/data/local/tmp/tmp` in `env_vars()` + `_prepare_dirs()` |
+| **B2** | cache de wheel persistent | deja: `PIP_CACHE_DIR=$HOME/.cache/pip` |
+| **B3** | OpenBLAS | `NPY_BLAS_ORDER` / `NPY_LAPACK_ORDER` in env (opt-in `AGENT_BLAS=openblas`); fara el rămâne BLAS-ul intern |
+| **B4** | `-O3 -mcpu=native` / SIMD | `_simd_flags()` adauga `-march=armv8.2-a+dotprod+fp16` + `-O3` in CFLAGS/CXXFLAGS, controlabil cu `AGENT_SIMD=0` |
+| **B5** | CCACHE | `ccache` in PKGS + wrapperele clang din `/data/local/tmp/wrap` il folosesc cand exista (fallback transparent) |
+| **B6** | LTO off | corect lasat off (nimic de facut) |
+
 ### TREI bug-uri gasite la integrare (pe care raportul nu le putea sti)
 
 | Bug | Simptom | Fix |
