@@ -2187,13 +2187,21 @@ QUAR = os.path.join(os.path.dirname(MEM), "memory_quarantine.md")
 HEDGE_RX = [r"\bsuspect", r"\bprobably\b", r"\bposibil", r"\bse pare\b", r"\bmaybe\b",
             r"\blikely\b", r"\bpoate fi\b", r"\bipotez", r"\bpresupun\b",
             r"\bneverificat\b", r"\bmight\b", r"\bcould be\b"]
-ABSOLUTE_RX = [r"\bboth fail\b", r"\ball (return|fail)", r"\balways\b", r"\bmereu\b",
-               r"\bnever\b", r"\bniciodata\b", r"\bintotdeauna\b", r"\bdo NOTHING\b",
-               r"\bambele\b", r"\btoate\b.*\b(esu|e[ss]ue|fail)", r"\bnici ?un", r"\bfara exceptie\b"]
+# Generalizari absolute: DOAR cele care trag o concluzie despre propriul
+# comportament (nu descrieri de fapte masurate). Tiparul care a otravit memoria
+# era "X si Y ambele esueaza -> deci e read-only", nu "toate returneaza false".
+ABSOLUTE_RX = [r"\bboth fail\b", r"\bambele\b.{0,20}?\b(esu|e[ss]u|fail)\w*",
+               r"\ball (of them )?fail\b", r"\btoate\b.{0,40}?\b(esu|e[ss]u|fail)\w*",
+               r"\bnici ?unul\b", r"\bfara exceptie\b",
+               r"\bnu (mai )?merge (niciodata|nici)\b", r"\b(esu|e[ss]u)\w* (mereu|intotdeauna)\b",
+               r"\bnu are permisiune\b", r"\bnu are (voie|drept)\b"]
 PROOF_RX = [r"\bproven\b", r"\bdovedit\b", r"\bverified\b", r"\bconfirmat\b",
             r"\blogcat\b", r"\btested?\b", r"\bmeasured\b", r"\bmasurat\b"]
-CAUSE_CLAIM_RX = [r"\bread-only\b", r"\bmissing capability\b", r"\bcapabilities lack\b",
-                  r"\bserviciul e in mod\b", r"\be in mod read", r"\bproblem[aă] de (thread|looper)"]
+# Doar formulari care AFIRMA cauza ca verdict ("serviciul ESTE read-only",
+# "e in mod read-only"), nu orice mentiune a cuvantului.
+CAUSE_CLAIM_RX = [r"\b(e|este|e in mod) read[- ]only\b", r"\bconsider[oă]-[ol] read[- ]only\b",
+                  r"\bmissing capability\b", r"\bcapabilities lack\b",
+                  r"\bproblem[aă] de (thread|looper)\b"]
 CAUSE_PROOF_RX = [r"\blogcat\b", r"\bproven\b", r"\bdovedit\b", r"\bverified\b",
                   r"\bconfirmat\b", r"\bPendingIntent\b", r"\bSystemActionPerformer\b"]
 HEDGE_OK_RX = [r"\bdovedit\b", r"\bverified\b", r"\bconfirmat\b", r"\bproven\b"]
@@ -2238,14 +2246,32 @@ def _q_hedged(line):
         return True
     return False
 
+# O lectie META (despre auto-learn, despre memorie, despre o eroare proprie) NU e
+# o contradictie, chiar daca numeste subiecte si verdicturi. Fara exceptia asta,
+# lectiile despre anti-poison se blocheaza singure (observat 2026-09-24).
+META_RX = [r"\bauto-learn\b", r"\bmemory\.md\b", r"\bmemoria\b", r"\bmemorie\b",
+           r"\bpoarta anti", r"\blegitii false\b", r"\blectii false\b", r"\bauto-contrazic",
+           r"\bscrie lectii\b", r"\bgeneralizeaz", r"\bconcluzia gresita\b",
+           r"\bacumuleaz", r"\bcontradictorii\b", r"\bverifica daca contrazice\b"]
+
+def _q_meta(line):
+    """True daca lectia vorbeste DESPRE procesul de invatare, nu despre telefon."""
+    return any(re.search(rx, line, re.I) for rx in META_RX)
+
 def _q_contradicts(new_line, mem_text):
     """Intoarce linia veche contrazisa, sau None. Doar daca verdictul e despre
     ACELASI mecanism (subiect comun) si semnalele sunt explicit opuse."""
+    if _q_meta(new_line):
+        return None
     nt = _q_topics(new_line)
     if not nt:
         return None
     for old in mem_text.split("\n"):
         if not old.startswith(("TRAP:", "OK:", "DEAD:", "P:", "PREVENT:")):
+            continue
+        # o lectie META (despre procesul de invatare) NU e un fapt despre telefon,
+        # deci nu poate contrazice o lectie tehnica (simetrie cu _q_meta mai sus)
+        if _q_meta(old):
             continue
         if not (_q_topics(old) & nt):
             continue
