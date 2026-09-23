@@ -11,7 +11,7 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 - **Kotlin** pentru UI + bridge + accessibility
 - **DeepSeek API** pentru creier
 
-### Ce poti face (8 tool-uri)
+### Ce poti face (10 tool-uri)
 
 | Tool | Ce face | Uid |
 |------|---------|-----|
@@ -23,6 +23,8 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 | `smart` | auto-router python/bash | 10362 |
 | `read` | citeste fisiere mari (paginat) | 10362 |
 | `look` | analiza imagini (vision) | — |
+| `bg` | **gestionar de procese in fundal** (start/status/log/kill/list/clean) — OBLIGATORIU pentru orice comanda >30s | 10362 |
+| `toolchain` | compilare C/C++ nativa pe telefon (clang-21, samu, pkg Termux) | 10362 |
 
 ### REGULA DE AURENTRU ALEGEREA TOOL-URILOR
 1. **Ecran** (citire/tap/text) → `android ui` (nativ, instant, 0 auth)
@@ -129,6 +131,362 @@ oid (net.sys32.agent)
 
 **NU e nevoie de altceva.** Cheia e persistenta, libs se copiaza singure.
 
+---
+
+## 🛠 OPERATIUNI (BUILD · INSTALL · DEBUG · VERIFICARE)
+
+> **Sectiunea asta e PROCEDURA OPERATIONALA.** Daca esti un agent proaspat resetat
+> si trebuie sa construiesti, instalezi sau sa debughezi aplicatia, citeste DOAR
+> partea asta si urmeaz-o pas cu pas. Restul documentului explica DE CE.
+
+---
+
+### OP.1 — MEDIUL DE BUILD (pe laptop)
+
+| Componenta | Valoare | Nota |
+|------------|---------|------|
+| JDK | `/usr/lib/jvm/java-21-openjdk-amd64` | **JDK 21** — Debian trixie NU are openjdk-17; Gradle 8.11.1 + AGP merg cu 21 |
+| Android SDK | `/home/gab/android` | `ANDROID_HOME` = `ANDROID_SDK_ROOT` |
+| build-tools | `34.0.0`, `35.0.0`, `35.0.1`, `36.0.0` | se foloseste automat de AGP |
+| Gradle | wrapper **8.11.1** | cache in `~/.gradle/wrapper/dists/gradle-8.11.1-bin` |
+| adb | `/home/gab/android/platform-tools/adb` | **NU e in PATH!** foloseste calea absoluta |
+| NDK / cmake / emulator | in `/home/gab/android/` | doar pentru build nativ, nu pentru APK |
+| Device | `RZGL102X5AT` (Samsung SM-A366B, Android 16) | `adb devices -l` |
+
+**De ce conteaza:** `env.sh` din vechea structura **a fost sters** (commit `f72a5eb`).
+Toate variabilele sunt setate acum de `build_app.sh`. Daca rulezi `gradlew` manual,
+exporta-le tu:
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export ANDROID_HOME=/home/gab/android
+export ANDROID_SDK_ROOT=/home/gab/android
+export PATH=$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
+```
+
+**Verificare mediu (5 secunde):**
+```bash
+java -version                                  # -> openjdk 21.0.12.1
+cd /home/gab/Desktop/agent/workspace/app/net.sys32.agent && ./gradlew --version
+/home/gab/android/platform-tools/adb devices -l
+```
+
+---
+
+### OP.2 — BUILD APK
+
+#### Calea normala (build + install + start) — 99% din cazuri
+
+```bash
+cd /home/gab/Desktop/agent/workspace/app
+./build_app.sh
+```
+
+Ce face scriptul (citit, verificat):
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export ANDROID_HOME=/home/gab/android
+export ANDROID_SDK_ROOT=/home/gab/android
+export PATH=$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
+cd "$(dirname "$0")/net.sys32.agent"
+./gradlew assembleDebug                        # BUILD
+adb install -r app/build/outputs/apk/debug/app-debug.apk   # INSTALL
+adb shell am start -n net.sys32.agent/.MainActivity        # START
+```
+
+#### Doar build (fara install)
+
+```bash
+cd /home/gab/Desktop/agent/workspace/app/net.sys32.agent
+./gradlew assembleDebug                 # APK: app/build/outputs/apk/debug/app-debug.apk
+./gradlew --offline assembleDebug       # fara retea (deps in cache) — ~14s incremental
+./gradlew clean assembleDebug           # rebuild de la ZERO (lent: 59M assets + 24M libs)
+./gradlew assembleRelease               # release (isMinifyEnabled=false, nesemnat)
+```
+
+| Comanda | Timp tipic | Cand |
+|---------|-----------|------|
+| `assembleDebug --offline` (nimic schimbat) | ~14 s | verifici ca mediul e OK |
+| `assembleDebug` dupa 1 fisier `.py`/`.kt` | ~20-40 s | iteratie normala |
+| `clean assembleDebug` | minute | schimbari de config/deps |
+
+**Configurare relevanta** (`app/build.gradle.kts`): `compileSdk 36`, `minSdk 26`,
+`abiFilters arm64-v8a + x86_64`, `packaging.jniLibs.useLegacyPackaging = true`
+(★ obligatoriu: altfel `.so`-urile nu se pot executa pe API 29+).
+`gradle.properties`: `-Xmx3072m`, `parallel`, `caching`, `android.useAndroidX`.
+
+**Verificare APK inainte de install** (comenzi TESTATE, cu rezultatul real de pe acest proiect):
+```bash
+APK=app/build/outputs/apk/debug/app-debug.apk
+ls -lh $APK            # -> -rw-rw-r-- 33M  app-debug.apk
+/home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -4
+#   -> package: name='net.sys32.agent' versionCode='1' versionName='1.0'
+#      platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36'
+#      minSdkVersion:'26' / targetSdkVersion:'36'
+#      uses-permission: name='android.permission.INTERNET' ...
+unzip -l $APK | grep -c 'assets/python/'              # -> 928 fisiere Python ambalate
+unzip -l $APK | grep 'assets/python/agent.py'         # -> 151871  assets/python/agent.py
+unzip -l $APK | grep 'lib/arm64-v8a/'
+#   -> 4537664  lib/arm64-v8a/libcrypto_python.so
+#        4400  lib/arm64-v8a/libpyexec.so          (mic = interpreterul)
+#     5828792  lib/arm64-v8a/libpython3.14.so
+#        4048  lib/arm64-v8a/libpython3.so
+#      886800  lib/arm64-v8a/libsqlite3_python.so
+#      956256  lib/arm64-v8a/libssl_python.so
+/home/gab/android/build-tools/35.0.1/dexdump -f $APK >/dev/null 2>&1 && echo dex-ok   # -> dex-ok
+```
+> ⚠️ `aapt2` scrie `version` pe **stderr** (pe stdout da gol) — nu te speria de output gol acolo.
+> ⚠️ AAPT2 **IGNORA** directoarele din assets care incep cu `_` → de asta
+> `_path.py` / `_streams.py` sunt livrate ca FISIERE, nu ca foldere. Daca un import
+> da `ModuleNotFoundError` pentru un subpachet cu `_`, asta e cauza.
+
+---
+
+### OP.3 — INSTALL + CELE 3 CAPCANE OBLIGATORII
+
+```bash
+ADB=/home/gab/android/platform-tools/adb
+$ADB install -r app/build/outputs/apk/debug/app-debug.apk    # "Success"
+$ADB shell am start -n net.sys32.agent/.MainActivity
+```
+
+**Verificare ca s-a instalat CHIAR versiunea noua:**
+```bash
+$ADB shell dumpsys package net.sys32.agent | grep -E 'lastUpdateTime|codePath|versionName'
+stat -c '%y' app/build/outputs/apk/debug/app-debug.apk        # compara mtime APK cu lastUpdateTime
+$ADB shell pm list packages | grep sys32                       # package present?
+```
+> ⚠️ Daca procesul VECHI inca ruleaza, ecranul poate arata codul vechi desi
+> `lastUpdateTime` e nou → `am force-stop` + `am start`, sau `uninstall` + `install`.
+
+#### ★ CAPCANA 1 — `.assets_vNN` (cea mai frecventa)
+
+`MainActivity.kt` in `extractAssets()`:
+```kotlin
+val stamp = File(filesDir, ".assets_v81")
+if (stamp.exists() && dest.exists()) return   // ← iese IMEDIAT daca markerul exista
+```
+Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi markerul.
+
+**Procedura:**
+```bash
+# 1. gaseste markerul curent
+grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt
+#    -> 554:  val stamp = File(filesDir, ".assets_v81")
+
+# 2. incrementeaza-l (v81 -> v82)
+sed -i 's/\.assets_v81/.assets_v82/' app/src/main/java/net/sys32/agent/MainActivity.kt
+
+# 3. rebuild + install, apoi verifica PE DEVICE
+$ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/ | grep assets_v
+#    -> .assets_v82  (trebuie sa fie NOU)
+```
+
+Ce face re-extragerea (util cand ceva „nu se actualizeaza"):
+- salveaza `python/memory.md`, sterge `python/` si `pyhome/`, copiaza assets, **pune memoria la loc**
+- sterge `pyhome/` intentionat → stdlib-ul (`Lib/`) si `site-packages/` se actualizeaza la fiecare extract
+
+#### ★ CAPCANA 2 — `adb install -r` DEZACTIVEAZA accessibility
+
+```bash
+$ADB shell settings put secure enabled_accessibility_services net.sys32.agent/net.sys32.agent.AgentAccessibilityService
+$ADB shell settings put secure accessibility_enabled 1
+# verificare:
+$ADB shell dumpsys accessibility | grep -A3 net.sys32.agent   # serviciul e enabled=true?
+# sau din chat:  android(tool="ui", action="status")  -> {"ok":true,"enabled":true}
+```
+> ⚠️ Si `am force-stop` reseteaza `accessibility_enabled` la 0 → re-ruleaza cele 2 comenzi.
+
+#### ★ CAPCANA 3 — `libdir` se schimba la fiecare reinstalare
+
+Calea contine hash-ul instalarii: `/data/app/~~<hash>==/net.sys32.agent-<hash>==/lib/arm64`.
+La fiecare install hash-ul e **altul** → `libdir.txt` de pe device devine invalid.
+
+```bash
+$ADB shell dumpsys package net.sys32.agent | grep codePath
+#    -> codePath=/data/app/~~ABC==/net.sys32.agent-DEF==     (append /lib/arm64)
+```
+
+---
+
+### OP.4 — DEBUG (7 niveluri, de la cel mai des la cel mai rar)
+
+#### D1. LOGCAT — prima oprire mereu
+
+```bash
+ADB=/home/gab/android/platform-tools/adb
+$ADB logcat -c                                                # curata INAINTE de repro
+$ADB logcat --pid=$($ADB shell pidof -s net.sys32.agent)       # live, doar app-ul
+$ADB logcat -d -t 300 | grep -iE 'net.sys32|AndroidRuntime'    # ultimele 300 linii
+$ADB logcat -s AndroidRuntime:E                                # doar crash-uri Java/Kotlin
+$ADB logcat -d | grep -iE 'DEBUG|tombstone|SIGSEGV' | tail -40 # crash NATIV (libpyexec.so)
+```
+
+> **Lectie din proiect:** *„Masoara, nu presupune. Logcat a rezolvat ce 3 incercari
+> oarbe n-au reusit."* (sect. 12, lectia 1)
+
+#### D2. TERMINALUL APP-ULUI = stdout-ul Python
+
+Nu exista TTY de sistem. `MainActivity` citeste stdout-ul `libpyexec.so` linie cu
+linie si il deseneaza in TextView. Deci **orice `print()` din `agent.py` apare pe ecran**.
+
+Citire headless:
+```bash
+$ADB exec-out screencap -p > /home/gab/Desktop/agent/temp/shot.png   # apoi tool `look`
+ls -l /home/gab/Desktop/agent/temp/shot.png     # ★ verifica >100KB, altfel frame gol/stale
+```
+Alternativa mai buna (fara OCR): scrie in `/sdcard/Download/Agent/` si citeste fisierul.
+```bash
+$ADB shell cat /sdcard/Download/Agent/context.json | head -c 2000
+```
+
+`uiautomator dump` pe ecranul agentului da **un singur nod multi-linie** cu `&#10;`:
+```bash
+$ADB shell uiautomator dump /data/local/tmp/x.xml    # ★ scrie explicit calea!
+$ADB shell cat /data/local/tmp/x.xml                 # altfel citesti window_dump.xml gresit
+# entitatile &#10; trebuie inlocuite cu \n
+```
+
+#### D3. PROCESUL PYTHON TRAIESTE?
+
+```bash
+$ADB shell ps -A | grep -E 'sys32|libpyexec'
+$ADB shell dumpsys window | grep mCurrentFocus       # ce e in FATA (app? dialog? Settings?)
+$ADB shell dumpsys power | grep -E 'mWakefulness=|net.sys32'   # Doze?
+$ADB shell dumpsys deviceidle whitelist | grep sys32           # exclus de Doze?
+```
+> ⚠️ `ps -A | grep python3.14` **NU e fiabil** pe acest device (build-urile compilate
+> nu apar cu numele asteptat) → nu-l folosi ca dovada de liveness. Foloseste screenshot-ul.
+
+#### D4. FISIERE APP-PRIVATE (fara root, prin `run-as`)
+
+```bash
+$ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/
+$ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/python/
+$ADB exec-out run-as net.sys32.agent cat /data/data/net.sys32.agent/files/python/agent.py > /tmp/agent_on_device.py
+cat /data/data/net.sys32.agent/files/python/key.txt     # NU trebuie sa apara in git!
+```
+> ⚠️ `exec-out run-as cat` poate da **0 bytes** pe Samsung (desi fisierul exista) →
+> incearca alternativ `shell run-as ... head -50` sau `sed -n`.
+> ⚠️ `run-as <pkg> cat` **pierde ultimul newline** → compara cu `md5sum` pe device, nu cu `cat`.
+
+#### D5. STARE PERSISTENTA (memoria + contextul)
+
+```bash
+$ADB shell cat /sdcard/Download/Agent/context.json     # istoricul conversatiei
+$ADB shell cat /sdcard/Download/Agent/memory.md        # lectiile invatate
+```
+> ⚠️ `context.json` **nu e mereu JSON valid** (poate avea „Extra data" dupa array) →
+> parseaza cu `json.JSONDecoder().raw_decode(raw)` care intoarce `(obj, idx)`.
+
+#### D6. INSPECTIA APK-ULUI
+
+```bash
+APK=/home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk
+/home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -20   # ★ 2>&1: scrie pe stderr!
+unzip -l $APK | grep 'assets/python/' | wc -l        # 928 fisiere Python (masurat)
+unzip -l $APK | grep 'assets/python/agent.py'        # 151871 bytes (masurat)
+unzip -l $APK | grep 'lib/arm64-v8a/'                # 6 .so-uri (libpyexec 4400, libpython3.14 5828792)
+/home/gab/android/build-tools/35.0.1/dexdump -f $APK >/dev/null 2>&1 && echo dex-ok
+```
+
+#### D7. DEBUGGER KOTLIN (JDWP) — rar
+
+```bash
+./gradlew installDebug
+$ADB shell am set-debug-app -w net.sys32.agent                  # asteapta debugger
+$ADB forward tcp:8700 jdwp:$($ADB shell pidof net.sys32.agent)
+# attach din IDE la localhost:8700
+$ADB shell am clear-debug-app
+```
+
+---
+
+### OP.5 — TABEL DIAGNOSTIC (simptom → comanda exacta)
+
+| Simptom | Cauza probabila | Comanda / Fix |
+|---------|-----------------|---------------|
+| Modificarea din `assets/` „nu se vede" | marker `.assets_vNN` nebumpat | `grep -n assets_v MainActivity.kt` → `sed -i` bump → rebuild |
+| Cifre/meniu vechi pe ecran dupa install | proces vechi inca ruleaza | `am force-stop net.sys32.agent` apoi `am start -n .../.MainActivity` |
+| `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | semnatura/versiune diferita | `$ADB uninstall net.sys32.agent` + install curat |
+| `INSTALL_FAILED_NO_MATCHING_ABIS` | ABI lipsa | `unzip -l $APK \| grep lib/` (trebuie arm64-v8a) |
+| `pm install` da Binder stacktrace, fara „Success" | APK nu a fost push-uit | `adb push` intai in `/data/local/tmp/`, apoi `pm install -r` de acolo |
+| `libpyexec.so: No such file` | `libdir.txt` vechi (hash schimbat) | `dumpsys package ... \| grep codePath` → append `/lib/arm64` |
+| `cannot locate symbol ...` | `LD_LIBRARY_PATH` gresit | pune `files/libs` **PRIMUL** in `LD_LIBRARY_PATH` |
+| `ModuleNotFoundError` pe subpachet `_xxx` | AAPT2 ignora foldere cu `_` | livreaza ca `.py` simplu, nu ca director |
+| Accessibility se dezactiveaza singur | `install -r` sau `force-stop` | cele 2 `settings put secure ...` |
+| `ui` da `accessibility:false` | serviciul nu e activat | `dumpsys accessibility \| grep -A3 net.sys32` |
+| `adbsh` timeout | adbd nu asculta pe port | `adb tcpip 5555` (o data, de pe laptop) |
+| Dialog „Allow USB debugging" reapare | cheie noua / adbd resetat | apasa Allow (o data) |
+| `adbsh` timed out dupa multe apeluri | rate-limit adbd | asteapta 10s / reporneste wireless debugging |
+| Python nu porneste, `Fatal error: Failed to import encodings` | `PYTHONHOME` gresit | trebuie `files/pyhome`, NU `files/python` |
+| Build esueaza cu `JAVA_HOME is not set` | shell nou fara export | exporta cele 4 variabile din OP.1 |
+| `gradlew` da eroare de retea | deps nu-s in cache | `--offline` sau reconectare |
+| Crash instant la pornire | `.so` lipsa/corupt | `unzip -l $APK \| grep lib/arm64-v8a/` |
+| Agentul „uita" contextul | `context.json` invalid/corupt | `exec-out cat` + verificare `raw_decode` |
+| Apel API `HTTPError` (tool_calls orfane) | mesaj `assistant` cu tool_calls nedublat de `tool` | vezi Etapa 36: repara perechile in `context.json` |
+
+---
+
+### OP.6 — BUILD PYTHON PENTRU ANDROID (o singura data / rar)
+
+> ⚠️ **ATENTIE: sursele NU sunt pe disc acum.** Directorul
+> `workspace/build/Python-3.14.7/` este in `.gitignore` (linia 2: `workspace/build/`)
+> si **a fost sters de pe laptop** — `workspace/` contine doar `app/` si
+> `android_bridge.py`. Rezultatul compilarii E in schimb in repo, in
+> `app/src/main/jniLibs/` + `assets/python/Lib/`.
+> Daca trebuie sa recompilezi CPython pentru Android, re-descarca sursele (vezi mai jos).
+
+CPython 3.14 are **suport Android oficial** (`Android/android.py`) — NU trebuie
+cross-toolchain manual; scriptul oficial face tot.
+
+```bash
+# 1. re-descarca sursele (odata, ~25 MB)
+mkdir -p /home/gab/Desktop/agent/workspace/build && cd /home/gab/Desktop/agent/workspace/build
+curl -LO https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tgz
+tar xf Python-3.14.7.tgz
+cd Python-3.14.7
+
+# 2. dependinte de HOST (o singura data; Debian trixie)
+sudo apt-get install -y build-essential pkg-config autoconf libssl-dev zlib1g-dev \
+     libffi-dev libsqlite3-dev libreadline-dev libbz2-dev liblzma-dev libgdbm-dev libncurses-dev
+
+# 3. build
+sudo apt-get install -y build-essential pkg-config autoconf libssl-dev zlib1g-dev \
+     libffi-dev libsqlite3-dev libreadline-dev libbz2-dev liblzma-dev libgdbm-dev libncurses-dev
+./android.py build aarch64-linux-android     # pentru TELEFON
+./android.py build x86_64-linux-android      # pentru EMULATOR
+```
+
+Rezultat in `cross-build/<abi>-linux-android/prefix/`:
+- `lib/python3.14/` → devine `assets/python/Lib/`
+- `lib-dynload/*.so` → devine `assets/python/libdynload/<abi>/`
+- `libpython3.14.so` → `jniLibs/<abi>/libpython3.14.so` (5.8 MB)
+- `libpyexec.so` (4 KB, interpreterul executabil) → `jniLibs/<abi>/`
+- modulele C: `_ssl`, `_hashlib`, `_sqlite3`, `zlib`, `_bz2`, `_lzma`, `_zstd`, `_ctypes`
+  → devin `libssl_python.so`, `libcrypto_python.so`, `libsqlite3_python.so`
+  ✔ absolut necesar: Android linker-ul rezolva `.so` dupa **soname** din caile de sistem
+  → prefixarea cu `_python` evita conflictul cu vechile libs de sistem
+
+**Lipsesc intentionat:** `_tkinter`, `readline`, `_curses`, `_gdbm`, `_uuid`.
+**Verificare:** `$ADB shell run-as net.sys32.agent ... libpyexec.so -c "import ssl, sqlite3, zlib; print('ok')"`
+
+---
+
+### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
+
+- [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat **si** verificat pe device
+- [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
+- [ ] `$ADB devices -l` arata device-ul
+- [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
+- [ ] am citit logcat-ul dupa pornire (fara excepții)
+- [ ] `grep -rn 'key.txt\|AIza\|sk-' --include='*.py' --include='*.kt' .` → **nicio cheie** in repo
+- [ ] `git status --short` → doar fisierele intentionate
+- [ ] `py_compile` pe fisierele Python modificate (`python3 -m py_compile agent.py`)
+
+---
+
 ### REZOLVAREA PROBLEMELOR FRECVENTE
 
 | Simptom | Cauza | Fix |
@@ -178,7 +536,7 @@ cd /home/gab/Desktop/agent/workspace/app
     app/src/main/assets/python/adb_setup.py      auto-setup
     app/src/main/assets/python/android_bridge.py bridge Python-side
     app/src/main/java/net/sys32/agent/*.kt       Kotlin (MainActivity, Bridge, Accessibility, Reflection)
-  build/Python-3.14.7/                           sursele Python + cross-build
+  (workspace/build/Python-3.14.7/                sursele Python - STERSE, in .gitignore; vezi OP.6)
 ```
 
 ---
@@ -197,6 +555,9 @@ ent Android (net.sys32.agent)
 ---
 
 ## CUPRINS
+
+> **OPERATIUNI (build/install/debug/verificare): vezi sectiunea „🛠 OPERATIUNI"
+> chiar inainte de „REZOLVAREA PROBLEMELOR FRECVENTE" — OP.1 pina la OP.7.**
 
 1. Prezentare generala
 2. Arhitectura
@@ -1051,7 +1412,7 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 ### Stare finala
 - APK ~34 MB (debug, neprotejat, arm64 + x86_64)
 - Kotlin + CPython 3.14 compilat
-- 6 tool-uri: python, bash, smart, look, android, read
+- 10 tool-uri: android, ui, adbsh, python, bash, smart, read, look, bg, toolchain
 - 4 primitive reflection: proxy, referinte de obiecte, await/events, subclass (DexMaker)
 - 25+ actiuni native (sensors, camera, location, battery, system, storage, network, display,
   audio, telephony, nfc, usb, appinfo, processes, ...)
@@ -1212,23 +1573,31 @@ Singura intervenție: `adb tcpip 5555` + "Allow" o data (dupa restart).
 
 ## ANEXA B - COMPILAREA
 
-    # mediu
-    source env.sh
+> **Vezi si sectiunea OPERATIUNI (OP.1-OP.7) de mai sus — acolo e procedura completa.**
+> `env.sh` NU mai exista (sters); variabilele sunt setate de `build_app.sh`.
 
-    # build APK debug
-    cd app/net.sys32.agent
-    ./gradlew assembleDebug       # sau ./gradlew clean assembleDebug
+    # build + install + start (recomandat, face tot)
+    cd /home/gab/Desktop/agent/workspace/app
+    ./build_app.sh
 
-    # instalare pe telefon
-    adb install -r app/build/outputs/apk/debug/app-debug.apk
+    # sau manual:
+    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+    export ANDROID_HOME=/home/gab/android
+    export ANDROID_SDK_ROOT=/home/gab/android
+    export PATH=$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
+    cd net.sys32.agent
+    ./gradlew assembleDebug --offline
 
+    # instalare
+    /home/gab/android/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
     # daca semnatura difera:
-    adb uninstall net.sys32.agent
+    /home/gab/android/platform-tools/adb uninstall net.sys32.agent
 
-    # Python pentru Android (o singura data)
-    cd build/Python-3.14.7
-    ./android.py build aarch64-linux-android
-    ./android.py build x86_64-linux-android
+    # Python pentru Android (o singura data / rar) - vezi OP.6
+    # ATENTIE: sursele NU sunt pe disc (build/ e in .gitignore) - re-descarca-le intai
+    cd /home/gab/Desktop/agent/workspace/build/Python-3.14.7
+    ./android.py build aarch64-linux-android     # telefon
+    ./android.py build x86_64-linux-android      # emulator
 
 ---
 
