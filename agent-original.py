@@ -362,10 +362,6 @@ def _real_cols():
         return max(20,int(int(m.group(1))/t))
     except Exception:
         return 0
-        told=int(shutil.get_terminal_size((80,24)).columns)
-        return est if est>told else 0     # only useful when it is BIGGER; never shrink a correct report
-    except Exception:
-        return 0
 def CS():
     """Terminal width in columns, read per line so a resize is picked up at once. If the terminal
     reports a width that contradicts the real window geometry (the Alacritty/COLUMNS bug), we
@@ -1527,6 +1523,7 @@ def quarantine(reason, lines):
 # Fara asta auto-learn era o cutie neagra: daca nu scria in memory.md nu puteai sti
 # daca (a) nu a rulat, (b) a raspuns NO, (c) a picat pe porti sau (d) a scris dar a
 # esuat. Fiecare punct de decizie scrie acum o linie cu timestamp in AL_LOG.
+HOME_DIR = os.path.dirname(os.path.abspath(__file__))   # fix: variabila necesara pentru AL_LOG (lipsea la portarea din Android)
 AL_LOG = os.path.join(HOME_DIR, "auto_learn.log")
 
 def al_log(kind, msg=""):

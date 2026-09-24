@@ -64,3 +64,6 @@ key.txt
 *.bak
 *.bak-*
 *.bak.*
+
+# ---- logul auto-learn (artefact de rulare) ----
+auto_learn.log
