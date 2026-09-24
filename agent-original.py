@@ -886,13 +886,14 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"read","description":"Read a file by LINE RANGE with a GUARANTEED character budget: it never returns more than `budget` chars (default 6000), so the answer is never cut in the middle. ALWAYS prefer this over `python open().read()` or `print()` loops when reading a big file: those get truncated at the window limit and you lose the middle. Returns the text plus a footer telling you the EXACT next offset to continue from. Best practice for a long file: first call with `grep` to find the section, then read only that range.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file to read (absolute or relative to the cwd)"},"offset":{"type":"integer","description":"first line to read, 1-based (default 1)"},"limit":{"type":"integer","description":"how many lines to read at most (default: as many as fit the budget)"},"budget":{"type":"integer","description":"max characters to return, default 6000 - keep it under ~7000 so nothing is cut"},"grep":{"type":"string","description":"optional regex: return only lines matching it (with their line numbers), then read around them"},"numbered":{"type":"boolean","description":"prefix every line with its number (default true - makes offsets reusable)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: run SEVERAL small, independent operations in ONE call and get ONE consolidated answer. Use it whenever you need 2-6 quick reads/listings/stat-like steps that do NOT depend on each other: it costs ONE request instead of one per operation (each request re-sends the whole context, so batching is the single biggest cost saver). Keep each entry SMALL (a listing, a short cat, a status). Do NOT bundle heavy pipelines here: if an entry can crash or is long, use a normal per-step tool so a failure stays isolated and visible.","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines, stdlib only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output (e.g. env, ls, git status)"}},"required":["kind","body"]}}},"required":["ops"]}}}]
 
-TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
-  "1) `python`: run Python 3 code (stdlib only). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
-  "2) `bash`: run a shell command (grep/awk/sed/sort/uniq/wc/find/du/cut/xargs). BEST when the work is a TEXT STREAM or a SHELL PIPELINE over a big file: bash is measured ~1.3-1.6x faster than Python there and uses far less memory. "
-  "3) `smart`: the AUTO-ROUTER - give it both the shell cmd and the Python code and it picks the faster engine BY ITSELF using measured heuristics, then runs it. Use `smart` whenever you are unsure which is better; it prints which engine it chose and why. "
-  "RULE OF THUMB: data that FLOWS and simple logic -> bash; data that must be PARSED or REASONED about -> python; unsure -> smart. "
-  "Never pipe a huge file through python line by line if a single awk/grep does it; never parse JSON with grep when python json.loads is right there. "
-  "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - that was measured at 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
+TOOLGUIDE=("TOOL SELECTION (measured on the Android toybox build; use the SAME rules when the target is GNU coreutils, where bash's sort/awk/sed are fast): you have 3 engines. "
+  "1) `python`: THE DEFAULT AND THE FASTEST ENGINE for any computation. BEST for structured parsing (JSON/INI/KeyValues), logic, aggregation/counting, text transform, sorting, and HTTP (requests.Session beats repeated curl). Default to python for anything that is not a pure stream. "
+  "2) `bash`: ONLY for pure pass-through streaming and for many-small-files work: grep -c / grep -m1 (early exit), wc, cat, head, tail, tr, sha256sum/md5sum (native C), find/du, and `ls glob | xargs -P8 ...`. "
+  "3) `smart`: the AUTO-ROUTER - give it the shell cmd and/or the Python code and it picks the faster engine by itself from the measured rules above, then runs it. Use `smart` when unsure; it prints the engine and why. "
+  "RULE OF THUMB: data must be COMPUTED (sort/count/aggregate/transform/parse) -> python; data only FLOWS through untouched or is read early-exited -> bash; thousands of small files in parallel -> bash with xargs -P. "
+  "CAUTION: on the Android toybox build sort/awk/sed/base64/cut|sort|uniq are 3-95x SLOWER than python, so route those to python there. On GNU/Linux (this repo's usual host) bash is the right tool for sort/awk/sed and python for parsing/logic/HTTP. "
+  "Never parse JSON with grep/awk: it is also WRONG (leaks values from escaped strings) - always python json.loads. "
+  "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
 
 M=[{"role":"system","content":TOOLGUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. " +
   "WHILE WORKING (mandatory, never skip): BEFORE EVERY python tool call you MUST put a FULL, COMPLETE sentence in the `content` field, in the operator\u2019s language, telling what you are about to do and why. There is NO word limit and NO character limit: NEVER cut, shorten or abbreviate it with \u201c...\u201d or \u201c\u2026\u201d - the operator must always see the WHOLE sentence he needs to follow you. NEVER send a tool call with empty content. Markdown is NOT allowed in that sentence. " +
@@ -1056,10 +1057,16 @@ PY_STRUCT = (r"\bjson\b", r"\bimport\s+json", r"json\.loads", r"json\.load\b", r
              r"re\.(findall|search|match|sub)", r"dict\(|defaultdict", r"\.get\(", r"\blambda\b",
              r"os\.walk", r"glob\.", r"shutil\.", r"struct\.", r"\bdataclass\b", r"yield\b",
              r"\btry:", r"\bexcept\b", r"\.items\(\)", r"\.keys\(\)", r"\.values\(\)")
+# NOTE: on GNU coreutils (this repo's usual host) sort/awk/sed are FAST, so they stay in BASH_STREAM.
+# On the Android toybox build they are 3-95x SLOWER than python - there the agent's own guide tells the
+# model to route them to python instead. Keep this list as the GNU-target default.
 BASH_STREAM = (r"\bgrep\b", r"\bawk\b", r"\bsed\b", r"\bsort\b", r"\buniq\b", r"\bwc\b",
                r"\bcut\b", r"\btail\b", r"\bhead\b", r"\bxargs\b", r"\bfind\b", r"\bdu\b",
                r"\bdf\b", r"\brsync\b", r"\bzgrep\b", r"\btr\b", r"\bpaste\b", r"\bcomm\b",
                r"\bjoin\b", r"\bflock\b", r"\bcomm\b", r"\bparallel\b", r"-P\s*\d", r"\|\s*\w+")
+# BASH_SLOW: tools that look like stream tools but are pathologically slow on a TOYBOX target; the
+# router overflows them to python ONLY when the command is clearly running against toybox semantics.
+BASH_SLOW = (r"\bawk\b", r"\bsed\b", r"\bsort\b", r"\buniq\b", r"\bbase64\b", r"\bjoin\b")
 BASH_HEAVY = (r"\.log\b", r"/var/log", r">\s*\d{6,}", r"\bfor\s+\w+\s+in\b", r"\bseq\b")
 
 def route(cmd="", code=""):
@@ -1071,18 +1078,21 @@ def route(cmd="", code=""):
     # 1) cod Python clar structurat -> python
     py_hits = sum(1 for pat in PY_STRUCT if re.search(pat, k))
     if py_hits >= 2:
-        return "python", f"structured logic detected ({py_hits} python-structure signals): parsing/logic is where python wins (test 2: ~130x faster than bash)"
+        return "python", f"structured logic detected ({py_hits} python-structure signals): parsing/logic is where python wins"
     # 2) comanda shell de tip stream -> bash
     sh_hits = sum(1 for pat in BASH_STREAM if re.search(pat, c or k))
     heavy = any(re.search(pat, t) for pat in BASH_HEAVY)
     if c and sh_hits >= 1:
         why = f"shell pipeline detected ({sh_hits} stream signals)"
-        if heavy: why += "; large/streamed data -> bash (test 3: 1.3-1.6x faster, far less memory)"
+        if heavy: why += "; large/streamed data -> bash (native C, less memory)"
         return "bash", why
-    # 3) cod python pur dar cu semnale de stream (subprocess grep/awk in el) -> las python
+    # 3) many small files in parallel -> bash (xargs -P uses every core)
+    if c and re.search(r"xargs", c) and re.search(r"-P\s*\d", c):
+        return "bash", "many small files in parallel -> bash xargs -P (all cores)"
+    # 4) cod python pur dar cu semnale de stream (subprocess grep/awk in el) -> las python
     if py_hits == 1:
         return "python", "mostly python-shaped task (single structure signal)"
-    # 4) implicit: python (logic-safe)
+    # 5) implicit: python (logic-safe)
     return "python", "default: python (safe for logic; explicit `bash` for pure streams)"
 
 def bash(cmd, cwd):
