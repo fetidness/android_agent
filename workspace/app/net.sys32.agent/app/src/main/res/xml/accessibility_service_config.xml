@@ -5,17 +5,18 @@
      canTakeScreenshot        => takeScreenshot() fara SecurityException (FIX 1)
      canRequestFilterKeyEvents=> interceptare taste (necesita flag si la runtime)
      canControlMagnification  => zoom ecran
-     canRequestTouchExplorationMode => touch exploration
+     ATENTIE: NU pune flagRequestTouchExplorationMode/canRequestTouchExplorationMode -
+     activeaza touch exploration si BLOCHEAZA atingerea normala pe tot telefonul
+     (prima atingere doar citeste, a doua apasa). Agentul nu are nevoie de el.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_description"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewFocused|typeViewTextChanged|typeViewLongClicked|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagRequestFilterKeyEvents|flagRequestTouchExplorationMode"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagRequestFilterKeyEvents"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
     android:canTakeScreenshot="true"
     android:canRequestFilterKeyEvents="true"
     android:canControlMagnification="true"
-    android:canRequestTouchExplorationMode="true"
     android:notificationTimeout="50" />
