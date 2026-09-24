@@ -233,11 +233,13 @@ class MainActivity : AppCompatActivity() {
 
         // FIX 7: pornim guard-ul persistent (foreground + alarm re-programat).
         try { GuardService.start(this) } catch (_: Exception) {}
-        // FIX 5: cerem consimtamantul de captura o singura data (dupa ce UI-ul e gata).
-        root.postDelayed({ try { requestScreenCapture() } catch (_: Exception) {} }, 1500)
+        // BATERIE: NU mai cerem captura automat la fiecare pornire. MediaProjection tine
+        // un VirtualDisplay 1080x2340@60fps viu in SurfaceFlinger (consum permanent).
+        // Captura se cere DOAR la nevoie, din chat: android(tool="capture", action="start").
         // FIX 4: pornim serviciul VPN si cerem consimtamantul o singura data.
         try { startService(Intent(this, AgentVpn::class.java)) } catch (_: Exception) {}
         root.postDelayed({ try { requestVpn() } catch (_: Exception) {} }, 3000)
+        instance = this
     }
 
     private val VPN_REQ = 9002
@@ -307,6 +309,15 @@ class MainActivity : AppCompatActivity() {
         // altfel TextView-ul urias face re-layout lent la revenirea din background.
         private const val MAX_UI_CHARS = 200000
         private const val MAX_UI_KEEP = 180000
+
+        /** Permite SERVICIILOR sa scrie o linie de status in terminalul aplicatiei
+         *  (ex. ScreenCaptureService anunta cand sesiunea de captura s-a OPrit,
+         *  ca sa nu rămâna pe ecran un "[capture] activ" inselator). */
+        @Volatile var instance: MainActivity? = null
+        fun logLine(line: String) {
+            val a = instance ?: return
+            a.runOnUiThread { try { a.appendAnsi(line) } catch (_: Exception) {} }
+        }
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -628,7 +639,9 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == CAPTURE_REQ && resultCode == RESULT_OK && data != null) {
             try {
                 ScreenCaptureService.start(this, resultCode, data)
-                appendAnsi("\n[capture] MediaProjection activ\n")
+                // corect: consimtamantul e acordat si sesiunea PORNESTE ACUM.
+                // (nu scriem "activ permanent" - se inchide singura dupa 3 min inactivitate)
+                appendAnsi("\n[capture] MediaProjection pornit (se opreste singur dupa 3 min fara capturi)\n")
             } catch (e: Exception) { appendAnsi("\n[capture] start eroare: $e\n") }
         }
         if (requestCode == VPN_REQ && resultCode == RESULT_OK) {
@@ -638,7 +651,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v113")
+        val stamp = File(filesDir, ".assets_v115")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -849,6 +862,7 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         super.onDestroy()
         // IMPORTANT: NU omoram procesul Python si bridge-ul daca AgentService ruleaza in
         // foreground. Altfel agentul moare la minimizare si nu mai poate lucra prin alte

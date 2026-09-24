@@ -45,6 +45,16 @@ class AgentService : Service() {
         @Volatile var running = false
         @Volatile var instance: AgentService? = null
 
+        /** Porneste serviciul DOAR daca nu ruleaza deja (idempotent).
+         *  Inlocuieste vechiului GuardService.start() care crea un al doilea FGS. */
+        fun ensureRunning(ctx: Context) {
+            try {
+                if (running && instance != null) return
+                val i = Intent(ctx, AgentService::class.java).setAction(ACTION_START)
+                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+            } catch (_: Exception) {}
+        }
+
         /** Aprinde ecranul + il tine treaz (pentru task-uri care ating UI-ul altor aplicatii). */
         fun wakeScreen(ctx: Context) {
             try {

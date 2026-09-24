@@ -333,12 +333,22 @@ def check():
     # 6. RUNPATH corectat (0 fisiere cu com.termux)
     # ★ TIMP: vechiul check rula `readelf -d` pe FIECARE binar (spawn per fisier, ~30 s).
     # O singura trecere Python face acelasi lucru in <1 s.
-    _rp_py = ("import os;n=0\n"
+    # ★ FIX: cautam string-ul DOAR in zona de RUNPATH a ELF-ului, nu oriunde in fisier.
+    # 45 de binare (cmake, ninja, git, make...) au cai Termux in DATELE lor interne
+    # (CMAKE_ROOT, prefix etc.), dar RUNPATH-ul lor e corectat -> functioneaza perfect.
+    # Vechiul check raporta fals "runpath_ok=false" desi toate tool-urile mergeau.
+    _rp_py = ("import os;n=0;ELF=b'\\x7fELF'\n"
               "for f in os.listdir('%s'):\n"
               "    p=os.path.join('%s',f)\n"
               "    if os.path.isfile(p) and not os.path.islink(p):\n"
               "        try:\n"
-              "            if b'com.termux' in open(p,'rb').read(): n+=1\n"
+              "            d=open(p,'rb').read()\n"
+              "            if d[:4]!=ELF: continue\n"
+              "            if b'LIBRARY_PATH' not in d and b'RPATH' not in d: continue\n"
+              "            i=d.find(b'RPATH')\n"
+              "            if i>=0 and b'com.termux' in d[i:i+200]: n+=1; continue\n"
+              "            i=d.find(b'LIBRARY_PATH')\n"
+              "            if i>=0 and b'com.termux' in d[i:i+200]: n+=1\n"
               "        except Exception: pass\n"
               "print('RUNPATHBAD='+str(n))" % (BIN, BIN))
     rp = _sh("%s -c %s" % (BIN + "/python3.14", _q(_rp_py)), 120)

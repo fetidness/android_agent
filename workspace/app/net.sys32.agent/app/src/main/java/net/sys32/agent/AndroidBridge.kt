@@ -232,14 +232,29 @@ class AndroidBridge(
 
     // ---------------- FIX 5: MediaProjection capture ----------------
     private fun capture(action: String, p: JSONObject): JSONObject {
+        // BATERIE: la cerere pornim consimtamantul + serviciul, altfel NU mai ruleaza permanent.
+        if (action == "start" || action == "request") {
+            return try {
+                val act = ctx as? net.sys32.agent.MainActivity
+                if (act != null) {
+                    act.runOnUiThread { act.requestScreenCapture() }
+                    JSONObject().put("ok", true).put("capture", "consent requested - confirm on screen")
+                } else JSONObject().put("ok", false).put("error", "no activity - open the app once")
+            } catch (e: Exception) { JSONObject().put("ok", false).put("error", "$e") }
+        }
         val svc = ScreenCaptureService.instance
             ?: return JSONObject().put("ok", false).put("error",
-                "capture service not running. Deschide app-ul o data (cere consimtamant MediaProjection automat)")
+                "capture NOT running (by design: it no longer starts at boot to save battery). Start it on demand with capture action=start")
         return when (action) {
             "status" -> JSONObject().put("ok", true).put("status", svc.status())
             "grab", "shot" -> JSONObject().put("ok", true)
                 .put("result", svc.grab(p.optString("path", ctx.filesDir.absolutePath + "/capture.png")))
-            else -> JSONObject().put("ok", false).put("error", "capture action? use status|grab")
+            // BATERIE: inchide sesiunea MediaProjection (elibereaza display-ul virtual).
+            "stop", "release" -> {
+                ScreenCaptureService.stop(ctx)
+                JSONObject().put("ok", true).put("capture", "stopped")
+            }
+            else -> JSONObject().put("ok", false).put("error", "capture action? use status|grab|stop")
         }
     }
 

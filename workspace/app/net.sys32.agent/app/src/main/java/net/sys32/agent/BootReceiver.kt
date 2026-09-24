@@ -31,10 +31,11 @@ class GuardService : android.app.Service() {
         const val CH_ID = "agent_guard"
 
         fun start(ctx: Context) {
-            try {
-                val i = Intent(ctx, GuardService::class.java)
-                if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
-            } catch (_: Exception) {}
+            // OPTIMIZARE BATERIE/RAM: NU mai pornim un AL DOILEA foreground service.
+            // AgentService face deja tot (foreground + wakelock + START_STICKY + onTaskRemoved),
+            // iar GuardService doar dubla notificarea si consuma un slot de FGS.
+            // GuardService rămâne DOAR ca tinta a alarmei de siguranta (schedule).
+            try { AgentService.ensureRunning(ctx) } catch (_: Exception) {}
             schedule(ctx)
         }
 
@@ -47,34 +48,25 @@ class GuardService : android.app.Service() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
                 am.cancel(pi)
+                // BATERIE: 15 min -> 60 min si fara _WAKEUP (nu mai trezim CPU-ul din Doze
+                // la fiecare sfert de ora). Guard-ul e oricum un foreground service + are
+                // watchdog propriu; alarm-ul e doar o plasa de siguranta.
                 am.setExactAndAllowWhileIdle(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    android.os.SystemClock.elapsedRealtime() + 15 * 60 * 1000L, pi
+                    AlarmManager.ELAPSED_REALTIME,
+                    android.os.SystemClock.elapsedRealtime() + 60 * 60 * 1000L, pi
                 )
             } catch (_: Exception) {}
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        try {
-            if (Build.VERSION.SDK_INT >= 26) {
-                val nm = getSystemService(android.app.NotificationManager::class.java)
-                if (nm.getNotificationChannel(CH_ID) == null) {
-                    nm.createNotificationChannel(
-                        android.app.NotificationChannel(CH_ID, "Agent", android.app.NotificationManager.IMPORTANCE_LOW)
-                    )
-                }
-                val n = android.app.Notification.Builder(this, CH_ID)
-                    .setContentTitle("Agent activ")
-                    .setContentText("Ruleaza in fundal")
-                    .setSmallIcon(android.R.drawable.stat_notify_sync)
-                    .setOngoing(true)
-                    .build()
-                startForeground(NOTIF_ID, n)
-            }
-        } catch (_: Exception) {}
+        // OPTIMIZARE BATERIE: NU mai rămâne un foreground service aici (a doua notificare
+        // persistenta + al doilea FGS erau redundante cu AgentService). Acest serviciu se
+        // foloseste DOAR ca tinta a alarmei: re-programeaza alarma si deleaga la AgentService.
+        try { AgentService.ensureRunning(this) } catch (_: Exception) {}
         schedule(this)
-        return START_STICKY
+        stopSelf()
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?) = null
