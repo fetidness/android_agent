@@ -833,24 +833,30 @@ AL_TIMEOUT=int(os.environ.get("DS_AL_TIMEOUT","45"))   # auto-learn: max secunde
 AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a Linux desktop "
  "(this machine, headless shell, no GUI). You act through the python/bash/smart/look tools and can touch "
  "the whole filesystem and system. Look at the task that just finished above and decide whether it taught "
- "you a REUSABLE fact about THIS machine/environment. "
- "A lesson qualifies ONLY if it is BOTH (1) about this Linux system itself - its commands, flags, paths, "
- "packages, kernel/proc behaviour, permissions, quirks of the tools available here - AND (2) likely to "
- "change how you act on a FUTURE task here, not just describe what happened. "
+ "you a REUSABLE fact worth remembering. "
+ "A lesson qualifies if it is (1) TRUE and generalisable (it will change how you act on a FUTURE task, "
+ "not just describe what happened here) AND (2) DENSE (it carries a cause and a consequence, not a platitude). "
+ "It may be about ANY domain: THIS machine and its tools (commands, flags, absolute paths, packages, "
+ "kernel/proc behaviour, permissions, quirks of the tools available here), the web (http/RSS/APIs and their "
+ "quirks, which endpoints work without auth), data extraction and parsing, the AI/LLM landscape (model names, "
+ "prices, benchmark scores, provider behaviour), or general engineering practice that this task proved. "
+ "But it must be a lesson, never a task artefact. "
  "Typical valid lessons: a command that gives a MISLEADING or EMPTY result without a flag/param; an exact "
  "working command or absolute path; something PROVEN not to work (dead end, wrong flag, wrong path); a "
- "non-obvious environment fact that constrains future commands; a mistake you made plus the exact fix. "
- "NEVER save: generic advice, paraphrases of the task, one-off artefacts (a file you happened to create), "
- "trivia specific to a single run, or anything already in your memory snapshot. "
- "If the lesson would be equally useful in a completely different environment, or is not about acting on "
- "THIS machine, it does NOT qualify. Quality over quantity: memory must stay dense. "
+ "public endpoint that answers without an API key; a price or benchmark figure that changes which model is "
+ "the right choice; a non-obvious environment fact that constrains future commands; a mistake you made plus "
+ "the exact fix. "
+ "NEVER save: narration of what you just did, paraphrases of the task, one-off artefacts (a file you "
+ "happened to create, the output of a single command), generic advice, praise, or anything already in your "
+ "memory snapshot. A line that would be obvious to anyone is NOT a lesson. Quality over quantity: memory "
+ "must stay dense. "
  "REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). "
  "Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). "
  "Do NOT pad - a weak or obvious line is worse than none. "
  "  - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax "
  "`KEY: what -> cause -> fix/verify`, KEY one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 500 chars, no markdown, no quotes. "
  "Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time. "
- "  - If there is genuinely NOTHING reusable or it is not about this machine: reply with the single word: NO.")
+ "  - If there is genuinely NOTHING reusable: reply with the single word: NO.")
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -1361,18 +1367,60 @@ TOPIC_RX = [r"accessibility", r"performGlobalAction", r"dispatchGesture", r"capa
             r"screencap", r"screenshot", r"canTakeScreenshot", r"read-only", r"keyevent",
             r"pendingintent", r"looper", r"threading", r"toolchain", r"numpy",
             r"reflection", r"subclass", r"adbsh", r"selinux", r"libpyexec", r"aapt2",
-            r"enabled_accessibility_services", r"settings put secure"]
+            r"enabled_accessibility_services", r"settings put secure",
+            r"rss", r"\bhttps?\b", r"endpoint", r"\bjson\b", r"\bhtml\b",
+            r"scraping", r"duckduckgo", r"blog\.google", r"github", r"cloud\.google",
+            r"ai\.google\.dev", r"huggingface", r"algolia", r"\bcors\b",
+            r"\bssl\b", r"\btls\b", r"certificat", r"timeout", r"rate.?limit", r"proxy",
+            r"beautifulsoup", r"elementtree", r"\bregex\b", r"parsare", r"parsez",
+            r"\bcsv\b", r"\bxml\b",
+            r"gemini", r"deepseek", r"\bgpt\b", r"claude", r"\bllm\b", r"token",
+            r"benchmark", r"deepswe", r"pricing", r"pret(ul|uri)?", r"\bcost\b",
+            r"\bbash\b", r"\bpython\b", r"\bawk\b", r"\bgrep\b", r"\bsed\b",
+            r"\bcurl\b", r"\brequests\b", r"\bwget\b", r"\bjq\b", r"\bgit\b"]
 OPPOSITE_RX = [
+    # --- ACCESSIBILITY/Linux (pastrate) ---
     (r"\b(suspect|probably|se pare|maybe|likely|poate fi)\b.*\b(threading|Looper|issue|cause|cauza)\b",
      r"\b(NU threading|nu e threading|platform-side|PendingIntent cancellation)\b"),
     (r"\b(read-only|NU acorda permisiunea de actiune|missing capability|capabilities lack)\b",
      r"\b(NOT a capability problem|not read-only|NU (e|este) capabilit|nu modifica configul)\b"),
-    # un verdict "read-only" e contrazis de ORICE lectie care spune explicit "not read-only"
-    # sau care dovedeste ca serviciul actioneaza (tap/gesture/merge).
     (r"\b(read-only|nu acorda permisiunea)\b",
      r"\b(TAP MERGE|dispatchGesture.*MERGE|actioneaza|reactiveaza|se leaga serviciul|NU e read-only)\b"),
-    (r"\bfix: add android:canTakeScreenshot\b", r"\bXML.*(compilat corect|e corect)\b"),
+    (r"\bfix: add android:canTakeScreenshot\b",
+     r"\bXML.*(compilat corect|e corect)\b"),
+    # --- WEB / HTTP ---
+    (r"\b(merge|functioneaza|intoarce 200|raspunde|e disponibil|accesibil|se parseaza|e parsabil)\b",
+     r"\b(nu merge|nu functioneaza|nu raspunde|esueaza|eroare|blocat|interzis|403|404|500|timeout|nu se poate parsa)\b"),
+    (r"\b(da 200|intoarce 200|raspunde cu 200)\b",
+     r"\b(da 4\d\d|da 5\d\d|404|403|500|eroare)\b"),
+    # --- AUTH ---
+    (r"\b(necesita|are nevoie de|cere)\b.{0,25}\b(api.?key|token|auth|autentificare)\b",
+     r"\b(fara (api.?key|token|auth)|anonim|merge anonim|nu necesita cheie)\b"),
+    # --- SCRAPING JS ---
+    (r"\b(html static|merge fara js|fara javascript)\b",
+     r"\b(necesita js|e un spa|javascript|html gol|content gol)\b"),
+    # --- EXISTENTA ---
+    (r"\b(exista|e valabil|e activ)\b",
+     r"\b(nu exista|inexistent|a fost retras|retired|e sters)\b"),
+    # --- PRET ---
+    (r"\b(ieftin|cost redus|low cost)\b",
+     r"\b(scump|cost ridicat|expensive)\b"),
+    # --- PERFORMANTA ---
+    (r"\b(mai bun|depaseste|bate |outperforms|cel mai bun|superior)\b",
+     r"\b(mai slab|in urma|pierde|inferior|nu atinge)\b"),
+    # --- SUPORT ---
+    (r"\b(suporta|are suport|accepta)\b",
+     r"\b(nu suporta|nu accepta|nu permite|incompatibil|unsupported)\b"),
+    # --- VITEZA ---
+    (r"\b(mai rapid|e rapid|performant|speedup)\b",
+     r"\b(mai lent|e lent|slow|incet)\b"),
 ]
+
+COND_RX = [r"\bfara\s+(LD_LIBRARY|PATH|variabil|env|root|permisiun|cheie|api|token|flag|optiun)",
+           r"\bcu\s+(LD_LIBRARY|PATH=|env|variabil|flag|optiun)",
+           r"\bdaca\s+", r"\bif\s+", r"\bcand\s+", r"\bwhen\s+",
+           r"\bwith(out)?\s+(LD_|PATH|env|root)", r"\bonly\s+(if|when)",
+           r"\bdoar\s+daca", r"\bnumai\s+daca"]
 
 def _q_topics(line):
     return set(rx for rx in TOPIC_RX if re.search(rx, line, re.I))
@@ -1426,6 +1474,9 @@ def _q_contradicts(new_line, mem_text):
         if _q_meta(old):
             continue
         if not (_q_topics(old) & nt):
+            continue
+        # GUARD anti-conditional: complementar DOAR cand conditionalul e in AMBELE linii
+        if any(re.search(rx, new_line, re.I) for rx in COND_RX) and any(re.search(rx, old, re.I) for rx in COND_RX):
             continue
         for a, b in OPPOSITE_RX:
             if (re.search(a, old, re.I) and re.search(b, new_line, re.I)) or (re.search(b, old, re.I) and re.search(a, new_line, re.I)):
