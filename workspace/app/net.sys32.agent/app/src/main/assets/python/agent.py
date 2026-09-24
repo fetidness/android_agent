@@ -964,10 +964,22 @@ def mstats(s):
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
-    """The index of the last /learn request left in the history: everything before it has
-    already been learned, so it is not re-analysed and not rewritten again (wasted tokens)."""
+    """Index up to which the history was ALREADY analysed by a previous /learn.
+    ★ FIX (24 sept: /learn a ratat lectii din mijlocul sesiunii). Bug-ul vechi: returna indexul
+    ultimului LEARN_TAG, iar prompt-ul spunea 'learn ONLY messages after index X' + 'everything
+    before is covered by memory'. Cand un /learn rata lectii (model zgarcit), afirmatia devenea
+    FALSA si urmatorul /learn sarea peste tot ecartul, pierzandu-le definitiv - exact ce s-a
+    intamplat: primul /learn a scris 5 din ~14 lectii, al doilea a inceput de la el si a ignorat
+    restul. Acum NU mai presupunem nimic: daca /learn-ul anterior nu a acoperit tot, il reluam.
+    Practic: returnam 0 cand nu exista un LEARN_TAG FINALIZAT (deci se reanalizeaza toata
+    sesiunea), si indexul lui cand el e chiar ultimul mesaj (analiza completa, nimic de refacut)."""
     for i in range(len(M)-1,-1,-1):
-        if M[i].get("role")=="user" and str(M[i].get("content") or "").startswith(LEARN_TAG): return i
+        if M[i].get("role")=="user" and str(M[i].get("content") or "").startswith(LEARN_TAG):
+            # LEARN_TAG-ul e 'finalizat' doar daca nu mai exista mesaje de agent dupa el
+            # (altfel sesiunea a continuat si pot exista lectii noi intre el si coada)
+            if i >= len(M)-1:
+                return i
+            return 0
     return 0
 # --- tech-flavour words for the step labels: random order per task, one colour per term ---
 # --- SOFT PALETTE (eye-friendly): medium, desaturated 256-colour tones, NO bold.
@@ -2207,7 +2219,8 @@ def do_learn(trigger="/learn"):
     _c,_t,_nb,_den=mstats(prev)
     M.append({"role":"user","content":LEARN_TAG+" The operator EXPLICITLY asks you to update your memory NOW.\n"
       "File: "+MEM+" ("+str(_c)+" chars ~ "+str(_t)+" tok, "+str(_nb)+" bullets, "+str(_den)+" chars/bullet). It is loaded ONCE, at session start; the MEMORY block above IS that snapshot. Nothing you write now is visible before the next start, so do not re-read it expecting a refresh.\n"
-      "Learn ONLY the messages after index "+str(lea)+" ("+str(len(M)-lea)+" msgs). Index < "+str(lea)+" is already covered by memory: do not re-read, re-append or summarise it.\n"
+      "Learn from the WHOLE conversation above, with priority on messages after index "+str(lea)+" ("+str(len(M)-lea)+" msgs).\n"
+      "★ COVERAGE RULE: a previous /learn may have been INCOMPLETE. Do NOT assume that what is before index "+str(lea)+" is already in memory. Read the WHOLE session and, for EVERY valuable lesson you find, check whether an EQUIVALENT bullet exists in memory.md; if not, ADD IT NOW - even if it comes from an early part of the session. Missing a real lesson is worse than one extra line. This is the operator's explicit request: /learn must capture ALL lessons of this session, not just the latest few messages.\n"
       "GOAL OF MEMORY: it exists ONLY so that next session you are FASTER and do NOT repeat this session's mistakes. It is NOT a diary, NOT a summary, NOT a task log. Every line must be a REUSABLE lesson. If a line would not change your behaviour next time, it does not belong in memory.\n"
       "SIZE POLICY: the file is UNLIMITED - there is no cap and size is NEVER a reason to delete a true lesson. The only quality rule is EFFICIENCY PER LINE: maximum signal, zero filler. A line that restates something already there, or that no future session would ever consult, is a defect no matter how small the file is.\n"
       "MANDATORY 4-STEP PROCEDURE - one single python tool call does all of it, no other call, no prose. Inside it:\n"
@@ -2216,7 +2229,7 @@ def do_learn(trigger="/learn"):
       "  3) TEST EACH CANDIDATE AGAINST THE MEMORY YOU JUST READ - a new fact is written ONLY if BOTH hold:\n"
       "     - it is NOT already covered by an existing bullet (same cause, same fix, same path, even in different words). If the idea is already there, DO NOT WRITE IT: it means you learned nothing new. Merge/refresh the old bullet IN PLACE instead of adding a duplicate.\n"
       "     - it was NOT already applied: if the session's mistake is exactly a mistake the memory already warned about, the real lesson is 'A TRAP I ignored, reinforce it', not a new line. Tighten that existing bullet.\n"
-      "  4) WRITE the minimum. Zero flakes, zero repetition. A good /learn adds 2-6 lines, rarely more. If nothing genuinely new was learned, add NOTHING and say so - an honest empty update beats 20 useless lines.\n"
+      "  4) WRITE every genuinely new lesson you found (typically 5-15 lines for a long working session - the old '2-6 lines' cap was TOO STRICT and caused real lessons from this very session to be lost). Zero flakes, zero repetition, no narration: only REUSABLE lessons. If after a full re-read nothing genuinely new was found, add NOTHING and say so.\n"
       "- EDIT BY CODE, NOT BY RETYPING: delete/merge/replace old lines with regex or `in` filters. Never print the file content (code and output stay in the history and are re-sent on every round). Print ONLY stats: chars before/after, bullets before/after, exact NEW lines added (short), lines merged/removed.\n"
       "- Deterministic cleanup EVERY time: drop exact duplicate lines (normalised: lowercase, collapse spaces) AND near-duplicates (same first 6 significant words), strip trailing spaces, collapse blank lines, one bullet = one fact.\n"
       "- SIZE IS UNLIMITED: the memory has NO cap - never delete a still-true, reusable lesson because the file feels big. A large dense file is FINE. What is NOT fine is a padded line.\n"
@@ -2250,7 +2263,7 @@ def do_learn(trigger="/learn"):
         if rl>=4:
             print(R+"   [/learn] stopping after 4 rounds without a final answer (otherwise it burns tokens for nothing)."+N);break
     if li<len(M) and M[li].get("role")=="user" and str(M[li].get("content") or "").startswith(LEARN_TAG):
-        M[li]["content"]=LEARN_TAG+" a memory update already happened here and is already on disk; it becomes visible in the system prompt only at the next session start. Everything BEFORE this line is covered by memory: do not re-learn it."
+        M[li]["content"]=LEARN_TAG+" A memory update happened here and is on disk; it loads into the system prompt only at the next session start. NOTE: this update may have been PARTIAL - a new /learn must re-read the WHOLE session and fill any gap, not just the messages after this line."
     now=mem(); c2,t2,nb2,den2=mstats(now); d=c2-nprev
     _new, _dup = mem_dups(prev, now)
     if _dup: print(R+"   [mem] DEDUP: "+str(len(_dup))+" line(s) repeat a fact already in memory - nothing new learned from them:"+N)
