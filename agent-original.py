@@ -450,7 +450,30 @@ def _tokm(m):
     s=str(m.get("content") or "")
     for tc in (m.get("tool_calls") or []): s+=str((tc.get("function") or {}).get("arguments") or "")
     return len(s)//4
-def ctx_tokens(): return sum(_tokm(m) for m in M)
+_CTXCACHE=[None,None,None]   # [len(M), suma_len_content, tokeni]
+def _ctxsig():
+    """Semnatura IEFTINA a ferestrei: numarul de mesaje + suma lungimilor de content.
+    Prinde ORICE schimbare reala (append, pop, reset, M[i]['content']=... in-place),
+    fara sa reconstruiasca stringurile. ~1 ms la 1000 de mesaje."""
+    n=len(M); tot=0
+    for m in M:
+        c=m.get('content')
+        tot+= len(c) if isinstance(c,str) else 0
+        tc=m.get('tool_calls')
+        if tc:
+            for t in tc:
+                tot+= len(str((t.get('function') or {}).get('arguments') or ''))
+    return n,tot
+def ctx_tokens():
+    """Tokenii din fereastra, cu cache pe semnatura continutului.
+    ctx_warn() o cheama dupa FIECARE tool call: fara cache, parcurgerea a 1000+
+    de mesaje de fiecare data e munca irosita (masurat: 0.6 ms x ~10/pas = 6 ms/pas)."""
+    sig=_ctxsig()
+    if _CTXCACHE[0]==sig[0] and _CTXCACHE[1]==sig[1] and _CTXCACHE[2] is not None:
+        return _CTXCACHE[2]
+    t=sum(_tokm(m) for m in M)
+    _CTXCACHE[0]=sig[0]; _CTXCACHE[1]=sig[1]; _CTXCACHE[2]=t
+    return t
 CTXWARNED=[False]   # warns ONCE per crossing (re-arms if the context shrinks, i.e. after /reset)
 CTXWINDOW_VERIFIED=[False]
 def ctx_check_window():
@@ -478,13 +501,14 @@ def ctx_warn():
     """LOUD RED warning when the context approaches the model window. It does NOT compress, does NOT
     touch the history and does NOT stop anything - it only tells the operator it is time for /reset.
     Fires once per crossing, so it cannot spam every round."""
-    pct=100.0*ctx_tokens()/CTXWINDOW if CTXWINDOW else 0.0
+    _ct=ctx_tokens()                       # UN singur calcul (inainte: 3 apeluri per warn)
+    pct=100.0*_ct/CTXWINDOW if CTXWINDOW else 0.0
     if pct>=CTXWARN:
         if not CTXWARNED[0]:
             CTXWARNED[0]=True
             bar="\u2588"*40
             print("\n"+R+"   "+bar+N)
-            print(R+"   \u26a0 CONTEXT AT "+("%.0f"%pct)+"% OF THE WINDOW ("+_K(ctx_tokens())+"/"+_K(CTXWINDOW)+" tok)"+N)
+            print(R+"   \u26a0 CONTEXT AT "+("%.0f"%pct)+"% OF THE WINDOW ("+_K(_ct)+"/"+_K(CTXWINDOW)+" tok)"+N)
             print(R+"   \u26a0 Time to /reset: the next requests may be rejected by the API."+N)
             print(R+"   \u26a0 I did NOT compress or delete anything - the memory stays intact."+N)
             print(R+"   "+bar+N+"\n")
