@@ -1090,13 +1090,19 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
   "FINAL MESSAGE: rendered as Markdown in a 256-colour terminal. You MAY use headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, > blockquote, --- rules, numbered/bulleted lists and fenced code blocks. BUT on this small phone screen NEVER use tables (no | pipes | rows, no |---| separators) and never ASCII boxes - present ALL structured data as plain lists, one item or `key: value` per line. Write the final answer in the SAME LANGUAGE the operator used in their last message, complete and well structured - if they wrote in English, reply in English; if in Romanian, reply in Romanian."}]
-# CTX_PUB = the operator-visible copy on sdcard (FUSE); CTX = the FAST private copy actually written
-# on every step. os.replace() on FUSE costs ~15ms vs ~0.9ms in private storage (measured), and save_ctx
-# runs ~21 times per 10-step task -> writing private and mirroring rarely saves ~250ms per task.
-CTX_PUB=os.path.join(HOME_DIR,CTXNAME)
-CTX=os.path.join(_SANDBOX,CTXNAME) if _writable(_SANDBOX) else CTX_PUB
-CTX_MIRROR_EVERY=8          # mirror the private context to sdcard once every N saves (cheap, keeps it visible)
-_CTX_SAVES=[0]
+# ★ FIX (24 sept: zgomot MediaProvider). context.json traia in DOUA locuri: copia privata
+# (scrisa la fiecare pas) + o oglinda pe sdcard (FUSE) la fiecare 8 salvari. Fiecare scriere
+# pe /storage/emulated/0 declansa in MediaProvider:
+#   - "Failed to update quota type for .../context.json.tmp: No such file or directory"
+#     (StorageManager incerca sa seteze project id pe .tmp DUPA ce os.replace il mutase deja)
+#   - "Failed to revoke permissions for .../context.json from DownloadStorageProvider:
+#      UnsupportedOperationException: Unsupported call: revoke_uri_permission"
+#     (DownloadStorageProvider nu suporta revoke_uri_permission, dar MediaProvider il cheama oricum)
+# Rezultat: ~66 erori in logcat + munca inutila pe FUSE la fiecare task, zero beneficiu real.
+# Acum context.json (istoricul conversatiei) traieste EXCLUSIV in stocarea privata a app-ului,
+# unde FUSE si MediaProvider nu intervin: zero erori, scriere mai rapida, istoric intact.
+CTX=os.path.join(_SANDBOX,CTXNAME)
+CTX_PUB=None  # pastrat doar pentru compat: nu mai exista oglinda pe sdcard
 # --- migrare: muta context.json/memory.md din locatiile vechi (sandbox sau /sdcard/agent) ---
 def _migrate():
     import glob as _g
@@ -1127,35 +1133,25 @@ def _migrate_ctx():
 def save_ctx(force_mirror=False):
     """Writes the conversation history (without the system message) to context.json, via a temporary
     file + os.replace, so it does not get corrupted on an interruption.
-    PERF: the atomic write goes to the FAST private copy (CTX, ~0.9ms replace); the operator-visible
-    copy on sdcard (CTX_PUB, FUSE, ~15ms replace) is mirrored only every CTX_MIRROR_EVERY saves or on
-    force_mirror (e.g. /exit, task end). Measured: ~250ms saved per 10-step task, output unchanged."""
+    Scrie EXCLUSIV in stocarea privata (CTX): fara oglinda pe FUSE, deci fara zgomotul
+    MediaProvider (quota/revoke_uri_permission). Istericul nu mai e expus pe sdcard."""
     try:
         tmp=CTX+".tmp"
         with open(tmp,"w",encoding="utf-8") as f: json.dump(M[1:],f,ensure_ascii=False,indent=1)
         os.replace(tmp,CTX)
-        _CTX_SAVES[0]+=1
-        if CTX_PUB!=CTX and (force_mirror or _CTX_SAVES[0]%CTX_MIRROR_EVERY==0):
-            try:
-                ptmp=CTX_PUB+".tmp"
-                shutil.copyfile(CTX,ptmp); os.replace(ptmp,CTX_PUB)
-            except Exception: pass
     except Exception as e: print(R+" [context] could not save "+CTX+": "+str(e)+N)
 
 def ctx_mirror():
-    """Force the visible copy on sdcard to match the private one (called at /exit and task end)."""
-    if CTX_PUB==CTX: return
-    try:
-        ptmp=CTX_PUB+".tmp"
-        shutil.copyfile(CTX,ptmp); os.replace(ptmp,CTX_PUB)
-    except Exception: pass
+    """Nu mai exista copie pe sdcard de oglindit (context.json traieste doar in stocarea privata)."""
+    return
 def load_ctx():
     """Reloads the history at startup. Tool messages left without a corresponding
     tool_call (e.g. a brutal shutdown) are dropped, otherwise the API rejects
     the conversation."""
     _migrate_ctx()
-    # if only the visible sdcard copy exists (fresh install / first run), seed the private one from it
-    if CTX_PUB!=CTX and not os.path.exists(CTX) and os.path.exists(CTX_PUB):
+    # migrare o singura data: daca exista o copie veche pe sdcard (dinainte de mutare),
+    # o aducem in stocarea privata ca sa nu pierdem istoricul, apoi nu mai atingem sdcard-ul.
+    if not os.path.exists(CTX) and CTX_PUB and os.path.exists(CTX_PUB):
         try: shutil.copyfile(CTX_PUB,CTX)
         except Exception: pass
     try: hist=json.load(open(CTX,encoding="utf-8"))
