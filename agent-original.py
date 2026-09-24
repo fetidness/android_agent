@@ -467,7 +467,7 @@ def ctx_check_window():
     CTXWINDOW_VERIFIED[0]=True
     try:
         r=urllib.request.Request("https://api.deepseek.com/models",headers={"Authorization":"Bearer "+K})
-        d=json.loads(urllib.request.urlopen(r,timeout=20).read())
+        d=json.loads(urllib.request.urlopen(r, timeout=_timeout).read())
         mid=os.environ.get("DS_MODEL","deepseek-flash")
         for m in (d.get("data") or []):
             if m.get("id")==mid:
@@ -1108,13 +1108,23 @@ def run_bash_tool(cmd):
     return cut
 
 def _looks_like_error(o):
-    """Cheap heuristic: does this tool output contain a FAILURE (traceback, non-zero exit, an
-    ERROR/EXCEPTION line)? Used ONLY by auto-learn to decide whether a task is worth learning from.
-    False positives are harmless (auto-learn then just asks the model, which may say NO)."""
+    """Cheap heuristic: does this tool output contain a FAILURE (traceback, a Python
+    Error/Exception, a shell failure, a denied/missing path)? Used ONLY by auto-learn to
+    decide whether a task is worth learning from. False positives are harmless.
+    v2 (2026-09-24): the old version MISSED the most common failures - SyntaxError,
+    'Permission denied', 'inaccessible or not found', Errno - because it only matched the
+    bare words error/exception/failed/not found. A short task failing exactly that way
+    never triggered auto-learn at all."""
     if not o: return False
-    lo=o.lower()
+    lo = o.lower()
     if "traceback (most recent call last)" in lo: return True
-    if re.search(r"\b(error|exception|failed|non-zero exit status|command not found|no such file)\b", lo): return True
+    if re.search(r"\b\w*(error|exception)\b", lo): return True
+    if re.search(r"\b(failed|failure|denied|refused|unreachable|timeout|timed out|"
+                 r"non-zero exit status|exit status [1-9]|command not found|not found|"
+                 r"no such file|inaccessible|permission denied|operation not permitted|"
+                 r"errno|eacces|enoent|enospc|read-only file system|segmentation fault|"
+                 r"cannot (access|open|create|execute|stat)|unable to)\b", lo):
+        return True
     return False
 
 def tool_read(a):
@@ -1224,7 +1234,7 @@ def call_tool(c):
         _show_step("read "+a.get("path","")+("  grep="+a.get("grep","") if a.get("grep") else "  @"+str(a.get("offset") or 1)),o,TASK["steps"])
         return o
     return run_tool(a.get("code",""))
-def ask(messages=None, tools=None):
+def ask(messages=None, tools=None, _timeout=600):
     _msgs = M if messages is None else messages
     _tools = T if tools is None else tools
     r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode(),headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
@@ -1502,6 +1512,75 @@ def quarantine(reason, lines):
         return False
 # ======== END ANTI-POISON v1 ========
 
+
+# --- auto-learn trace log (2026-09-24) -------------------------------------
+# Fara asta auto-learn era o cutie neagra: daca nu scria in memory.md nu puteai sti
+# daca (a) nu a rulat, (b) a raspuns NO, (c) a picat pe porti sau (d) a scris dar a
+# esuat. Fiecare punct de decizie scrie acum o linie cu timestamp in AL_LOG.
+AL_LOG = os.path.join(HOME_DIR, "auto_learn.log")
+
+def al_log(kind, msg=""):
+    try:
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(AL_LOG, "a", encoding="utf-8") as f:
+            f.write(ts + " [" + kind + "] " + str(msg)[:300] + "\n")
+    except Exception:
+        pass
+
+def al_rotate():
+    """Pastreaza logul la max ~200KB (ultimele 2000 linii)."""
+    try:
+        if os.path.exists(AL_LOG) and os.path.getsize(AL_LOG) > 200000:
+            with open(AL_LOG, encoding="utf-8") as f:
+                tail = f.readlines()[-2000:]
+            with open(AL_LOG, "w", encoding="utf-8") as f:
+                f.writelines(tail)
+    except Exception:
+        pass
+
+def al_compact_msgs(msgs, keep_tail=6, max_chars=400):
+    """Payload REDUS pentru apelul de decizie al auto-learn.
+    Istoric: (1) trimitea TOT istoricul -> lent/blocat la timeout=600s; (2) rescria
+    mesajele doar ca {role,content} -> pierdea tool_call_id -> API 'missing field
+    tool_call_id'; (3) sanitizarea scotea tool-urile orfane DAR lasa in urma
+    assistant(tool_calls) fara tool -> API 'insufficient tool messages following
+    tool_calls message'. REGULA FINALA: un payload valid cere ca ORICE assistant cu
+    tool_calls sa fie urmat de un mesaj 'tool' pentru fiecare id."""
+    try:
+        if not msgs: return []
+        src = list(msgs) if len(msgs) <= keep_tail else (
+            [dict(m, content=str(m.get("content") or "")[:max_chars]) for m in msgs[:-keep_tail]]
+            + [{"role": "user", "content": "(... restul pasilor, deja rezumati mai sus ...)"}]
+            + list(msgs[-keep_tail:]))
+        out = []
+        for n, m in enumerate(src):
+            r = m.get("role")
+            if r == "assistant" and m.get("tool_calls"):
+                ids = [tc.get("id") for tc in m["tool_calls"] if tc.get("id")]
+                have = []
+                k = n + 1
+                while k < len(src) and src[k].get("role") == "tool":
+                    if src[k].get("tool_call_id"): have.append(src[k]["tool_call_id"])
+                    k += 1
+                if ids and all(i in have for i in ids):
+                    out.append({"role": "assistant", "content": str(m.get("content") or "")[:max_chars],
+                                "tool_calls": m["tool_calls"]})
+                else:
+                    txt = (str(m.get("content") or "") + " [a chemat tool-uri, raspunsurile au fost omise]").strip()
+                    out.append({"role": "assistant", "content": txt[:max_chars]})
+            elif r == "tool":
+                prev = out[-1] if out else None
+                if prev and prev.get("role") == "assistant" and prev.get("tool_calls"):
+                    if any(tc.get("id") == m.get("tool_call_id") for tc in prev["tool_calls"]):
+                        out.append({"role": "tool", "tool_call_id": m.get("tool_call_id"),
+                                    "content": str(m.get("content") or "")[:max_chars]})
+            else:
+                out.append({"role": m.get("role"), "content": str(m.get("content") or "")[:max_chars]})
+        return out
+    except Exception:
+        return list(msgs)
+# --- end auto-learn trace log ----------------------------------------------
+
 def auto_learn_check(task_steps, had_error, task_msgs=None):
     """V4 hybrid auto-learn, run right AFTER a task finishes (only if AUTOLEARN['on']).
     Filter (cheap): only bother on a non-trivial task - enough steps OR an error occurred.
@@ -1511,18 +1590,28 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
     lines are APPENDED STRAIGHT TO MEMORY (no full re-analysis). Anything unexpected falls back to
     do_learn(). A SHORT timeout means auto-learn can never block the agent. /auto-learn toggles."""
     if not AUTOLEARN["on"]:
+        al_log("SKIP", "auto-learn OFF")
         return
     if task_steps < AUTOLEARN["min_steps"] and not had_error:
+        al_log("SKIP", "task prea mic: steps=%s min=%s err=%s" % (task_steps, AUTOLEARN["min_steps"], had_error))
         return   # task prea mic: iesim silentios (fara mesaj in output)
+    al_rotate()
+    al_log("START", "steps=%s had_error=%s" % (task_steps, had_error))
     # DECIZIE: un mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
     # la ce se refera "the task that just finished above" si raspunde NO orbestte).
     # TIMEOUT SCURT: auto-learn NU trebuie sa blocheze agentul. Daca API-ul e lent, renuntam
     # elegant (taskul e deja terminat, memoria ramane neatinse).
     try:
-        _msgs = list(task_msgs) if task_msgs is not None else list(M)
-        _probe, _u = ask_short(_msgs+[{"role":"user","content":AUTO_LEARN_PROMPT}])
+        _msgs = al_compact_msgs(list(task_msgs) if task_msgs is not None else list(M))
+        _tn0 = time.time()
+        al_log("CALL", "payload=%s msgs, timeout=%ss" % (len(_msgs), AL_TIMEOUT))
+        _probe, _u = ask_short(_msgs+[{"role":"user","content":AUTO_LEARN_PROMPT}], timeout=60)
+        al_log("CALL-OK", "%.1fs" % (time.time()-_tn0))
     except Exception as e:
-        print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
+        _en = e.__class__.__name__
+        print(OF+"   [auto-learn] decision call failed ("+_en+") - skipped."+N)
+        al_log("TIMEOUT" if "timeout" in _en.lower() or "timed out" in str(e).lower() else "ERR",
+               _en + " " + str(e)[:150])
         return
     _raw = ""
     try:
@@ -1531,6 +1620,7 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
         pass
     if not _raw:
         print(G+"   [auto-learn] decision call returned empty - skipped."+N)
+        al_log("EMPTY", "modelul a raspuns gol")
         return
     # Noul format: fie "NO", fie UNA SAU MAI MULTE linii de lectie (TRAP:/OK:/DEAD:/P:/PREVENT:),
     # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + dedup).
@@ -1557,11 +1647,14 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
         _flat = " ".join(_raw.split())
         if _flat.upper() == "NO" or _flat.upper().startswith("NO "):
             print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
+            al_log("NO", "modelul a raspuns NO")
         elif _flat.upper().startswith("YES"):
             print(G+"   [auto-learn] decision: YES (no explicit line) - running full do_learn()."+N)
+            al_log("YES-FALLBACK", "YES fara linie explicita -> do_learn()")
             do_learn("auto-learn")
         else:
             print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_flat[:80]+N)
+            al_log("UNRECOGNISED", _flat[:150])
         return
     # memorie existenta (pentru dedup)
     try:
@@ -1612,13 +1705,16 @@ def auto_learn_check(task_steps, had_error, task_msgs=None):
             with open(_tgt, "a", encoding="utf-8") as _f:
                 for _ln in _saved: _f.write("\n" + _ln + "\n")
             print(G+"   [auto-learn] decision: YES - saved "+str(len(_saved))+" lesson(s):"+N)
+            al_log("SAVED", "%s lectii: %s" % (len(_saved), " || ".join(_saved)[:220]))
             if _q_blocked:
                 print(OF+"   [anti-poison] "+str(len(_q_blocked))+" lesson(s) QUARANTINED -> memory_quarantine.md"+N)
+                al_log("QUARANTINE", "%s lectii: %s" % (len(_q_blocked), " || ".join(x[1] for x in _q_blocked)[:200]))
                 for _qr,_ql in _q_blocked: print(OF+"        ? ["+_qr+"] "+_ql[:100]+N)
                 quarantine("auto-learn", [_ql for _, _ql in _q_blocked])
             for _ln in _saved: print(G+"        + "+_ln[:120]+N)
         except Exception as e:
             print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
+            al_log("WRITE-FAIL", e.__class__.__name__ + " " + str(e)[:150])
             do_learn("auto-learn"); return
     for _why, _ln in _skipped:
         print(OF+"   [auto-learn] skipped ("+_why+"): "+_ln[:90]+N)
