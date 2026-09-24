@@ -281,11 +281,17 @@ class Adb:
                         d += c
                 except Exception:
                     return          # socket busy/unusable: leave it alone
+                # FIX (output gol intermitent): confirmarea unui pachet strain trebuie sa
+                # foloseasca id-urile INVERSATE (a1, a0) - exact ca in shell(). Vechiul
+                # (a0, 0) lasa scriitorul strain desincronizat, adbd inchide sesiunea, iar
+                # urmatoarea comanda primeste output GOL fara nicio eroare. Cand a1==0
+                # (pachet care nu apartine niciunei sesiuni) raspundem totusi cu (a1,a0)
+                # ca sa nu inventam un id de sesiune care nu exista.
                 if cmd == A_WRTE:
-                    try: self._send(A_OKAY, a0, 0)
+                    try: self._send(A_OKAY, a1, a0)
                     except Exception: return
                 elif cmd == A_CLSE:
-                    try: self._send(A_CLSE, a0, 0)
+                    try: self._send(A_CLSE, a1, a0)
                     except Exception: return
                 idle = 0
         except Exception:
@@ -325,7 +331,7 @@ class Adb:
                 if c in (A_OKAY, A_WRTE, A_CLSE) and a1 != lid:
                     foreign += 1
                     if c == A_WRTE:
-                        try: self._send(A_OKAY, a0, a1)   # keep the foreign writer moving
+                        try: self._send(A_OKAY, a1, a0)   # FIX: id-uri INVERSATE (ca la 336); (a0,a1) desincroniza adbd -> output gol intermitent
                         except Exception: break
                     continue                             # never append it to `out`
                 if c == A_OKAY: pass

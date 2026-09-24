@@ -1793,11 +1793,15 @@ def run_adbsh_tool(cmd, timeout=20):
                         try: _ADBCONN.s.settimeout(0.4); _ADBCONN._recv(0.4)
                         except Exception: pass
                     _out2 = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
-                    if _mk in _out2 or _out2.strip():
+                    # FIX (output gol/strain): acceptam retry-ul DOAR daca marker-ul nostru
+                    # e prezent - acesta e SINGURA dovada ca raspunsul apartine acestei comenzi.
+                    # Vechiul `or _out2.strip()` accepta si un raspuns strain (fara marker),
+                    # ceea ce putea returna output-ul altei comenzi sau un gol mascat.
+                    if _mk in _out2:
                         _out = _out2
                     else:
-                        _out = ("[adb] WARNING: the session returned mismatched output twice "
-                                "(protocol desync). Command NOT confirmed: " + cmd[:80])
+                        _out = ("[adb] WARNING: protocol desync - marker-ul nu a revenit de 2 ori. "
+                                "Comanda NU e confirmata (output posibil gol/strain): " + cmd[:80])
                 if _mk in _out:
                     _out = _out.replace(_mk + "\n", "", 1).replace(_mk, "", 1)
                 # daca a iesit gol/timeout, verificam sanatatea sesiunii si reconectam o data
