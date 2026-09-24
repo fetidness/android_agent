@@ -150,7 +150,7 @@ class Adb:
                     port = int(out)
                 else:
                     # fallback: caut porturi adbd active
-                    for p in (5555, 55555, 5556):
+                    for p in (5555, 55555, 5556, 1234):
                         try:
                             import socket as _s
                             t = _s.socket(); t.settimeout(0.5); t.connect(("127.0.0.1", p)); t.close()
@@ -230,19 +230,12 @@ class Adb:
                 # Vechiul cod incerca (2) PRIMUL si (1) doar in `except`. Pe acest device
                 # cheia e deja in user_keys, deci adbd NU raspunde deloc la (2):
                 # ramanea in timeout si adbsh parea mort. Acum incercam (1) PRIMUL.
-                sent = False
-                if os.path.exists(KEY):
-                    try:
-                        sig = _rsa_sign_token(d)
-                        print("[adb] AUTH -> trimit SIGNATURE", len(sig), "bytes", flush=True)
-                        self._send(A_AUTH, AUTH_SIGNATURE, 0, sig)
-                        sent = True
-                    except Exception as e:
-                        print("[adb] sign err:", str(e)[:70], flush=True)
-                if not sent:
-                    pub = open(PUBC,"rb").read().strip()+b"\0"
-                    print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
-                    self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
+                # ★ FIX (verificat pe device): RSAPUBLICKEY PRIMUL.
+                # adbd accepta RSAPUBLICKEY INSTANT (raspunde CNXN), in timp ce
+                # SIGNATURE e respinsa cand cheia nu e in lista persistenta.
+                pub = open(PUBC,"rb").read().strip()+b"\0"
+                print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
+                self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
                 _auth_left -= 1
                 if _auth_left <= 0:
                     raise RuntimeError("adbd a respins autorizarea (3 incercari) - "
