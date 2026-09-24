@@ -1681,173 +1681,82 @@ def _shell_q(s):
 
 
 def run_adbsh_tool(cmd, timeout=20):
-    """SUPER PUTERI: ruleaza o comanda shell ca user 'shell' (uid=2000) folosind
-    clientul ADB scris in Python (adb_client.py), conectat la adbd pe 127.0.0.1:5555.
-    Fara PC, fara root. Da acces la: pm grant, dumpsys, settings put, input, screencap, etc."""
+    """SHELL ca user 'shell' (uid=2000) prin clientul ADB pur-Python (adb_client).
+
+    ★ REWRITE PYTHON-FIRST (decizie operator, dupa blocajele repetate ale vechiului tool):
+    Vechea implementare tinea o conexiune persistenta globala (_ADBCONN) + un liveness
+    check manual (MSG_PEEK) + reintegrare manuala pe socket: o singura comanda care agata
+    (ex. un binar din toolchain care nu-si gaseste libs) lasa SESIUNEA ZOMBI deschisa si
+    bloca TOT adbsh-ul de acolo inainte - exact simptomul raportat (echo merge, apoi dupa
+    un 'git' nu mai merge nimic).
+    Acum: fiecare comanda trece prin adb_client.shared().shell(), care are deja
+      - _SOCK_LOCK (serializare pe socket, fara suprapuneri intre threaduri)
+      - deadline la drenare (nu mai exista bucla fara limita)
+      - auto-heal (_poisoned => reconectare curata)
+    Nu mai exista conexiune persistenta proprie si nici verificari manuale de liveness:
+    starea o gestioneaza adb_client, intr-un singur loc.
+    """
     import importlib.util as _iu
     global _ADBCLI
     try:
         _ADBCLI
     except NameError:
-        _ADBCLI=None
+        _ADBCLI = None
     if _ADBCLI is None:
-        here=os.path.dirname(os.path.abspath(__file__))
+        here = os.path.dirname(os.path.abspath(__file__))
         try:
-            sp=_iu.spec_from_file_location("adb_client", os.path.join(here,"adb_client.py"))
-            _ADBCLI=_iu.module_from_spec(sp); sp.loader.exec_module(_ADBCLI)
+            sp = _iu.spec_from_file_location("adb_client", os.path.join(here, "adb_client.py"))
+            _ADBCLI = _iu.module_from_spec(sp); sp.loader.exec_module(_ADBCLI)
         except Exception as e:
-            _ADBCLI=False
-            _err="adbsh unavailable: "+str(e)
+            _ADBCLI = False
+            _err = "adbsh unavailable: " + str(e)
     if not _ADBCLI:
-        o=_err if isinstance(_err,str) else "adbsh unavailable"
+        o = _err if isinstance(_err, str) else "adbsh unavailable"
         _show_step("adbsh", o, TASK["steps"]); return o
-    dsc="adbsh: "+cmd[:60]
-    def _run():
-        try:
-            import signal as _sig
-            # ★ SIGALRM merge DOAR in thread-ul principal. Bootstrap-ul ruleaza pe un
-            # thread secundar -> signal.signal() arunca "signal only works in main
-            # thread" si TOATA comanda adbsh cadea (toolchain-ul nu se instala deloc).
-            # In thread sarim peste alarm: socket-ul are deja propriul timeout.
-            _main_thread = (getattr(__import__("threading"), "current_thread", lambda: None)() 
-                            is getattr(__import__("threading"), "main_thread", lambda: None)())
-            old=None
-            if _main_thread:
-                old=_sig.getsignal(_sig.SIGALRM)
-                def _to(s,f):
-                    raise TimeoutError("adbsh timeout")
-                _sig.signal(_sig.SIGALRM,_to)
-                _sig.alarm(max(min(int(timeout),3600),1))
-            try:
-                # ★ CONEXIUNE PERSISTENTA: refolosim ACELASI obiect Adb intre comenzi.
-                # adbd cere confirmare (fereastra "Allow USB debugging") doar la conexiuni NOI;
-                # daca tinem socket-ul deschis nu mai apare niciun prompt.
-                global _ADBCONN
-                try:
-                    _ADBCONN
-                except NameError:
-                    _ADBCONN=None
-                if _ADBCONN is None:
-                    # ★ folosim conexiunea PARTAJATA (acelasi socket si pentru
-                    # toolchain._sh() din alte module) -> un singur dialog Allow
-                    _ADBCONN=_ADBCLI.shared()
-                else:
-                    # ★ VERIFICARE DE LIVENESS CONSERVATOARE.
-                    # Inainte: orice exceptie sau orice byte rezidual de protocol
-                    # (ex. EAGAIN de la MSG_PEEK pe socket non-blocant) era tratat
-                    # ca "socket mort" -> reconectare -> adbd cerea DIN NOU
-                    # aprobarea "Allow USB debugging" la fiecare comanda.
-                    # Acum: consideram conexiunea moarta DOAR daca:
-                    #   - socket-ul e None, sau
-                    #   - recv(MSG_PEEK) returneaza EXACT b"" (EOF real)
-                    doomed = False
-                    try:
-                        _s = _ADBCONN.s
-                        if _s is None:
-                            doomed = True
-                        else:
-                            import select as _sel
-                            r, _, _ = _sel.select([_s], [], [], 0)
-                            if r:
-                                try:
-                                    peek = _s.recv(1, 0x02)   # MSG_PEEK (nu consuma)
-                                    if peek == b"":           # EOF real = inchis
-                                        doomed = True
-                                except BlockingIOError:
-                                    pass                      # EAGAIN nu e moarte
-                                except OSError as _oe:
-                                    # doar erorile de socket-inchis conteaza
-                                    if getattr(_oe, "errno", None) in (9, 104, 107):
-                                        doomed = True
-                    except Exception:
-                        pass                                  # NU presupune moarte
-                    if doomed:
-                        try: _ADBCONN.close()
-                        except Exception: pass
-                        _ADBCONN=_ADBCLI.Adb(); _ADBCONN.connect()
-                # ★ R1/R5 (raport llama.cpp): sursez AUTOMAT mediul toolchain
-                # daca exista, ca agentul sa nu mai scrie export-uri manual
-                # (PREFIX, SSL_CERT_FILE, PATH, LD_LIBRARY_PATH erau uitate
-                #  si fiecare lipsa costa minute de diagnostic)
-                _wrapped = cmd
-                try:
-                    if os.path.exists("/data/local/tmp/tpm/env.sh"):
-                        _wrapped = (". /data/local/tmp/tpm/env.sh >/dev/null 2>&1; "
-                                    "export PATH=/data/local/tmp/wrap:$PATH; ") + cmd
-                except Exception:
-                    pass
-                # ★ FIX: NU limita la 60s - bootstrap/build-urile depasesc lejer
-                # (bug real: min(int(timeout),60) facea ca ORICE comanda lunga sa
-                #  expire garantat -> agentul credea ca adbsh e mort)
-                # ★ INTEGRITY GUARD (fix for the 'output lags one call' report): prefix a UNIQUE
-                # marker and require it back. If it is missing, the socket still held leftovers and
-                # the answer belongs to a previous command - we drain and run ONCE more. The marker
-                # is stripped from the returned text, so the model never sees it.
-                import time as _t
-                _mk = "__MK" + str(int(_t.time()*1000) % 10**9) + "__"
-                _wrapped = "echo " + _mk + "; " + _wrapped
-                _out = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
-                if _mk not in _out:
-                    # leftovers confirmed: drain hard, retry ONCE, then report honestly
-                    try: _ADBCONN._drain()
-                    except Exception:
-                        try: _ADBCONN.s.settimeout(0.4); _ADBCONN._recv(0.4)
-                        except Exception: pass
-                    _out2 = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
-                    # FIX (output gol/strain): acceptam retry-ul DOAR daca marker-ul nostru
-                    # e prezent - acesta e SINGURA dovada ca raspunsul apartine acestei comenzi.
-                    # Vechiul `or _out2.strip()` accepta si un raspuns strain (fara marker),
-                    # ceea ce putea returna output-ul altei comenzi sau un gol mascat.
-                    if _mk in _out2:
-                        _out = _out2
-                    else:
-                        _out = ("[adb] WARNING: protocol desync - marker-ul nu a revenit de 2 ori. "
-                                "Comanda NU e confirmata (output posibil gol/strain): " + cmd[:80])
-                if _mk in _out:
-                    _out = _out.replace(_mk + "\n", "", 1).replace(_mk, "", 1)
-                # daca a iesit gol/timeout, verificam sanatatea sesiunii si reconectam o data
-                if ("depasit" in _out and "procesul poate continua" in _out) and not _out.strip().startswith("["):
-                    pass
-                # ★ RE-TRIMITERE doar daca e DOVEDIT ca socket-ul a murit.
-                # Inainte: la orice output gol -> ping() -> close+connect NOU ->
-                # adbd cerea din nou aprobarea (exact ce deranja operatorul).
-                if _out.strip() == "":
-                    try:
-                        if not _ADBCONN.ping():
-                            # ping-ul a esuat = socket mort -> O SINGURA reconectare
-                            try: _ADBCONN.close()
-                            except Exception: pass
-                            _ADBCONN = _ADBCLI.Adb(); _ADBCONN.connect()
-                            _out2 = _ADBCONN.shell(_wrapped, timeout=max(5, min(int(timeout), 3600)))
-                            if _out2.strip():
-                                _out = _out2
-                    except Exception:
-                        pass
-                return _out
-            finally:
-                if old is not None:
-                    try: _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
-                    except Exception: pass
-        except Exception as e:
-            # ★ IMPORTANT: NU aruncam conexiunea la orice eroare! Majoritatea
-            # erorilor sunt de EXECUTIE (comanda a eșuat, timeout de comanda),
-            # nu de socket. Daca o aruncam, urmatorul apel face connect() NOU
-            # -> adbd cere DIN NOU aprobarea "Allow USB debugging" (enervant).
-            # Pastram conexiunea si o aruncam DOAR daca ping-ul arata ca e moarta.
-            _e = str(e)
-            _dead = any(k in _e.lower() for k in
-                        ("closed", "broken pipe", "connection reset", "bad file descriptor"))
-            if _dead:
-                try:
-                    globals()["_ADBCONN"] = None
-                except Exception:
-                    pass
-            return "adbsh error: " + _e
+
+    dsc = "adbsh: " + cmd[:60]
+    to = max(5, min(int(timeout), 3600))
+
+    # prefix: mediu toolchain (daca exista) + PATH-ul wrapper-elor de compilare
+    _wrapped = cmd
     try:
-        o=_spin(_run, phase="tool", desc=dsc, col=HCLR[sum(map(ord,dsc))%len(HCLR)])
+        if os.path.exists("/data/local/tmp/tpm/env.sh"):
+            _wrapped = (". /data/local/tmp/tpm/env.sh >/dev/null 2>&1; "
+                        "export PATH=/data/local/tmp/wrap:$PATH; ") + cmd
+    except Exception:
+        pass
+
+    def _run():
+        # bucla de retry: daca raspunsul e gol/neconfirmat, o singura reincercare dupa
+        # o reconectare curata (auto-heal). Marker unic = dovada ca raspunsul e al nostru.
+        import time as _t
+        last = ""
+        for attempt in (1, 2):
+            try:
+                conn = _ADBCLI.shared()
+                mk = "__MK" + str(int(_t.time() * 1000) % 10**9) + "__"
+                out = conn.shell("echo " + mk + "; " + _wrapped, timeout=to)
+            except Exception as e:
+                return "adbsh error: " + str(e)[:200]
+            if mk in out:
+                out = out.replace(mk + "\n", "", 1).replace(mk, "", 1)
+                return out
+            last = out
+            # marker lipsa = raspuns strain sau gol: reconectam o data si reincercam
+            if attempt == 1:
+                try:
+                    _ADBCLI.force_reconnect()
+                    _t.sleep(0.2)
+                except Exception:
+                    pass
+        return ("[adb] protocol desync - marker-ul nu a revenit de 2 ori; comanda NU e "
+                "confirmata: " + cmd[:80] + ("\n(ultim raspuns: " + last[:120] + ")" if last else ""))
+
+    try:
+        o = _spin(_run, phase="tool", desc=dsc, col=HCLR[sum(map(ord, dsc)) % len(HCLR)])
     except Exception as e:
-        o="adbsh error: "+str(e)
-    TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o))
+        o = "adbsh error: " + str(e)
+    TN[0] += 1; TASK.update(steps=TASK["steps"] + 1, chars=TASK["chars"] + len(o))
     _show_step(dsc, o, TASK["steps"])
     return o
 
