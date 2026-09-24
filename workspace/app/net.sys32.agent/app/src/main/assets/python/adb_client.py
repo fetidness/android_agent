@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """ADB client pur Python -> adbd 127.0.0.1:5555. Trimite RSAPUBLICKEY direct."""
 import socket, struct, os, sys, time, ctypes, signal
+import threading
+
+# ★ FIX (output gol intermitent - cauza RADACINA): ACELASI socket ADB e folosit de
+# mai multe thread-uri (agentul in thread-ul principal + bootstrap-ul toolchain pe un
+# thread secundar, ambele prin shared()). Fara serializare, doua shell()-uri se pot
+# suprapune pe acelasi socket: unul citeste pachetele celuilalt -> protocol desync ->
+# COMENZI CARE IES GOALE fara nicio eroare (simptomul raportat de operator).
+# Solutie: un Lock global care serialzeaza ORICE operatie pe socket (shell/ping/_drain).
+_SOCK_LOCK = threading.RLock()
 
 F = "/data/data/net.sys32.agent/files"
 KEY = F + "/adbkey"; PUBC = F + "/adbkey.pub"
@@ -146,6 +155,36 @@ def close_shared():
         _SHARED = None
 
 
+def force_reconnect():
+    """★ AUTO-HEAL (fix pentru blocajele care nu se reparau singure):
+    inchide socket-ul partajat si deschide unul NOU. Folosit cand protocolul s-a
+    desincronizat iremediabil (pachete malformate, reziduuri) si nicio drenare
+    nu mai ajuta. O conexiune noua NU cere dialogul 'Allow' atat timp cat cheia
+    e deja in user_keys ale adbd (cazul normal dupa prima autorizare)."""
+    global _SHARED
+    try:
+        if _SHARED is not None: _SHARED.close()
+    except Exception:
+        pass
+    _SHARED = None
+    try:
+        return shared()      # creeaza conexiunea noua
+    except Exception:
+        return None
+
+
+def is_socket_healthy(timeout=3):
+    """Test rapid: trimite 'echo' si verifica daca raspunsul e curat.
+    Returneaza True/False fara sa arunce."""
+    try:
+        a = shared()
+        if a is None or a.s is None: return False
+        r = a.shell("echo __HEALTH__", timeout)
+        return "__HEALTH__" in r
+    except Exception:
+        return False
+
+
 class Adb:
     def __init__(self, host="127.0.0.1", port=None):
         # ★ AUTO-DETECTIE PORT: citesc service.adb.tcp.port (orice port foloseste adbd)
@@ -169,6 +208,7 @@ class Adb:
                 pass
             print("[adb] port detectat: " + str(port), flush=True)
         self.host, self.port = host, port; self.s=None; self.banner=""; self.lid=0
+        self._poisoned = False   # ★ setat cand protocolul s-a desincronizat (vezi _drain_locked)
     def _send(self, cmd, a0, a1, data=b""):
         h = struct.pack("<6I", cmd, a0, a1, len(data), sum(data)&0xffffffff, cmd ^ 0xffffffff)
         self.s.sendall(h+data)
@@ -252,6 +292,11 @@ class Adb:
             else:
                 raise RuntimeError("neasteptat %#x a0=%d" % (cmd,a0))
     def _drain(self):
+        """Empties leftovers... (serializat: vezi _SOCK_LOCK)."""
+        with _SOCK_LOCK:
+            return self._drain_locked()
+
+    def _drain_locked(self):
         """Empties leftovers from ALREADY-CLOSED sessions before opening a new one.
         Safe by construction: it reads a packet ONLY when select() says data is ready, and it
         handles SHORT reads (a TCP segment may carry only part of the 24-byte header) instead of
@@ -260,11 +305,22 @@ class Adb:
         try:
             import select as _sel
             idle = 0
-            while idle < 2:
+            # ★ FIX (blocaj): si aceasta bucla are acum un buget TOTAL de timp, nu doar
+            # numarul de citiri idle - altfel datele continue de la adbd o fac sa nu se
+            # termine niciodata (acelasi bug ca la drenarea din shell()).
+            _dl = time.time()+0.5
+            _foreign_seen = 0
+            while idle < 2 and time.time() < _dl:
                 r,_,_ = _sel.select([self.s], [], [], 0.05)
                 if not r:
                     idle += 1
                     continue
+                _foreign_seen += 1
+                # ★ AUTO-HEAL: prea multe pachete straine drenate = socket desincronizat
+                # iremediabil. Il marcam ca bolnav ca shell() sa forteze reconectarea,
+                # altfel comanda urmatoare mosteneste gunoiul si iese goala/blocata.
+                if _foreign_seen > 8:
+                    self._poisoned = True
                 # read a whole packet, tolerating short reads
                 try:
                     self.s.settimeout(0.3)
@@ -298,6 +354,32 @@ class Adb:
             pass
 
     def shell(self, cmd, timeout=15):
+        """Wrapper SERIALIZAT: ia Lock-ul global inainte de a atinge socket-ul.
+        Fara el, doua thread-uri (agentul + bootstrap toolchain) se puteau
+        suprapune pe acelasi socket => protocol desync => OUTPUT GOL intermitent."""
+        with _SOCK_LOCK:
+            # ★ AUTO-HEAL: daca protocolul s-a desincronizat (prea multe pachete straine
+            # drenate), reconectam INAINTE de a trimite comanda. Fara asta, comanda
+            # mostenea gunoiul si iesea goala sau bloca drenarea.
+            if getattr(self, "_poisoned", False):
+                self._poisoned = False
+                try:
+                    self.close()
+                    self.connect()
+                except Exception:
+                    pass
+            r = self._shell_locked(cmd, timeout)
+            # daca rezultatul e gol si nu era de asteptat gol, incercam O reconectare
+            if r == "" and cmd.strip() and not cmd.strip().startswith("echo __MK"):
+                try:
+                    self.close(); self.connect()
+                    r2 = self._shell_locked(cmd, timeout)
+                    if r2.strip(): r = r2
+                except Exception:
+                    pass
+            return r
+
+    def _shell_locked(self, cmd, timeout=15):
         """Runs ONE shell command over a shell-v2 stream and returns its output.
 
         SESSION ID DISCIPLINE (this is what fixes the 'output lags by one call' bug):
@@ -350,12 +432,17 @@ class Adb:
                 except Exception:
                     try: self._send(A_CLSE, lid, 0)
                     except Exception: pass
-            # ★ DRENARE DETERMINISTA: golim socket-ul COMPLET (pana la timeout scurt
-            # consecutiv), nu 64 de pachete cu 0.3s - resturile erau exact sursa lag-ului.
+            # ★ DRENARE DETERMINISTA: golim socket-ul (pana la 3 citiri idle consecutive).
+            # ★ FIX (BLOCAJ INFINIT - raportat de operator, pasi de ~1.2s): bucla veche
+            # `while idle < 3` NU avea limita de timp total. Daca adbd trimitea date
+            # continuu (ex. o sesiune care nu se inchide), `idle` se reseta la fiecare
+            # pachet => bucla nu se termina NICIODATA => comanda agata la infinit.
+            # Acum exista un buget TOTAL de timp (0.6s): oricate pachete ar veni,
+            # drenarea se opreste la timp si comanda NU poate bloca.
             try:
                 self.s.settimeout(0.15)
-                idle=0
-                while idle < 3:                     # 3 citiri consecutive fara date = gol
+                idle=0; _drain_deadline=time.time()+0.6
+                while idle < 3 and time.time() < _drain_deadline:
                     try:
                         self._recv(0.15); idle=0
                     except Exception:
