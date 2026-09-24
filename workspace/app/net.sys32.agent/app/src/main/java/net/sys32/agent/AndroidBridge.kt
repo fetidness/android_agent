@@ -161,8 +161,85 @@ class AndroidBridge(
             "services" -> refl.execute(JSONObject().put("op", "services"))
             "info" -> refl.execute(JSONObject().put("op", "info").put("target", p.optString("target")).put("filter", p.optString("filter")))
             "ui" -> ui(action, p)
+            "notif" -> notif(action, p)
+            "ime" -> ime(action, p)
+            "vpn" -> vpn(action, p)
+            "capture" -> capture(action, p)
+            "guard" -> guard(action, p)
             else -> JSONObject().put("ok", false).put("error", "unknown tool: $tool")
         }
+    }
+
+    // ---------------- FIX 2: NotificationListener ----------------
+    private fun notif(action: String, p: JSONObject): JSONObject {
+        val svc = AgentNotificationListener.instance
+            ?: return JSONObject().put("ok", false).put("error",
+                "notification listener NOT enabled. Activeaza cu: cmd notification allow_listener net.sys32.agent/.AgentNotificationListener")
+        return when (action) {
+            "list", "read", "dump" -> svc.dump(p.optInt("limit", 100)).put("ok", true)
+            "cancel" -> {
+                val key = p.optString("key")
+                if (key.isNotEmpty()) JSONObject().put("ok", svc.cancelKey(key))
+                else JSONObject().put("ok", true).put("cancelled", svc.cancelPkg(p.optString("package", p.optString("pkg"))))
+            }
+            "snooze" -> JSONObject().put("ok", svc.snooze(p.optString("key"), p.optLong("ms", 60000)))
+            else -> JSONObject().put("ok", false).put("error", "notif action? use list|cancel|snooze")
+        }
+    }
+
+    // ---------------- FIX 3: IME ----------------
+    private fun ime(action: String, p: JSONObject): JSONObject {
+        val svc = AgentIme.instance
+            ?: return JSONObject().put("ok", false).put("error",
+                "IME not active. Activeaza: settings put secure enabled_input_methods net.sys32.agent/.AgentIme ; ime set net.sys32.agent/.AgentIme")
+        return when (action) {
+            "read", "field" -> svc.readField().put("ok", true)
+            "type", "inject" -> JSONObject().put("ok", svc.inject(p.optString("text"), p.optInt("delete", 0)))
+            "key" -> JSONObject().put("ok", svc.keyEvent(p.optInt("code")))
+            "keys", "events" -> JSONObject().put("ok", true).put("keys", svc.dumpKeys(p.optInt("limit", 100)))
+            else -> JSONObject().put("ok", false).put("error", "ime action? use read|type|key|keys")
+        }
+    }
+
+    // ---------------- FIX 4: VpnService ----------------
+    private fun vpn(action: String, p: JSONObject): JSONObject {
+        if (AgentVpn.instance == null) {
+            try { ctx.startService(android.content.Intent(ctx, AgentVpn::class.java)) } catch (_: Exception) {}
+        }
+        val svc = AgentVpn.instance
+            ?: return JSONObject().put("ok", false).put("error",
+                "vpn service pornit dar instance null (asteapta o secunda si reincearca)")
+        return when (action) {
+            "status" -> JSONObject().put("ok", true).put("status", svc.status())
+            "establish", "up" -> JSONObject().put("ok", true).put("result", svc.establish(p.optString("name", "agent0")))
+            "close", "down" -> { svc.closeTun(); JSONObject().put("ok", true).put("status", "down") }
+            else -> JSONObject().put("ok", false).put("error", "vpn action? use status|establish|close")
+        }
+    }
+
+    // ---------------- FIX 5: MediaProjection capture ----------------
+    private fun capture(action: String, p: JSONObject): JSONObject {
+        val svc = ScreenCaptureService.instance
+            ?: return JSONObject().put("ok", false).put("error",
+                "capture service not running. Deschide app-ul o data (cere consimtamant MediaProjection automat)")
+        return when (action) {
+            "status" -> JSONObject().put("ok", true).put("status", svc.status())
+            "grab", "shot" -> JSONObject().put("ok", true)
+                .put("result", svc.grab(p.optString("path", ctx.filesDir.absolutePath + "/capture.png")))
+            else -> JSONObject().put("ok", false).put("error", "capture action? use status|grab")
+        }
+    }
+
+    // ---------------- FIX 7: persistence guard ----------------
+    private fun guard(action: String, p: JSONObject): JSONObject = when (action) {
+        "start" -> { GuardService.start(ctx); JSONObject().put("ok", true).put("guard", "started") }
+        "schedule" -> { GuardService.schedule(ctx); JSONObject().put("ok", true).put("alarm", "scheduled") }
+        "status" -> JSONObject().put("ok", true)
+            .put("foreground", AgentService.running)
+            .put("accessibility", AgentAccessibilityService.instance != null)
+            .put("notif_listener", AgentNotificationListener.instance != null)
+            .put("ime", AgentIme.instance != null)
+        else -> JSONObject().put("ok", false).put("error", "guard action? use start|schedule|status")
     }
 
     // ---------------- UI (AccessibilityService) ----------------
@@ -190,6 +267,9 @@ class AndroidBridge(
                     + "Fara el, Android interzice scrierea/taparea in alte aplicatii (INJECT_EVENTS e permisiune de sistem).")
         return try {
             when (action) {
+                "shot", "screenshot", "capture" -> svc.captureScreen(
+                    p.optString("path", ctx.filesDir.absolutePath + "/a11y_shot.png")
+                )
                 "read", "screen", "tree" -> svc.readScreen(
                     p.optInt("depth", p.optInt("max_depth", 20)),
                     p.optInt("max", p.optInt("max_nodes", 250)),

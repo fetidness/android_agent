@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Config pentru AgentAccessibilityService: ce poate observa si controla agentul.
-     canRetrieveWindowContent=true => citirea ecranului (arborele de noduri)
-     canPerformGestures=true       => tap/swipe prin dispatchGesture
-     flags: reportViewIds (id-uri reale), retrieveInteractiveWindows (ferestre), includeNotImportantViews
+<!-- Config AgentAccessibilityService.
+     canRetrieveWindowContent => citirea arborelui de noduri
+     canPerformGestures       => tap/swipe prin dispatchGesture
+     canTakeScreenshot        => takeScreenshot() fara SecurityException (FIX 1)
+     canRequestFilterKeyEvents=> interceptare taste (necesita flag si la runtime)
+     canControlMagnification  => zoom ecran
+     canRequestTouchExplorationMode => touch exploration
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_description"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewFocused|typeViewTextChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewFocused|typeViewTextChanged|typeViewLongClicked|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagRequestTouchExplorationMode"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews|flagRequestFilterKeyEvents|flagRequestTouchExplorationMode"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
-    android:notificationTimeout="100" />
+    android:canTakeScreenshot="true"
+    android:canRequestFilterKeyEvents="true"
+    android:canControlMagnification="true"
+    android:canRequestTouchExplorationMode="true"
+    android:notificationTimeout="50" />

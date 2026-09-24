@@ -383,4 +383,49 @@ class AgentAccessibilityService : AccessibilityService() {
         }
         return JSONObject().put("ok", true).put("windows", arr)
     }
+
+    // FIX 1: captura de ecran prin AccessibilityService.takeScreenshot().
+    // Necesita canTakeScreenshot="true" in configul XML (adaugat). Fara el,
+    // Android arunca SecurityException: "Services don't have the capability of
+    // taking the screenshot". Returneaza calea PNG sau eroarea.
+    fun captureScreen(outPath: String): JSONObject {
+        val r = JSONObject()
+        if (Build.VERSION.SDK_INT < 30) { r.put("ok", false); r.put("error", "necesita Android 11+"); return r }
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val res = arrayOfNulls<String>(1)
+        try {
+            val ex = java.util.concurrent.Executors.newSingleThreadExecutor()
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                ex,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        try {
+                            val hb = android.graphics.Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                            val bmp = hb?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                            screenshot.hardwareBuffer.close()
+                            if (bmp == null) { res[0] = "error: hardwareBuffer null" }
+                            else {
+                                val f = java.io.File(outPath); f.parentFile?.mkdirs()
+                                java.io.FileOutputStream(f).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                                bmp.recycle()
+                                res[0] = outPath + ":" + f.length()
+                            }
+                        } catch (e: Exception) { res[0] = "error: " + e }
+                        latch.countDown()
+                    }
+                    override fun onFailure(errorCode: Int) {
+                        res[0] = "error: onFailure code=" + errorCode
+                        latch.countDown()
+                    }
+                }
+            )
+            latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            r.put("ok", res[0] != null && !res[0]!!.startsWith("error"))
+            r.put("result", res[0] ?: "timeout")
+        } catch (e: Exception) {
+            r.put("ok", false); r.put("error", e.toString())
+        }
+        return r
+    }
 }
