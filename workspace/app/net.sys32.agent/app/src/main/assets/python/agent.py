@@ -255,9 +255,12 @@ _DEFHOME=os.path.abspath(_DEFHOME)
 # Structura ceruta de operator (folder standard, deja indexat de file manager):
 #   HOME/            -> memory.md + context.json
 #   HOME/workspace/  -> TOT ce genereaza agentul (proiecte, fisiere, logs, archive)
-# HOME vine din aplicatie (AGENT_HOME) - ex. /storage/emulated/0/Download/Agent.
-# Daca nu e setat sau nu e scriibil, rămâne in sandbox (fallback sigur, nu se strica niciodata).
-HOME_DIR=os.environ.get("AGENT_HOME","").strip() or _DEFHOME
+# ★ HOME_DIR = sandbox-ul PRIVAT al app-ului (files/), NU sdcard-ul. Decizie operator:
+# memory.md + context.json + bg_jobs.json + logs/ traiesc in stocarea privata => zero FUSE,
+# zero zgomot MediaProvider (nici quota, nici revoke_uri_permission), scriere rapida.
+# AGENT_HOME se IGNORA acum pentru HOME (ramane doar ptr compat); il folosim DOAR ca sa
+# localizam WORKSPACE-ul, care trebuie sa ramana VIZIBIL pe sdcard pentru operator.
+HOME_DIR=_DEFHOME
 def _writable(d):
     try:
         os.makedirs(d,exist_ok=True)
@@ -265,7 +268,9 @@ def _writable(d):
     except Exception: return False
 if not _writable(HOME_DIR):
     HOME_DIR=_DEFHOME; _writable(HOME_DIR)
-WORK=os.path.join(HOME_DIR,"workspace")
+# WORKSPACE: VIZIBIL, pe sdcard (unde operatorul vede fisierele generate de agent).
+_AGH=os.environ.get("AGENT_HOME","").strip()
+WORK=(os.path.join(_AGH,"workspace") if _AGH else os.path.join(HOME_DIR,"workspace"))
 # registrul job-urilor de fundal (persistent, langa context.json/memory.md)
 BG_REG=os.path.join(HOME_DIR,"bg_jobs.json")   # lista job-urilor cunoscute (id, pid, log, stare)
 BG_LOG=os.path.join(HOME_DIR,"logs")           # cate un <job_id>.log per job de fundal
