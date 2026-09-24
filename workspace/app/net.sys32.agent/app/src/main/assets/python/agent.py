@@ -1138,7 +1138,7 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
 # Rezultat: ~66 erori in logcat + munca inutila pe FUSE la fiecare task, zero beneficiu real.
 # Acum context.json (istoricul conversatiei) traieste EXCLUSIV in stocarea privata a app-ului,
 # unde FUSE si MediaProvider nu intervin: zero erori, scriere mai rapida, istoric intact.
-CTX=os.path.join(_SANDBOX,CTXNAME)
+CTX=os.path.join(HOME_DIR,CTXNAME)   # in HOME_DIR (langa memory.md), NU in _SANDBOX (fisierul scriptului)
 CTX_PUB=None  # pastrat doar pentru compat: nu mai exista oglinda pe sdcard
 # --- migrare: muta context.json/memory.md din locatiile vechi (sandbox sau /sdcard/agent) ---
 def _migrate():
