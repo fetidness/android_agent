@@ -38,7 +38,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var input: EditText
     private lateinit var scroll: ScrollView
     private lateinit var root: LinearLayout
-    private lateinit var btnDown: Button
     private lateinit var btnStop: Button
     @Volatile private var generating = false
     private var bridge: AndroidBridge? = null
@@ -96,6 +95,9 @@ class MainActivity : AppCompatActivity() {
             typeface = mono
             setTextColor(Color.parseColor("#ABB2BF"))
             setBackgroundColor(Color.parseColor("#0D1117"))
+            // PERFORMANTA: layout pe o singura coloana, fara reflow pe ecran;
+            // TextView-ul nu pierde timp calculand wrap-uri pe text urias.
+            setLineSpacing(0f, 1f)
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -123,7 +125,6 @@ class MainActivity : AppCompatActivity() {
             }
             // daca userul a ajuns la fund (prin orice mijloc), urmarirea reia
             if (!programmaticScroll && dist <= 8) followTail = true
-            btnDown.visibility = if (dist <= 24) View.GONE else View.VISIBLE
         }
 
         val row = LinearLayout(this).apply {
@@ -203,28 +204,6 @@ class MainActivity : AppCompatActivity() {
 
         val frame = FrameLayout(this)
         frame.addView(root, ViewGroup.LayoutParams(-1, -1))
-        btnDown = Button(this).apply {
-            text = "⇩"
-            textSize = 18f
-            setTextColor(Color.parseColor("#0D1117"))
-            setBackgroundColor(Color.parseColor("#61AFEF"))
-            visibility = View.GONE
-            setOnClickListener {
-                followTail = true
-                autoScroll = true
-                btnDown.visibility = View.GONE
-                scroll.post {
-                    programmaticScroll = true
-                    scroll.fullScroll(ScrollView.FOCUS_DOWN)
-                    scroll.postDelayed({ programmaticScroll = false }, 60)
-                }
-            }
-        }
-        val lp = FrameLayout.LayoutParams(-2, -2)
-        lp.gravity = Gravity.END or Gravity.BOTTOM
-        lp.setMargins(0, 0, 28, 180)
-        frame.addView(btnDown, lp)
-
         setContentView(frame)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
@@ -323,19 +302,42 @@ class MainActivity : AppCompatActivity() {
         try { GuardService.start(this) } catch (_: Exception) {}
     }
 
+    companion object {
+        // limita de text afisat in terminal (caractere). Peste asta, taiem din cap:
+        // altfel TextView-ul urias face re-layout lent la revenirea din background.
+        private const val MAX_UI_CHARS = 200000
+        private const val MAX_UI_KEEP = 180000
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    /** ★ Inlocuieste ULTIMA linie din terminal (pentru countdown-uri). */
+    /** ★ Inlocuieste ULTIMA linie din terminal (pentru countdown-uri).
+     *  PERFORMANTA: nu reconstruim tot textul (Ansi.toSpannable pe tot ar fi lent);
+     *  stergem doar ultima linie din spannable-ul existent si adaugam linia noua. */
     private fun lastLine(s: String) {
-        val cur = output.text.toString()
-        val idx = cur.lastIndexOf("\n")
-        val head = if (idx >= 0) cur.substring(0, idx + 1) else ""
-        output.text = Ansi.toSpannable(head + s)
+        try {
+            val cur = output.text
+            val sb = if (cur is android.text.SpannableStringBuilder) cur else android.text.SpannableStringBuilder(cur)
+            val idx = sb.toString().lastIndexOf("\n")
+            if (idx >= 0) sb.delete(idx, sb.length) else sb.clear()
+            sb.append(Ansi.toSpannable(s))
+            output.text = sb
+        } catch (_: Exception) {}
         scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
     }
 
     fun appendAnsi(s: String) {
         output.append(Ansi.toSpannable(s))
+        // PERFORMANTA: TextView-ul creste nelimitat -> la revenirea din background
+        // Android re-layout-uieste TOT textul (ecran negru + lag). Tinem doar ultimele
+        // MAX_UI_CHARS caractere, taiind din cap (spannable-ul ramane mic si rapid).
+        try {
+            val cur = output.text
+            if (cur.length > MAX_UI_CHARS) {
+                val keep = cur.subSequence(cur.length - MAX_UI_KEEP, cur.length)
+                output.text = android.text.SpannableStringBuilder(keep)
+            }
+        } catch (_: Exception) {}
 
         // butonul STOP: il ascund cand taskul s-a terminat
         if (btnStop.visibility == View.VISIBLE && (s.contains("TASK #") && (s.contains("done") || s.contains("interrupted")))) {
@@ -636,7 +638,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v111")
+        val stamp = File(filesDir, ".assets_v113")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
