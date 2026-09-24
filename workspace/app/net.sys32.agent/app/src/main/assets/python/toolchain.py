@@ -1084,7 +1084,17 @@ def _write_env_file():
         "export PREFIX={P}\n"
         "export TERMUX_PREFIX={P}\n"
         "export PATH=/data/local/tmp/wrap:{P}/bin:/system/bin:/system/xbin:$PATH\n"
-        "export LD_LIBRARY_PATH={L}:{B}:$LD_LIBRARY_PATH\n"
+        # ★ FIX LD_LIBRARY_PATH (raport real: screencap nu pornea din cauza toolchain-ului):
+        # `tpm/usr/lib` PRIMUL in LD_LIBRARY_PATH rupea TOATE binarele de sistem care se
+        # leaga dinamic - liblzma Termux 5.8.4 nu exporta `Xzs_Construct` (cerut de
+        # /system/lib64/libunwindstack.so), si libcrypto OpenSSL3 nu mai are
+        # `OpenSSL_add_all_algorithms` (cerut de /system/lib64/libsqlite.so).
+        # Consecinta: `screencap` => "CANNOT LINK EXECUTABLE ... cannot locate symbol".
+        # Solutie: NU poluam LD_LIBRARY_PATH al sesiunii. Il pastram DOAR in
+        # TC_LD_LIBRARY_PATH, pe care il folosesc wrapper-ele de compilare (wrap/clang*)
+        # si apelurile de build. Binarurile de sistem primesc astfel un LD_LIBRARY_PATH curat.
+        "export TC_LD_LIBRARY_PATH={L}:{B}:$LD_LIBRARY_PATH\n"
+        "export LD_LIBRARY_PATH=/system/lib64:/vendor/lib64\n"
         "unset LD_PRELOAD\n"
         "export SSL_CERT_FILE={P}/etc/tls/cert.pem\n"
         "export REQUESTS_CA_BUNDLE=$SSL_CERT_FILE\n"
