@@ -289,7 +289,19 @@ try:
           "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
 except Exception: pass
 os.chdir(WORK)              # everything the agent does (files, projects) lives here, persistently
-K=open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"key.txt")).read().strip()
+def _load_key():
+    """Cheia DeepSeek: din variabila de mediu DEEPSEEK_API_KEY (pasa de UI),
+    altfel din key.txt (langa agent.py SAU in HOME). NU crapa daca lipseste."""
+    for v in ("DEEPSEEK_API_KEY","DS_KEY","API_KEY"):
+        if os.environ.get(v,"").strip(): return os.environ[v].strip()
+    for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)),"key.txt"),
+              os.path.join(HOME_DIR,"key.txt")):
+        try:
+            t=open(p,encoding="utf-8").read().strip()
+            if t: return t
+        except Exception: pass
+    return ""
+K=_load_key()
 MEM=os.path.join(HOME_DIR,"memory.md")   # memoria sta in radacina (langa context.json)
 if not os.path.exists(MEM) and os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md")):
     try: open(MEM,"w",encoding="utf-8").write(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"memory.md"),encoding="utf-8").read())
@@ -375,12 +387,7 @@ def mem_lint(txt):
         (r"\b(bravo|excelent|grozav|perfect)\b", "praise"),
         (r"\b(ar trebui|e bine sa|pe viitor incearca)\b", "generic advice"),
         (r"^```|^def |^import ", "code/output dump"),
-        # NOT about this Android phone = not a memory lesson (desktop/CI/dev-environment knowledge)
-        (r"\b(openrouter|hermes|claude cli|auto-learn hook|gradle|systemd|tmux|git-bash|busybox|coreutils|"
-         r"debian|ubuntu|windows|win32|powershell|nvcc|cuda|docker|nginx|apt-get|pip install|npm|node_modules|"
-         r"/dev/video|wsl|macos|homebrew|kernel-header|dkms|sshpass|ansible|venv|site-packages|"
-         r"sudo|bash -lc|profile sourcing|login shell|non-login shell|/usr/bin/time)\b",
-         "not about this Android device (dev/desktop topic)"),
+        # (non-Android topics are now ALLOWED: the agent learns in every domain)
     ]
     out = []
     lines = [l.rstrip() for l in txt.split("\n") if l.strip()]
@@ -944,9 +951,6 @@ def mstats(s):
     nb=len([l for l in lines if not l.startswith(("#","<!--")) and (
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
-AUTOLEARN={"on":True,"min_steps":5}   # auto-learn after a finished task: ON by default, disable via /auto-learn off
-AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running INSIDE an Android app on a real phone (Samsung SM-A366B, Android 16, no root). You talk to the device through the android tool (reflection + native shortcuts, socket bridge to Kotlin) and through a POSIX shell (sh -c). Look at the task that just finished above and decide whether it taught you a REUSABLE fact about THIS PHONE. A lesson qualifies ONLY if it is BOTH (1) about the Android device itself - its services, APIs, permissions, reflection quirks, sensors, storage layout, SELinux limits, shell behaviour on this phone - AND (2) likely to change how you act on a FUTURE task here, not just describe what happened. Typical valid lessons: an API call that needs [\"ref\",\"ctx\"] or fails with a specific exception; an abstract class that must be subclassed via op=subclass; a service that returns null / a value that is misleading without root; an exact working chain of reflection calls; a feature PROVEN impossible for a normal app; a permission/SELinux boundary. NEVER save: generic software/desktop knowledge (bash vs bash -lc, BusyBox, OpenRouter, claude CLI, Gradle, systemd, Windows, other tools), paraphrases of the task, trivia about one specific device you scanned, or anything already in your memory snapshot. If the lesson would be equally true on a Linux desktop, or is not about interacting with THIS phone, it does NOT qualify. REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). Do NOT pad - a weak or obvious line is worse than none.    - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax `KEY: what -> cause -> fix/verify`, where KEY is one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 500 chars, no quotes, no markdown. Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time; skip obvious facts and one-off task artefacts.   - If there is genuinely NOTHING reusable or it is not Android-specific: reply with the single word: NO.")
-HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
     """The index of the last /learn request left in the history: everything before it has
@@ -979,13 +983,13 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: run SEVERAL small, independent operations in ONE call and get ONE consolidated answer. Use it whenever you need 2-6 quick reads/listings/stat-like steps that do NOT depend on each other: it costs ONE request instead of one per operation (each request re-sends the whole context, so batching is the single biggest cost saver). Keep each entry SMALL. Do NOT bundle heavy pipelines here: if an entry can crash or is long, use a normal per-step tool so a failure stays isolated and visible.","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}}]
 
-TOOLGUIDE=("TOOL SELECTION (you choose the engine yourself, do not waste steps): you have 3 engines. "
-  "1) `python`: run Python 3 code. Has the full stdlib PLUS pre-installed: requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve, python-dateutil, six, pyyaml, toml, packaging, typing-extensions. NO pip, you CANNOT install more (numpy/pandas/cryptography are NOT available - do not try). BEST for structured parsing (JSON/INI/KeyValues), logic, aggregations kept in memory, complex data structures, anything needing decisions. This is the default brain. "
-  "2) `bash`: run a shell command (grep/awk/sed/sort/uniq/wc/find/du/cut/xargs). BEST when the work is a TEXT STREAM or a SHELL PIPELINE over a big file: bash is measured ~1.3-1.6x faster than Python there and uses far less memory. "
-  "3) `smart`: the AUTO-ROUTER - give it both the shell cmd and the Python code and it picks the faster engine BY ITSELF using measured heuristics, then runs it. Use `smart` whenever you are unsure which is better; it prints which engine it chose and why. "
-  "RULE OF THUMB: data that FLOWS and simple logic -> bash; data that must be PARSED or REASONED about -> python; unsure -> smart. "
-  "Never pipe a huge file through python line by line if a single awk/grep does it; never parse JSON with grep when python json.loads is right there. "
-  "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - that was measured at 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
+TOOLGUIDE=("TOOL SELECTION (measured on THIS device, toybox on aarch64 - do not guess, the numbers below are real): you have 3 engines. "
+  "1) `python`: THE DEFAULT AND THE FASTEST ENGINE HERE for any computation. Full stdlib PLUS pre-installed: requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve, python-dateutil, six, pyyaml, toml, packaging, typing-extensions. NO pip, no numpy/pandas/cryptography. Python WINS BIG on this toybox build at: sorting (sorted/set: 36-95x faster than `sort`), aggregation and counting (Counter/dict: 3-4x faster than `awk`), text transform (str.upper/replace: 23-27x faster than `base64`/`sed`), all structured parsing (json.loads/yaml/toml), logic, and HTTP (requests.Session: 2.4x faster than repeated curl via connection keep-alive). Default to python for anything that is not a pure stream. "
+  "2) `bash`: ONLY for pure pass-through streaming over big files and for many-small-files work. It genuinely wins here at: grep -c / grep -m1 (early exit), wc, cat, head, tail, tr, sha256sum/md5sum (native C), find/du, and `ls glob | xargs -P8 ...` over thousands of small files. Cost: ~15ms process spawn. DO NOT use bash for sort/awk/sed/base64/cut|sort|uniq - on THIS toybox those are 3-95x SLOWER than the python equivalent. "
+  "3) `smart`: the AUTO-ROUTER - give it the shell cmd and/or the Python code and it picks the faster engine by itself from the measured rules above, then runs it. Use `smart` when unsure; it prints the engine and why. "
+  "RULE OF THUMB: data must be COMPUTED (sort/count/aggregate/transform/parse) -> python (king here); data only FLOWS through untouched or is read early-exited -> bash; thousands of small files in parallel -> bash with xargs -P. "
+  "Never use toybox sort/awk/sed on a big file: python is up to 95x faster. Never parse JSON with grep/awk: it is also WRONG (leaks values from escaped strings) - always python json.loads. "
+  "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
 
 # --- FORMATARE OUTPUT (Android: terminalul nu randeaza tabele corect) ---
 FMT=("OUTPUT FORMAT - ABSOLUTE RULES for this small phone screen: "
@@ -1066,7 +1070,13 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
   "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
   "FINAL MESSAGE: rendered as Markdown in a 256-colour terminal. You MAY use headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, > blockquote, --- rules, numbered/bulleted lists and fenced code blocks. BUT on this small phone screen NEVER use tables (no | pipes | rows, no |---| separators) and never ASCII boxes - present ALL structured data as plain lists, one item or `key: value` per line. Write the final answer in the SAME LANGUAGE the operator used in their last message, complete and well structured - if they wrote in English, reply in English; if in Romanian, reply in Romanian."}]
-CTX=os.path.join(HOME_DIR,CTXNAME)
+# CTX_PUB = the operator-visible copy on sdcard (FUSE); CTX = the FAST private copy actually written
+# on every step. os.replace() on FUSE costs ~15ms vs ~0.9ms in private storage (measured), and save_ctx
+# runs ~21 times per 10-step task -> writing private and mirroring rarely saves ~250ms per task.
+CTX_PUB=os.path.join(HOME_DIR,CTXNAME)
+CTX=os.path.join(_SANDBOX,CTXNAME) if _writable(_SANDBOX) else CTX_PUB
+CTX_MIRROR_EVERY=8          # mirror the private context to sdcard once every N saves (cheap, keeps it visible)
+_CTX_SAVES=[0]
 # --- migrare: muta context.json/memory.md din locatiile vechi (sandbox sau /sdcard/agent) ---
 def _migrate():
     import glob as _g
@@ -1094,19 +1104,40 @@ def _migrate_ctx():
     try: shutil.move(LEGACY,CTX)
     except Exception as e: print(R+" [context] could not move the old history into temp: "+str(e)+N)
 
-def save_ctx():
-    """Writes the conversation history (without the system message) to context.json,
-    via a temporary file + os.replace, so it does not get corrupted on an interruption."""
+def save_ctx(force_mirror=False):
+    """Writes the conversation history (without the system message) to context.json, via a temporary
+    file + os.replace, so it does not get corrupted on an interruption.
+    PERF: the atomic write goes to the FAST private copy (CTX, ~0.9ms replace); the operator-visible
+    copy on sdcard (CTX_PUB, FUSE, ~15ms replace) is mirrored only every CTX_MIRROR_EVERY saves or on
+    force_mirror (e.g. /exit, task end). Measured: ~250ms saved per 10-step task, output unchanged."""
     try:
         tmp=CTX+".tmp"
         with open(tmp,"w",encoding="utf-8") as f: json.dump(M[1:],f,ensure_ascii=False,indent=1)
         os.replace(tmp,CTX)
+        _CTX_SAVES[0]+=1
+        if CTX_PUB!=CTX and (force_mirror or _CTX_SAVES[0]%CTX_MIRROR_EVERY==0):
+            try:
+                ptmp=CTX_PUB+".tmp"
+                shutil.copyfile(CTX,ptmp); os.replace(ptmp,CTX_PUB)
+            except Exception: pass
     except Exception as e: print(R+" [context] could not save "+CTX+": "+str(e)+N)
+
+def ctx_mirror():
+    """Force the visible copy on sdcard to match the private one (called at /exit and task end)."""
+    if CTX_PUB==CTX: return
+    try:
+        ptmp=CTX_PUB+".tmp"
+        shutil.copyfile(CTX,ptmp); os.replace(ptmp,CTX_PUB)
+    except Exception: pass
 def load_ctx():
     """Reloads the history at startup. Tool messages left without a corresponding
     tool_call (e.g. a brutal shutdown) are dropped, otherwise the API rejects
     the conversation."""
     _migrate_ctx()
+    # if only the visible sdcard copy exists (fresh install / first run), seed the private one from it
+    if CTX_PUB!=CTX and not os.path.exists(CTX) and os.path.exists(CTX_PUB):
+        try: shutil.copyfile(CTX_PUB,CTX)
+        except Exception: pass
     try: hist=json.load(open(CTX,encoding="utf-8"))
     except FileNotFoundError: return 0
     except Exception as e:
@@ -1341,34 +1372,51 @@ PY_STRUCT = (r"\bjson\b", r"\bimport\s+json", r"json\.loads", r"json\.load\b", r
              r"re\.(findall|search|match|sub)", r"dict\(|defaultdict", r"\.get\(", r"\blambda\b",
              r"os\.walk", r"glob\.", r"shutil\.", r"struct\.", r"\bdataclass\b", r"yield\b",
              r"\btry:", r"\bexcept\b", r"\.items\(\)", r"\.keys\(\)", r"\.values\(\)")
-BASH_STREAM = (r"\bgrep\b", r"\bawk\b", r"\bsed\b", r"\bsort\b", r"\buniq\b", r"\bwc\b",
-               r"\bcut\b", r"\btail\b", r"\bhead\b", r"\bxargs\b", r"\bfind\b", r"\bdu\b",
-               r"\bdf\b", r"\brsync\b", r"\bzgrep\b", r"\btr\b", r"\bpaste\b", r"\bcomm\b",
-               r"\bjoin\b", r"\bflock\b", r"\bcomm\b", r"\bparallel\b", r"-P\s*\d", r"\|\s*\w+")
+# BASH_STREAM: ONLY the tools where toybox genuinely WINS on this device (measured):
+# pure pass-through streaming (cat/wc/head/tail/tr), early-exit search (grep -m1), native-C hashing,
+# filesystem walks (find/du/df), and parallel small-file work (xargs -P). NOT sort/awk/sed/cut/uniq/base64:
+# on this toybox build those are 3-95x SLOWER than the python equivalent, so they route to python.
+BASH_STREAM = (r"\bgrep\b", r"\bwc\b", r"\bcat\b", r"\bhead\b", r"\btail\b", r"\btr\b",
+               r"\bcut\b", r"\bxargs\b", r"\bfind\b", r"\bdu\b", r"\bdf\b", r"\brsync\b",
+               r"\bzgrep\b", r"\bsha256sum\b", r"\bmd5sum\b", r"\bpaste\b", r"\bparallel\b",
+               r"-P\s*\d", r"\bgrep\s+-[a-z]*c\b", r"\bgrep\s+-[a-z]*m\s*\d")
+# BASH_SLOW: toybox commands that LOOK like stream tools but are pathologically slow here -> force python.
+BASH_SLOW = (r"\bsort\b", r"\bawk\b", r"\bsed\b", r"\buniq\b", r"\bbase64\b", r"\bjoin\b")
 BASH_HEAVY = (r"\.log\b", r"/var/log", r">\s*\d{6,}", r"\bfor\s+\w+\s+in\b", r"\bseq\b")
 
 def route(cmd="", code=""):
-    """Decide engine = 'bash' sau 'python' pentru un task, pe baza a ce urmeaza sa se intample.
-    Intoarce (engine, why). Prioritatea: structura > stream > volum > implicit."""
+    """Decide engine = 'bash' or 'python' from what is about to happen, using the numbers measured
+    on THIS device (see BASH_STREAM / BASH_SLOW above). Priority: python-structure > toybox-slow >
+    pure-bash-stream > parallel-small-files > default python."""
     c = (cmd or "").strip()
     k = (code or "").strip()
     t = (c + "\n" + k).lower()
-    # 1) cod Python clar structurat -> python
+    # 0) an explicit python tool block always stays python
     py_hits = sum(1 for pat in PY_STRUCT if re.search(pat, k))
     if py_hits >= 2:
-        return "python", f"structured logic detected ({py_hits} python-structure signals): parsing/logic is where python wins (test 2: ~130x faster than bash)"
-    # 2) comanda shell de tip stream -> bash
+        return "python", f"structured logic detected ({py_hits} python-structure signals): parsing/logic is where python wins"
+    # 1) toybox tools that are pathologically slow here (sort/awk/sed/uniq/base64/join):
+    #    if the command ONLY uses those (plus trivial plumbing) python is the faster engine.
+    if c and re.search(r"\b(sort|awk|sed|uniq|base64|join)\b", c):
+        # unless the SAME command also leans on a true bash win (grep -m1 early exit / xargs -P)
+        if not (re.search(r"\bgrep\b", c) and re.search(r"-[a-z]*m\s*\d", c)) and not re.search(r"xargs[^|]*-P\s*\d", c) and not re.search(r"\bsha256sum\b|\bmd5sum\b", c):
+            _slow = [w for w in ("sort", "awk", "sed", "uniq", "base64", "join") if re.search(r"\b" + w + r"\b", c)]
+            return "python", f"toybox {','.join(_slow)} is 3-95x slower here than python -> overflow to python"
+    # 2) pure bash stream / early-exit / native-C hashing -> bash
     sh_hits = sum(1 for pat in BASH_STREAM if re.search(pat, c or k))
     heavy = any(re.search(pat, t) for pat in BASH_HEAVY)
     if c and sh_hits >= 1:
-        why = f"shell pipeline detected ({sh_hits} stream signals)"
-        if heavy: why += "; large/streamed data -> bash (test 3: 1.3-1.6x faster, far less memory)"
+        why = f"pure stream/early-exit detected ({sh_hits} bash-win signals)"
+        if heavy: why += "; large streamed data -> bash (less memory, native C)"
         return "bash", why
-    # 3) cod python pur dar cu semnale de stream (subprocess grep/awk in el) -> las python
+    # 3) many small files in parallel -> bash (xargs -P uses all cores)
+    if c and re.search(r"xargs", c) and re.search(r"-P\s*\d", c):
+        return "bash", "many small files in parallel -> bash xargs -P (all cores)"
+    # 4) mostly python-shaped (a single structure signal) -> python
     if py_hits == 1:
         return "python", "mostly python-shaped task (single structure signal)"
-    # 4) implicit: python (logic-safe)
-    return "python", "default: python (safe for logic; explicit `bash` for pure streams)"
+    # 5) default: python (the fastest engine on this device for anything not a pure stream)
+    return "python", "default: python (fastest here except pure streams; explicit `bash` for those)"
 
 def bash(cmd, cwd):
     """Ruleaza o comanda shell (bash -lc) in propriul grup de procese; Ctrl+C omoara doar acest
@@ -1428,35 +1476,22 @@ def run_read_tool(path, offset=0, limit=4000):
     return o
 
 def _looks_like_error(o):
-    """Cheap heuristic: does this tool output contain a FAILURE (traceback, non-zero exit, an
-    ERROR/EXCEPTION line)? Used ONLY by auto-learn to decide whether a task is worth learning from.
-    False positives are harmless (auto-learn then just asks the model, which may say NO)."""
+    """Cheap heuristic: does this tool output contain a FAILURE (traceback, a Python
+    Error/Exception, a shell failure, a denied/missing path)? Sets TASK['err'] so the
+    footer can show that a step failed. False positives are harmless."""
     if not o: return False
-    lo=o.lower()
+    lo = o.lower()
     if "traceback (most recent call last)" in lo: return True
-    if re.search(r"\b(error|exception|failed|non-zero exit status|command not found|no such file)\b", lo): return True
+    # Python exceptions: SyntaxError, ValueError, KeyError, OSError, ... (one token, no space)
+    if re.search(r"\b\w*(error|exception)\b", lo): return True
+    # shell / OS failures common on this device
+    if re.search(r"\b(failed|failure|denied|refused|unreachable|timeout|timed out|"
+                 r"non-zero exit status|exit status [1-9]|command not found|not found|"
+                 r"no such file|inaccessible|permission denied|operation not permitted|"
+                 r"errno|eacces|enoent|enospc|read-only file system|segmentation fault|"
+                 r"cannot (access|open|create|execute|stat)|unable to)\b", lo):
+        return True
     return False
-
-_ADBCLI=None
-# ============================================================================
-# GESTIONAR DE PROCESE IN FUNDAL (rezolva "output amestecat" / "procese uitate")
-#
-# Problema reala (din conversatie): agentul lansa build-uri cu `nohup ... &`,
-# apoi CITEACEA log-uri vechi crezand ca sunt actuale, sau nu stia ce procese
-# mai ruleaza -> "output amestecat", "log-ul e din configuratia veche",
-# "vechiul build inca rula in fundal". Cauza: nu exista un REGISTRU.
-#
-# Solutia: fiecare proces lansat prin `bg` primeste:
-#   - un JOB ID si un LOG cu timestamp (unic, imposibil de confundat)
-#   - o linie in /sdcard/Download/Agent/bg.json (registru persistent)
-#   - un PID (pentru liveness/kill)
-# Statusul se verifica prin `bg status` (vazut din registru, nu ghicit).
-# Orice log vechi e marcat ca atare (started/finished/duration).
-# ============================================================================
-
-BG_REG = "/sdcard/Download/Agent/bg.json"
-BG_LOG = "/data/local/tmp/bg"
-
 
 def _bg_load():
     try:
@@ -2057,7 +2092,7 @@ def run_toolchain_tool(a):
     return "actiune necunoscuta: " + action
 
 
-def ask(messages=None, tools=None):
+def ask(messages=None, tools=None, _timeout=600):
     _msgs = M if messages is None else messages
     _tools = T if tools is None else tools
     # ★ FIX: repara contextul invalid (assistant cu tool_calls fara raspuns tool).
@@ -2071,12 +2106,12 @@ def ask(messages=None, tools=None):
         pass
     r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":_msgs,"tools":_tools,"max_tokens":131072,"thinking":{"type":os.environ.get("DS_THINKING","disabled")}}).encode(),headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
     try:
-        d=json.loads(urllib.request.urlopen(r,timeout=600).read()); return d["choices"][0]["message"], d.get("usage")
+        d=json.loads(urllib.request.urlopen(r,timeout=_timeout).read()); return d["choices"][0]["message"], d.get("usage")
     except Exception as e:
         print(R+" [API] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]+N);return None,None
 def do_learn(trigger="/learn"):
-    """Shared /learn routine: used by the manual /learn command AND by auto-learn.
-    `trigger` is only a label shown in the task footer (e.g. '/learn' or 'auto-learn')."""
+    """The /learn routine: updates memory.md manually, on operator command.
+    `trigger` is only a label shown in the task footer (e.g. '/learn')."""
     prev=mem(); nprev=len(prev); lea=last_learn_idx(); li=len(M)
     _c,_t,_nb,_den=mstats(prev)
     M.append({"role":"user","content":LEARN_TAG+" The operator EXPLICITLY asks you to update your memory NOW.\n"
@@ -2174,8 +2209,9 @@ def do_learn(trigger="/learn"):
 
 
 # ======== ANTI-POISON v1 (patch 2026-09-24) ========
-# Context: pe 23 sept 2026 auto-learn a scris 4 lectii FALSE din 10, pentru ca a
-# rulat DUPA FIECARE task si a salvat IPOTEZE INTERMEDIARE ca si concluzii. Memoria
+# Context: pe 23 sept 2026 invatarea automata (de atunci eliminata) a scris 4 lectii
+# FALSE din 10, pentru ca a rulat DUPA FIECARE task si a salvat IPOTEZE INTERMEDIARE ca
+# si concluzii. Memoria
 # a ajuns sa se AUTO-CONTRAZICA ("dispatchGesture both fail" langa "dispatchGesture works").
 #
 # Acest bloc pune DOUA porti inainte de scrierea in memory.md:
@@ -2209,18 +2245,51 @@ TOPIC_RX = [r"accessibility", r"performGlobalAction", r"dispatchGesture", r"capa
             r"screencap", r"screenshot", r"canTakeScreenshot", r"read-only", r"keyevent",
             r"pendingintent", r"looper", r"threading", r"toolchain", r"numpy",
             r"reflection", r"subclass", r"adbsh", r"selinux", r"libpyexec", r"aapt2",
-            r"enabled_accessibility_services", r"settings put secure"]
+            r"enabled_accessibility_services", r"settings put secure",
+            r"rss", r"\bhttps?\b", r"endpoint", r"\bjson\b", r"\bhtml\b",
+            r"scraping", r"duckduckgo", r"blog\.google", r"github", r"cloud\.google",
+            r"ai\.google\.dev", r"huggingface", r"algolia", r"\bcors\b",
+            r"\bssl\b", r"\btls\b", r"certificat", r"timeout", r"rate.?limit", r"proxy",
+            r"beautifulsoup", r"elementtree", r"\bregex\b", r"parsare", r"parsez",
+            r"\bcsv\b", r"\bxml\b",
+            r"gemini", r"deepseek", r"\bgpt\b", r"claude", r"\bllm\b", r"token",
+            r"benchmark", r"deepswe", r"pricing", r"pret(ul|uri)?", r"\bcost\b",
+            r"\bbash\b", r"\bpython\b", r"\bawk\b", r"\bgrep\b", r"\bsed\b",
+            r"\bcurl\b", r"\brequests\b", r"\bwget\b", r"\bjq\b", r"\bgit\b"]
 OPPOSITE_RX = [
-    (r"\b(suspect|probably|se pare|maybe|likely|poate fi)\b.*\b(threading|Looper|issue|cause|cauza)\b",
-     r"\b(NU threading|nu e threading|platform-side|PendingIntent cancellation)\b"),
-    (r"\b(read-only|NU acorda permisiunea de actiune|missing capability|capabilities lack)\b",
-     r"\b(NOT a capability problem|not read-only|NU (e|este) capabilit|nu modifica configul)\b"),
-    # un verdict "read-only" e contrazis de ORICE lectie care spune explicit "not read-only"
-    # sau care dovedeste ca serviciul actioneaza (tap/gesture/merge).
-    (r"\b(read-only|nu acorda permisiunea)\b",
-     r"\b(TAP MERGE|dispatchGesture.*MERGE|actioneaza|reactiveaza|se leaga serviciul|NU e read-only)\b"),
-    (r"\bfix: add android:canTakeScreenshot\b", r"\bXML.*(compilat corect|e corect)\b"),
+    # --- WEB / HTTP: disponibilitate si raspuns ---
+    (r"\b(merge|functioneaza|intoarce 200|raspunde|e disponibil|accesibil|se parseaza|e parsabil)\b",
+     r"\b(nu merge|nu functioneaza|nu raspunde|esueaza|eroare|blocat|interzis|403|404|500|timeout|nu se poate parsa)\b"),
+    (r"\b(da 200|intoarce 200|raspunde cu 200)\b",
+     r"\b(da 4\d\d|da 5\d\d|404|403|500|eroare)\b"),
+    # --- AUTH: necesita cheie vs anonim ---
+    (r"\b(necesita|are nevoie de|cere)\b.{0,25}\b(api.?key|token|auth|autentificare)\b",
+     r"\b(fara (api.?key|token|auth)|anonim|merge anonim|nu necesita cheie)\b"),
+    # --- SCRAPING: HTML static vs necesita JS ---
+    (r"\b(html static|merge fara js|fara javascript)\b",
+     r"\b(necesita js|e un spa|javascript|html gol|content gol)\b"),
+    # --- EXISTENTA unei resurse ---
+    (r"\b(exista|e valabil|e activ)\b",
+     r"\b(nu exista|inexistent|a fost retras|retired|e sters)\b"),
+    # --- PRET (doar opus explicit) ---
+    (r"\b(ieftin|cost redus|low cost)\b",
+     r"\b(scump|cost ridicat|expensive)\b"),
+    # --- PERFORMANTA ---
+    (r"\b(mai bun|depaseste|bate |outperforms|cel mai bun|superior)\b",
+     r"\b(mai slab|in urma|pierde|inferior|nu atinge)\b"),
+    # --- SUPORT functionalitate ---
+    (r"\b(suporta|are suport|accepta)\b",
+     r"\b(nu suporta|nu accepta|nu permite|incompatibil|unsupported)\b"),
+    # --- VITEZA uneltelor ---
+    (r"\b(mai rapid|e rapid|performant|speedup)\b",
+     r"\b(mai lent|e lent|slow|incet)\b"),
 ]
+
+COND_RX = [r"\bfara\s+(LD_LIBRARY|PATH|variabil|env|root|permisiun|cheie|api|token|flag|optiun)",
+           r"\bcu\s+(LD_LIBRARY|PATH=|env|variabil|flag|optiun)",
+           r"\bdaca\s+", r"\bif\s+", r"\bcand\s+", r"\bwhen\s+",
+           r"\bwith(out)?\s+(LD_|PATH|env|root)", r"\bonly\s+(if|when)",
+           r"\bdoar\s+daca", r"\bnumai\s+daca"]
 
 def _q_topics(line):
     return set(rx for rx in TOPIC_RX if re.search(rx, line, re.I))
@@ -2246,7 +2315,7 @@ def _q_hedged(line):
         return True
     return False
 
-# O lectie META (despre auto-learn, despre memorie, despre o eroare proprie) NU e
+# O lectie META (despre /learn, despre memorie, despre o eroare proprie) NU e
 # o contradictie, chiar daca numeste subiecte si verdicturi. Fara exceptia asta,
 # lectiile despre anti-poison se blocheaza singure (observat 2026-09-24).
 META_RX = [r"\bauto-learn\b", r"\bmemory\.md\b", r"\bmemoria\b", r"\bmemorie\b",
@@ -2275,6 +2344,11 @@ def _q_contradicts(new_line, mem_text):
             continue
         if not (_q_topics(old) & nt):
             continue
+        # GUARD anti-conditional: "merge CU X" vs "esueaza FARA X" sunt complementare DOAR
+        # cand conditionalul e prezent in AMBELE linii (acelasi subiect, aceeasi conditie).
+        # Daca doar una e conditionata, conditiile difera -> poate fi contradictie reala.
+        if any(re.search(rx, new_line, re.I) for rx in COND_RX) and any(re.search(rx, old, re.I) for rx in COND_RX):
+            continue
         for a, b in OPPOSITE_RX:
             if (re.search(a, old, re.I) and re.search(b, new_line, re.I)) or (re.search(b, old, re.I) and re.search(a, new_line, re.I)):
                 return old.strip()
@@ -2299,133 +2373,19 @@ def quarantine(reason, lines):
         return False
 # ======== END ANTI-POISON v1 ========
 
-def auto_learn_check(task_steps, had_error, task_msgs=None):
-    """V4 hybrid auto-learn, run right AFTER a task finishes (only if AUTOLEARN['on']).
-    Filter (cheap): only bother on a non-trivial task - enough steps OR an error occurred.
-    Decision (model): ONE short call, no tools. The model replies EITHER "NO" (nothing reusable)
-    OR one dense lesson line (TRAP:/OK:/DEAD:/P:/PREVENT: ...). A valid, non-duplicate line is
-    APPENDED STRAIGHT TO MEMORY (no full re-analysis), so subtle lessons (a misleading command
-    without root, a working path, a proven dead end) are not lost. Anything unexpected falls
-    back to the old do_learn() path. Returns nothing; prints what it did. /auto-learn toggles."""
-    if not AUTOLEARN["on"]:
-        return
-    if task_steps < AUTOLEARN["min_steps"] and not had_error:
-        return   # task prea mic: iesim silentios (fara mesaj in output)
-    # DECIZIE: un singur mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
-    # la ce se refera "the task that just finished above" si raspunde NO orbește).
-    try:
-        _msgs = list(task_msgs) if task_msgs is not None else list(M)
-        _probe = ask(_msgs+[{"role":"user","content":AUTO_LEARN_PROMPT}], tools=[])
-    except Exception as e:
-        print(OF+"   [auto-learn] decision call failed ("+e.__class__.__name__+") - skipped."+N)
-        return
-    _raw = ""
-    try:
-        _raw = (((_probe[0] if _probe else None) or {}).get("content") or "").strip()
-    except Exception:
-        pass
-    if not _raw:
-        print(G+"   [auto-learn] decision call returned empty - skipped."+N)
-        return
-    # Noul format: fie "NO", fie UNA SAU MAI MULTE linii de lectie (TRAP:/OK:/DEAD:/P:/PREVENT:),
-    # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + Android).
-    _KEYS = ("TRAP:","OK:","DEAD:","P:","PREVENT:")
-    _cand = []
-    for _ln in _raw.split("\n"):
-        _ln = _ln.strip().strip("`").strip().strip('"').strip("'").strip()
-        _ln = " ".join(_ln.split())                      # colapseaza spatiile din interior
-        if not _ln: continue
-        if _ln.upper() == "NO": continue
-        # Limita 500: o lectie utila (TRAP cu cauza+fix) nu incape in 300. NU o mutila la
-        # mijloc de cuvant - taie doar la granita de propozitie, altfel pastreaza tot.
-        if len(_ln) > 500:
-            _cut = _ln[:500]
-            for _sep in (" -> ", ". ", "; ", ", "):
-                _p = _cut.rfind(_sep)
-                if _p > 200: _cut = _cut[:_p+len(_sep)]; break
-            _ln = _cut.rstrip(" ,;-")
-            while _ln.endswith("->"): _ln = _ln[:-2].rstrip(" ,;-")
-        if _ln.upper().startswith(tuple(k.upper() for k in _KEYS)):
-            _cand.append(_ln)
-    if not _cand:
-        # nimic valid: fie NO explicit, fie altceva
-        _flat = " ".join(_raw.split())
-        if _flat.upper() == "NO" or _flat.upper().startswith("NO "):
-            print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
-        elif _flat.upper().startswith("YES"):
-            print(G+"   [auto-learn] decision: YES (no explicit line) - running full do_learn()."+N)
-            do_learn("auto-learn")
-        else:
-            print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_flat[:80]+N)
-        return
-    # memorie existenta (pentru dedup)
-    try:
-        _mem = open(MEM, "r", encoding="utf-8").read() if 'MEM' in globals() else ""
-    except Exception:
-        _mem = ""
-    def _norm(x):
-        return "".join(x.lower().split())
-    _memnorm = _norm(_mem)
-    _tgt = MEM if 'MEM' in globals() else None
-    if not _tgt:
-        print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
-        do_learn("auto-learn"); return
-    _saved, _skipped = [], []
-    _q_blocked = []   # ANTI-POISON: lectii blocate -> carantina
-    for _ln in _cand:
-        # duplicat?
-        if _norm(_ln) in _memnorm:
-            _skipped.append(("duplicate", _ln)); continue
-        # validare stricta (format + Android + VALOARE)
-        try:
-            _issues, _ = mem_lint(_ln)
-        except Exception:
-            _issues = []
-        _why = None
-        for _w in _issues:
-            _txt = _w[1]
-            if _w[0] and _txt.strip() == _ln: _why = "too long"
-            elif _txt.startswith("forbidden"): _why = _txt.split("]:",1)[0].replace("forbidden [","")
-            elif _txt.startswith("low value"): _why = "low value"
-        if _why:
-            _skipped.append((_why, _ln)); continue
-        # --- ANTI-POISON: porti inainte de a scrie in memory.md ---
-        _qreason = None
-        if _q_hedged(_ln):
-            _qreason = "hedged/uncertain (marker de ipoteza)"
-        else:
-            _qold = _q_contradicts(_ln, _mem)
-            if _qold:
-                _qreason = "contradicts an existing lesson"
-        if _qreason:
-            _q_blocked.append((_qreason, _ln))
-            continue
 
-        _memnorm += _norm(_ln)
-    if _saved:
-        try:
-            with open(_tgt, "a", encoding="utf-8") as _f:
-                for _ln in _saved: _f.write("\n" + _ln + "\n")
-            print(G+"   [auto-learn] decision: YES - saved "+str(len(_saved))+" lesson(s):"+N)
-            if _q_blocked:
-                print(OF+"   [anti-poison] "+str(len(_q_blocked))+" lesson(s) QUARANTINED -> memory_quarantine.md"+N)
-                for _qr,_ql in _q_blocked: print(OF+"        ? ["+_qr+"] "+_ql[:100]+N)
-                quarantine("auto-learn", [_ql for _, _ql in _q_blocked])
-            for _ln in _saved: print(G+"        + "+_ln[:120]+N)
-        except Exception as e:
-            print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
-            do_learn("auto-learn"); return
-    for _why, _ln in _skipped:
-        print(OF+"   [auto-learn] skipped ("+_why+"): "+_ln[:90]+N)
-    if not _saved and not _skipped:
-        print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
 
 
 if __name__ == "__main__":
     if WATCH.get("on"):
         _watch_start()
+    # cheia poate fi scrisa de UI in key.txt DUPA pornirea procesului: reincarcam.
+    K=_load_key()
+    if not K:
+        print(N+"\n"+OF+"[key] lipsea cheia DeepSeek la pornire - o reincarc la prima cerere."+N)
     refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
-    ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
+    if K:
+        ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
     # --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
     def _ctr(txt, visible):
         return txt   # aliniat la stanga (cerut de operator)
@@ -2438,12 +2398,14 @@ if __name__ == "__main__":
         try: q=input(U+UPROMPT+IN).strip()
         except (EOFError,KeyboardInterrupt): print(N);break
         if q=="": continue          # blank line (extra newline from the UI) = no-op, do NOT quit the agent
+        if not K:
+            K=_load_key()
+            if not K:
+                print(N+OF+"[key] nu am cheia DeepSeek. Scrie-o in key.txt si reincearca."+N); continue
         if q in ("/exit","/quit"): break
         if q in ("/help","/?"):
-            _al="ON" if AUTOLEARN["on"] else "OFF"
             print(G+"   COMMANDS"+N)
             print(G+"     /learn              update memory now (manual learning)"+N)
-            print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
             print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
             print(G+"     /ctx                context window + archives/logs on disk"+N)
             print(G+"     /where             show where everything lives (workspace, memory, context, logs)"+N)
@@ -2560,15 +2522,9 @@ if __name__ == "__main__":
         if q=="/reset":
             M[:]=M[:1]; save_ctx()
             print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
-        if q.startswith("/auto-learn"):
-            arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
-            if arg in ("on","1","yes"):
-                AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
-            elif arg in ("off","0","no"):
-                AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
-            else:
-                print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
-            continue
+        if q.startswith("/auto-learn") or q.startswith("/autolearn"):
+            print(OF+"   [auto-learn] ELIMINAT - agentul nu mai invata singur dupa task."+N)
+            print(G+"   [auto-learn] memoria se actualizeaza DOAR manual, cu /learn."+N); continue
         if q=="/learn":
             do_learn("/learn"); continue
         # ★ FIX: daca task-ul anterior s-a oprit cu tool_calls fara raspuns (ex. operatorul
@@ -2611,7 +2567,6 @@ if __name__ == "__main__":
             else:
                 print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
                 print(_task_foot())
-                auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
                 flush_task_tokens()
                 break
         except KeyboardInterrupt:
@@ -2620,7 +2575,7 @@ if __name__ == "__main__":
             print(G+"   [Ctrl+C] stopped ONLY the current step. The tools run so far stay in the context (the agent knows where it stopped). /reset to make it forget the whole task."+N)
             while len(M)>mark and M[-1].get("role")=="assistant" and not M[-1].get("tool_calls"): M.pop()
             complete_pending(M);save_ctx(); print(_task_foot("interrupted by the operator")); flush_task_tokens(); continue
-    save_ctx()   # on /exit or Ctrl+D the history is already on disk
+    save_ctx(force_mirror=True)   # on /exit or Ctrl+D: also refresh the visible sdcard copy
 
     # ---- FIX: AAPT2 ignora folderele care incep cu "_" (ex: compression/_common) ----
     # Il recreem la runtime din compression/_streams_data.py (livrat ca fisier simplu).

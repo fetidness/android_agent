@@ -824,35 +824,6 @@ def mstats(s):
     nb=len([l for l in lines if not l.startswith(("#","<!--")) and (
         l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
-AUTOLEARN={"on":True,"min_steps":5}
-AL_TIMEOUT=int(os.environ.get("DS_AL_TIMEOUT","45"))   # auto-learn: max secunde de asteptare pentru decizie (nu blocheaza agentul)   # auto-learn after a finished task: off by default, opt-in via /auto-learn on
-AUTO_LEARN_PROMPT=("AUTO-LEARN CHECK. You are an autonomous agent running on a Linux desktop "
- "(this machine, headless shell, no GUI). You act through the python/bash/smart/look tools and can touch "
- "the whole filesystem and system. Look at the task that just finished above and decide whether it taught "
- "you a REUSABLE fact worth remembering. "
- "A lesson qualifies if it is (1) TRUE and generalisable (it will change how you act on a FUTURE task, "
- "not just describe what happened here) AND (2) DENSE (it carries a cause and a consequence, not a platitude). "
- "It may be about ANY domain: THIS machine and its tools (commands, flags, absolute paths, packages, "
- "kernel/proc behaviour, permissions, quirks of the tools available here), the web (http/RSS/APIs and their "
- "quirks, which endpoints work without auth), data extraction and parsing, the AI/LLM landscape (model names, "
- "prices, benchmark scores, provider behaviour), or general engineering practice that this task proved. "
- "But it must be a lesson, never a task artefact. "
- "Typical valid lessons: a command that gives a MISLEADING or EMPTY result without a flag/param; an exact "
- "working command or absolute path; something PROVEN not to work (dead end, wrong flag, wrong path); a "
- "public endpoint that answers without an API key; a price or benchmark figure that changes which model is "
- "the right choice; a non-obvious environment fact that constrains future commands; a mistake you made plus "
- "the exact fix. "
- "NEVER save: narration of what you just did, paraphrases of the task, one-off artefacts (a file you "
- "happened to create, the output of a single command), generic advice, praise, or anything already in your "
- "memory snapshot. A line that would be obvious to anyone is NOT a lesson. Quality over quantity: memory "
- "must stay dense. "
- "REPLY FORMAT: one lesson per line and NOTHING else (no preamble, no numbering, no markdown). "
- "Write as many lines as there are GENUINELY valuable independent lessons (usually 1, sometimes 2-3, often 0). "
- "Do NOT pad - a weak or obvious line is worse than none. "
- "  - Each lesson line: do NOT start with YES/NO; write it as a dense bullet, syntax "
- "`KEY: what -> cause -> fix/verify`, KEY one of TRAP:/OK:/DEAD:/P:/PREVENT:, max 500 chars, no markdown, no quotes. "
- "Only write a line if it has a CONSEQUENCE (the '->'): what to DO differently next time. "
- "  - If there is genuinely NOTHING reusable: reply with the single word: NO.")
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
 def last_learn_idx():
@@ -1115,12 +1086,8 @@ def run_bash_tool(cmd):
 
 def _looks_like_error(o):
     """Cheap heuristic: does this tool output contain a FAILURE (traceback, a Python
-    Error/Exception, a shell failure, a denied/missing path)? Used ONLY by auto-learn to
-    decide whether a task is worth learning from. False positives are harmless.
-    v2 (2026-09-24): the old version MISSED the most common failures - SyntaxError,
-    'Permission denied', 'inaccessible or not found', Errno - because it only matched the
-    bare words error/exception/failed/not found. A short task failing exactly that way
-    never triggered auto-learn at all."""
+    Error/Exception, a shell failure, a denied/missing path)? Sets TASK['err'] so the
+    footer can show that a step failed. False positives are harmless."""
     if not o: return False
     lo = o.lower()
     if "traceback (most recent call last)" in lo: return True
@@ -1250,23 +1217,9 @@ def ask(messages=None, tools=None, _timeout=600):
         print(R+" [API] "+e.__class__.__name__+": "+str(getattr(e,"read",lambda:b"")())[:300]+N);return None,None
 
 
-def ask_short(messages, timeout=None):
-    """Apel API SCURT, fara tools, cu timeout mic: folosit doar de auto-learn ca sa NU blocheze
-    agentul. Daca nu raspunde in timeout, intoarce (None,None) iar auto-learn renunta elegant."""
-    _to = AL_TIMEOUT if timeout is None else timeout
-    r=urllib.request.Request("https://api.deepseek.com/chat/completions",
-        data=json.dumps({"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":messages,
-        "tools":[],"max_tokens":2048,"thinking":{"type":"disabled"}}).encode(),
-        headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
-    try:
-        d=json.loads(urllib.request.urlopen(r,timeout=_to).read()); return d["choices"][0]["message"], d.get("usage")
-    except Exception as e:
-        print(R+" [auto-learn API] "+e.__class__.__name__+N); return None, None
-
-
 def do_learn(trigger="/learn"):
-    """Shared /learn routine: used by the manual /learn command AND by auto-learn.
-    `trigger` is only a label shown in the task footer (e.g. '/learn' or 'auto-learn')."""
+    """The /learn routine: updates memory.md manually, on operator command.
+    `trigger` is only a label shown in the task footer (e.g. '/learn')."""
     prev=mem(); nprev=len(prev); lea=last_learn_idx(); li=len(M)
     _c,_t,_nb,_den=mstats(prev)
     M.append({"role":"user","content":LEARN_TAG+" The operator EXPLICITLY asks you to update your memory NOW.\n"
@@ -1348,9 +1301,10 @@ def do_learn(trigger="/learn"):
 
 
 # ======== ANTI-POISON v1 (patch 2026-09-24) ========
-# Context: pe 23 sept 2026 auto-learn a scris 4 lectii FALSE din 10, pentru ca a
-# rulat DUPA FIECARE task si a salvat IPOTEZE INTERMEDIARE ca si concluzii. Memoria
-# a ajuns sa se AUTO-CONTRAZICA ("dispatchGesture both fail" langa "dispatchGesture works").
+# Context: pe 23 sept 2026 invatarea automata (de atunci eliminata) a scris 4 lectii
+# FALSE din 10, pentru ca a rulat DUPA FIECARE task si a salvat IPOTEZE INTERMEDIARE ca
+# si concluzii. Memoria a ajuns sa se AUTO-CONTRAZICA ("dispatchGesture both fail" langa
+# "dispatchGesture works"). Portile raman valabile si pentru /learn manual.
 #
 # Acest bloc pune DOUA porti inainte de scrierea in memory.md:
 #   (1) HEDGE  - lectia contine markeri de ipoteza (suspect/probably/Looper issue) -> carantina
@@ -1462,10 +1416,10 @@ def _q_hedged(line):
         return True
     return False
 
-# O lectie META (despre auto-learn, despre memorie, despre o eroare proprie) NU e
+# O lectie META (despre /learn, despre memorie, despre o eroare proprie) NU e
 # o contradictie, chiar daca numeste subiecte si verdicturi. Fara exceptia asta,
 # lectiile despre anti-poison se blocheaza singure (observat 2026-09-24).
-META_RX = [r"\bauto-learn\b", r"\bmemory\.md\b", r"\bmemoria\b", r"\bmemorie\b",
+META_RX = [r"\bauto-learn\b", r"\b/learn\b", r"\bmemory\.md\b", r"\bmemoria\b", r"\bmemorie\b",
            r"\bpoarta anti", r"\blegitii false\b", r"\blectii false\b", r"\bauto-contrazic",
            r"\bscrie lectii\b", r"\bgeneralizeaz", r"\bconcluzia gresita\b",
            r"\bacumuleaz", r"\bcontradictorii\b", r"\bverifica daca contrazice\b"]
@@ -1519,215 +1473,7 @@ def quarantine(reason, lines):
 # ======== END ANTI-POISON v1 ========
 
 
-# --- auto-learn trace log (2026-09-24) -------------------------------------
-# Fara asta auto-learn era o cutie neagra: daca nu scria in memory.md nu puteai sti
-# daca (a) nu a rulat, (b) a raspuns NO, (c) a picat pe porti sau (d) a scris dar a
-# esuat. Fiecare punct de decizie scrie acum o linie cu timestamp in AL_LOG.
-HOME_DIR = os.path.dirname(os.path.abspath(__file__))   # fix: variabila necesara pentru AL_LOG (lipsea la portarea din Android)
-AL_LOG = os.path.join(HOME_DIR, "auto_learn.log")
-
-def al_log(kind, msg=""):
-    try:
-        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(AL_LOG, "a", encoding="utf-8") as f:
-            f.write(ts + " [" + kind + "] " + str(msg)[:300] + "\n")
-    except Exception:
-        pass
-
-def al_rotate():
-    """Pastreaza logul la max ~200KB (ultimele 2000 linii)."""
-    try:
-        if os.path.exists(AL_LOG) and os.path.getsize(AL_LOG) > 200000:
-            with open(AL_LOG, encoding="utf-8") as f:
-                tail = f.readlines()[-2000:]
-            with open(AL_LOG, "w", encoding="utf-8") as f:
-                f.writelines(tail)
-    except Exception:
-        pass
-
-def al_compact_msgs(msgs, keep_tail=6, max_chars=400):
-    """Payload REDUS pentru apelul de decizie al auto-learn.
-    Istoric: (1) trimitea TOT istoricul -> lent/blocat la timeout=600s; (2) rescria
-    mesajele doar ca {role,content} -> pierdea tool_call_id -> API 'missing field
-    tool_call_id'; (3) sanitizarea scotea tool-urile orfane DAR lasa in urma
-    assistant(tool_calls) fara tool -> API 'insufficient tool messages following
-    tool_calls message'. REGULA FINALA: un payload valid cere ca ORICE assistant cu
-    tool_calls sa fie urmat de un mesaj 'tool' pentru fiecare id."""
-    try:
-        if not msgs: return []
-        src = list(msgs) if len(msgs) <= keep_tail else (
-            [dict(m, content=str(m.get("content") or "")[:max_chars]) for m in msgs[:-keep_tail]]
-            + [{"role": "user", "content": "(... restul pasilor, deja rezumati mai sus ...)"}]
-            + list(msgs[-keep_tail:]))
-        out = []
-        for n, m in enumerate(src):
-            r = m.get("role")
-            if r == "assistant" and m.get("tool_calls"):
-                ids = [tc.get("id") for tc in m["tool_calls"] if tc.get("id")]
-                have = []
-                k = n + 1
-                while k < len(src) and src[k].get("role") == "tool":
-                    if src[k].get("tool_call_id"): have.append(src[k]["tool_call_id"])
-                    k += 1
-                if ids and all(i in have for i in ids):
-                    out.append({"role": "assistant", "content": str(m.get("content") or "")[:max_chars],
-                                "tool_calls": m["tool_calls"]})
-                else:
-                    txt = (str(m.get("content") or "") + " [a chemat tool-uri, raspunsurile au fost omise]").strip()
-                    out.append({"role": "assistant", "content": txt[:max_chars]})
-            elif r == "tool":
-                prev = out[-1] if out else None
-                if prev and prev.get("role") == "assistant" and prev.get("tool_calls"):
-                    if any(tc.get("id") == m.get("tool_call_id") for tc in prev["tool_calls"]):
-                        out.append({"role": "tool", "tool_call_id": m.get("tool_call_id"),
-                                    "content": str(m.get("content") or "")[:max_chars]})
-            else:
-                out.append({"role": m.get("role"), "content": str(m.get("content") or "")[:max_chars]})
-        return out
-    except Exception:
-        return list(msgs)
-# --- end auto-learn trace log ----------------------------------------------
-
-def auto_learn_check(task_steps, had_error, task_msgs=None):
-    """V4 hybrid auto-learn, run right AFTER a task finishes (only if AUTOLEARN['on']).
-    Filter (cheap): only bother on a non-trivial task - enough steps OR an error occurred.
-    Decision (model): ONE short call (no tools, WITH the task history so it knows what just happened).
-    The model replies EITHER "NO" OR one or more dense lesson lines (TRAP:/OK:/DEAD:/P:/PREVENT:).
-    Each candidate line goes INDIVIDUALLY through mem_lint (format + value + dedup); the accepted
-    lines are APPENDED STRAIGHT TO MEMORY (no full re-analysis). Anything unexpected falls back to
-    do_learn(). A SHORT timeout means auto-learn can never block the agent. /auto-learn toggles."""
-    if not AUTOLEARN["on"]:
-        al_log("SKIP", "auto-learn OFF")
-        return
-    if task_steps < AUTOLEARN["min_steps"] and not had_error:
-        al_log("SKIP", "task prea mic: steps=%s min=%s err=%s" % (task_steps, AUTOLEARN["min_steps"], had_error))
-        return   # task prea mic: iesim silentios (fara mesaj in output)
-    al_rotate()
-    al_log("START", "steps=%s had_error=%s" % (task_steps, had_error))
-    # DECIZIE: un mesaj, FARA tools, dar CU istoricul taskului (altfel modelul nu vede
-    # la ce se refera "the task that just finished above" si raspunde NO orbestte).
-    # TIMEOUT SCURT: auto-learn NU trebuie sa blocheze agentul. Daca API-ul e lent, renuntam
-    # elegant (taskul e deja terminat, memoria ramane neatinse).
-    try:
-        _msgs = al_compact_msgs(list(task_msgs) if task_msgs is not None else list(M))
-        _tn0 = time.time()
-        al_log("CALL", "payload=%s msgs, timeout=%ss" % (len(_msgs), AL_TIMEOUT))
-        _probe, _u = ask_short(_msgs+[{"role":"user","content":AUTO_LEARN_PROMPT}], timeout=60)
-        al_log("CALL-OK", "%.1fs" % (time.time()-_tn0))
-    except Exception as e:
-        _en = e.__class__.__name__
-        print(OF+"   [auto-learn] decision call failed ("+_en+") - skipped."+N)
-        al_log("TIMEOUT" if "timeout" in _en.lower() or "timed out" in str(e).lower() else "ERR",
-               _en + " " + str(e)[:150])
-        return
-    _raw = ""
-    try:
-        _raw = (((_probe if _probe else None) or {}).get("content") or "").strip()
-    except Exception:
-        pass
-    if not _raw:
-        print(G+"   [auto-learn] decision call returned empty - skipped."+N)
-        al_log("EMPTY", "modelul a raspuns gol")
-        return
-    # Noul format: fie "NO", fie UNA SAU MAI MULTE linii de lectie (TRAP:/OK:/DEAD:/P:/PREVENT:),
-    # cate una pe linie. Fiecare linie trece INDIVIDUAL prin mem_lint (valoare + format + dedup).
-    _KEYS = ("TRAP:","OK:","DEAD:","P:","PREVENT:")
-    _cand = []
-    for _ln in _raw.split("\n"):
-        _ln = _ln.strip().strip("`").strip().strip('"').strip("'").strip()
-        _ln = " ".join(_ln.split())                      # colapseaza spatiile din interior
-        if not _ln: continue
-        if _ln.upper() == "NO": continue
-        # Limita 500: o lectie utila (TRAP cu cauza+fix) nu incape in 300. NU o mutila la
-        # mijloc de cuvant - taie doar la granita de propozitie, altfel pastreaza tot.
-        if len(_ln) > 500:
-            _cut = _ln[:500]
-            for _sep in (" -> ", ". ", "; ", ", "):
-                _p = _cut.rfind(_sep)
-                if _p > 200: _cut = _cut[:_p+len(_sep)]; break
-            _ln = _cut.rstrip(" ,;-")
-            while _ln.endswith("->"): _ln = _ln[:-2].rstrip(" ,;-")
-        if _ln.upper().startswith(tuple(k.upper() for k in _KEYS)):
-            _cand.append(_ln)
-    if not _cand:
-        # nimic valid: fie NO explicit, fie altceva
-        _flat = " ".join(_raw.split())
-        if _flat.upper() == "NO" or _flat.upper().startswith("NO "):
-            print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
-            al_log("NO", "modelul a raspuns NO")
-        elif _flat.upper().startswith("YES"):
-            print(G+"   [auto-learn] decision: YES (no explicit line) - running full do_learn()."+N)
-            al_log("YES-FALLBACK", "YES fara linie explicita -> do_learn()")
-            do_learn("auto-learn")
-        else:
-            print(G+"   [auto-learn] decision: unrecognised reply - skipped. Got: "+_flat[:80]+N)
-            al_log("UNRECOGNISED", _flat[:150])
-        return
-    # memorie existenta (pentru dedup)
-    try:
-        _mem = open(MEM, "r", encoding="utf-8").read() if 'MEM' in globals() else ""
-    except Exception:
-        _mem = ""
-    def _norm(x):
-        return "".join(x.lower().split())
-    _memnorm = _norm(_mem)
-    _tgt = MEM if 'MEM' in globals() else None
-    if not _tgt:
-        print(OF+"   [auto-learn] memory path unknown - falling back to do_learn()."+N)
-        do_learn("auto-learn"); return
-    _saved, _skipped = [], []
-    _q_blocked = []   # ANTI-POISON: lectii blocate -> carantina
-    for _ln in _cand:
-        # duplicat?
-        if _norm(_ln) in _memnorm:
-            _skipped.append(("duplicate", _ln)); continue
-        # validare stricta (format + VALOARE)
-        try:
-            _issues, _ = mem_lint("## auto (session)\n"+_ln+"\n")
-        except Exception:
-            _issues = []
-        _why = None
-        for _w in _issues:
-            _txt = _w[1]
-            if _txt.startswith("forbidden"): _why = _txt.split("]:",1)[0].replace("forbidden [","")
-            elif _txt.startswith("low value"): _why = "low value"
-            elif _txt.startswith("no valid prefix"): _why = "no prefix"
-        if _why:
-            _skipped.append((_why, _ln)); continue
-        # --- ANTI-POISON: porti inainte de a scrie in memory.md ---
-        _qreason = None
-        if _q_hedged(_ln):
-            _qreason = "hedged/uncertain (marker de ipoteza)"
-        else:
-            _qold = _q_contradicts(_ln, _mem)
-            if _qold:
-                _qreason = "contradicts an existing lesson"
-        if _qreason:
-            _q_blocked.append((_qreason, _ln))
-            continue
-
-        _memnorm += _norm(_ln)
-    if _saved:
-        try:
-            with open(_tgt, "a", encoding="utf-8") as _f:
-                for _ln in _saved: _f.write("\n" + _ln + "\n")
-            print(G+"   [auto-learn] decision: YES - saved "+str(len(_saved))+" lesson(s):"+N)
-            al_log("SAVED", "%s lectii: %s" % (len(_saved), " || ".join(_saved)[:220]))
-            if _q_blocked:
-                print(OF+"   [anti-poison] "+str(len(_q_blocked))+" lesson(s) QUARANTINED -> memory_quarantine.md"+N)
-                al_log("QUARANTINE", "%s lectii: %s" % (len(_q_blocked), " || ".join(x[1] for x in _q_blocked)[:200]))
-                for _qr,_ql in _q_blocked: print(OF+"        ? ["+_qr+"] "+_ql[:100]+N)
-                quarantine("auto-learn", [_ql for _, _ql in _q_blocked])
-            for _ln in _saved: print(G+"        + "+_ln[:120]+N)
-        except Exception as e:
-            print(OF+"   [auto-learn] write failed ("+e.__class__.__name__+") - falling back to do_learn()."+N)
-            al_log("WRITE-FAIL", e.__class__.__name__ + " " + str(e)[:150])
-            do_learn("auto-learn"); return
-    for _why, _ln in _skipped:
-        print(OF+"   [auto-learn] skipped ("+_why+"): "+_ln[:90]+N)
-    if not _saved and not _skipped:
-        print(G+"   [auto-learn] decision: NO - nothing reusable was learned, memory untouched."+N)
-
+HOME_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if __name__ == "__main__":
     if WATCH.get("on"):
@@ -1735,16 +1481,14 @@ if __name__ == "__main__":
     refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
     ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
     print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
-    print(G+"   "+HINT_LINE+"  ·  commands like /learn, /auto-learn on, /ctx, /compact, /verbose, /watch, /reset, /exit"+N+"\n")
+    print(G+"   "+HINT_LINE+"  ·  commands like /learn, /ctx, /compact, /verbose, /watch, /reset, /exit"+N+"\n")
     while 1:
         try: q=input(U+" TU > "+IN).strip()
         except (EOFError,KeyboardInterrupt): print(N);break
         if q in ("/exit","/quit",""): break
         if q in ("/help","/?"):
-            _al="ON" if AUTOLEARN["on"] else "OFF"
             print(G+"   COMMANDS"+N)
             print(G+"     /learn              update memory now (manual learning)"+N)
-            print(G+"     /auto-learn on|off  learn BY ITSELF after each finished task (now: "+_al+", min "+str(AUTOLEARN["min_steps"])+" steps)"+N)
             print(G+"     /mem                show memory stats (size, bullets, density, lint)"+N)
             print(G+"     /ctx                context window + archives/logs on disk"+N)
             print(G+"     /compact            (disabled) context is never compressed - memory stays intact until /reset"+N)
@@ -1785,15 +1529,9 @@ if __name__ == "__main__":
         if q=="/reset":
             M[:]=M[:1]; save_ctx()
             print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
-        if q.startswith("/auto-learn"):
-            arg=q.split(None,1)[1].strip().lower() if len(q.split(None,1))>1 else ""
-            if arg in ("on","1","yes"):
-                AUTOLEARN["on"]=True;  print(G+"   [auto-learn] ON - after each finished task I decide myself whether to update memory."+N)
-            elif arg in ("off","0","no"):
-                AUTOLEARN["on"]=False; print(G+"   [auto-learn] OFF - learning only via the manual /learn command."+N)
-            else:
-                print(G+"   [auto-learn] currently "+(("ON" if AUTOLEARN["on"] else "OFF"))+" - use /auto-learn on|off"+N)
-            continue
+        if q.startswith("/auto-learn") or q.startswith("/autolearn"):
+            print(OF+"   [auto-learn] ELIMINAT - agentul nu mai invata singur dupa task."+N)
+            print(G+"   [auto-learn] memoria se actualizeaza DOAR manual, cu /learn."+N); continue
         if q=="/learn":
             do_learn("/learn"); continue
         M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0
@@ -1827,7 +1565,6 @@ if __name__ == "__main__":
             else:
                 print("\n"+C+"AGENT >"+N+"\n"+render((m.get("content") or "").strip())+"\n")
                 print(_task_foot())
-                auto_learn_check(TASK["steps"], TASK["err"], M[mark:])
                 flush_task_tokens()
                 break
         except KeyboardInterrupt:

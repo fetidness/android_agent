@@ -1,4 +1,3 @@
-
 P: `open` CLI on Linux reports ENXIO "No such device" for `/dev/video*` even when device exists -> wrapper lacks V4L2 support -> verify with `v4l2-ctl --list-devices` or `ls -l` instead
 
 DEAD: curl to external IP without a resolved proxy env var returns empty body silently -> no CONNECT/proxy set -> verify with curl -v showing "Connection refused", set HTTPS_PROXY=http://127.0.0.1:PORT or use a reachable host
@@ -26,7 +25,6 @@ P: /usr/bin/time -v gives max RSS and exit status but writes stats to stderr, so
 TRAP: bare GPU/OS probes (nvidia-smi, systemctl, ip, docker info) can return empty/partial data when run without needed privileges or env -> agent may wrongly conclude hardware/service absent -> re-run with sudo/full path or check exit code and stderr.
 
 ## 2026-09-19 - android/cpython build + agent port (session: /home/gab/Desktop/agent/workspace)
-- P: /home/gab/Desktop/agent/workspace/build/Python-3.14.7/cross-build/{aarch64,x86_64}-linux-android/prefix -> CPython 3.14.7 compilat de noi pentru Android (aarch64=telefon, x86_64=emulator)
 - OK: CPython 3.14 are suport Android OFICIAL in sursa (Python-3.14.7/Android/android.py) -> `./android.py configure-build; make-build; configure-host HOST; make-host HOST` sau `./android.py build aarch64-linux-android` (rc=0, ~50-85s/faza); HOST valid: aarch64-linux-android, x86_64-linux-android
 - OK: binarul produs de android.py e Android nativ: ELF ARM aarch64, interpreter /system/bin/linker64, for Android 24 -> NU trebuie cross-toolchain manual
 - TRAP: `./android.py configure-build` eșuează fără host tools -> lipsesc autoconf/pkg-config/cmake -> `sudo apt-get install -y build-essential pkg-config autoconf libssl-dev zlib1g-dev libffi-dev libsqlite3-dev libreadline-dev libbz2-dev liblzma-dev libgdbm-dev libncurses-dev`
@@ -60,7 +58,6 @@ OK: In bash, `set -e` + command substitution in conditionals can mask failures -
 - OK: tastatura nu acopera input-ul -> manifest `android:windowSoftInputMode=adjustResize|stateUnchanged` + `WindowCompat.setDecorFitsSystemWindows(window,false)` + padding bottom=maxOf(bars.bottom, ime.bottom)
 - OK: culori ANSI in TextView -> clasa Ansi.kt convertește SGR in Spannable (30-37/90-97/38;5;N/38;2;R;G;B, bold/italic/underline/strike); paleta 16 culori stil One Dark pe fundal #0D1117
 - OK: scroll terminal cu auto-follow -> flag autoScroll=(child.bottom-scroll.height-scrollY<=24), buton flotant ⇩ cand user deruleaza sus; `programmaticScroll` previne bucla listener-ului
-- P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent -> proiect Gradle app agent (net.sys32.agent); build: ./gradlew assembleDebug sau ./app/build_app.sh
 - OK: acces generic Android fara root -> AndroidBridge.kt TCP 127.0.0.1:<port> + Reflection.kt (`Class.forName`+invoke); op: call/new/get/set/info/services/free/objs; targets svc:NUME|class:FQCN|obj:ID|ctx|app|str:|int:
 - OK: portul bridge-ului -> scris in files/bridge.port SI files/home/bridge.port (python il cauta in HOME); protocol = o linie JSON pe cerere -> o linie JSON raspuns
 - TRAP: unele `Context.X_SERVICE` NU exista in SDK public (WEARABLE_SERVICE, CAST_SERVICE, AUTOFILL_SERVICE, COUNTRY_DETECTOR, NETWORK_POLICY_SERVICE, STATUSBAR_SERVICE, SENSOR_PRIVACY_SERVICE, TRANSLATION_SERVICE) -> compilare esueaza `Unresolved reference` -> foloseste string-uri literale ("sensor","wifi","statusbar")
@@ -209,8 +206,6 @@ TRAP: `git log -1 --format=%cd` in shallow clone shows only tip date, not repo a
 
 TRAP: `cat /proc/net/dev` without root works but reading `/proc/<pid>/net/dev` needs PTRACE/root -> misleading empty/permission result -> use root or `/proc/net/dev` for interface stats.
 
-P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/site-packages/ -> biblioteci pure-Python (requests, bs4, yaml, toml, packaging) descarcate de pe PyPI pentru agentul Android; puse aici ajung pe device in pyhome/lib/python3.14/site-packages
-
 TRAP: folderele care incep cu `_` sunt IGNORATE la impachetare in assets Android (AAPT2) -> zipfile/_path/ nu ajungea in APK desi exista in sursa -> livrez pachetul ca fisier simplu _path.py, nu ca director
 
 OK: script de copiere care itereaza doar os.listdir() pe directoare rateaza fisierele .py de la radacina unui wheel (ex six.py) -> copiaza explicit si fisierele, nu doar folderele
@@ -273,8 +268,6 @@ OK: AccessibilityService e calea corecta pentru citit/tastat/apasat in alte app-
 
 TRAP: `ui read` cu depth=4-8 întoarce doar scheletul (action_bar, RecyclerView) fara itemi -> nodurile reale sunt adanci -> foloseste depth=40 max=2000 ca sa vezi textele/butoanele.
 
-P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/java/net/sys32/agent/AgentAccessibilityService.kt -> serviciul de accessibility (read/settext/click/gesture/global); AndroidBridge.kt tool "ui" il cheama prin instance; config in res/xml/accessibility_service_config.xml.
-
 TRAP: `input keyevent/text` din shell-ul aplicatiei da `Failed transaction (2147483646)` sau SecurityException INJECT_EVENTS -> app ruleaza ca untrusted_app -> din adb shell (user shell) merge (exit=0); pe device ne-rootat foloseste AccessibilityService, nu `input`.
 
 TRAP: `git commit -m` cu mesaj ce contine backtick-uri (ex. "tool `ui`") -> bash -lc executa textul dintre backtick-uri ("ui: command not found"), desi commit-ul reuseste -> scrie mesajul intr-un fisier si foloseste `git commit -F fisier
@@ -296,8 +289,6 @@ TRAP: reconstruirea/instalarea APK-ului DEZACTIVEAZA serviciul de accessibility 
 TRAP: `ui read` pe Android returna JSON brut cu toate metadatele pe fiecare nod (~120 chars zgomot pentru 3 chars text) -> ecran WhatsApp 8500+ chars trunchiat la 8000, informatia cautata la poz 6375 -> foloseste read compact (lista text `[n] Cls id=x "text" @[x,y]`) si action=find <text> pentru cau
 
 TRAP: un agent care cauta un contact prin UI si nu-l gaseste in arborele de accesibilitate -> poate rata ca datele ERAU in raspuns dar ingropate in zgomot -> inainte de a declara "nu exista", verifica cu find <text> sau read compact, nu trage concluzia din JSON trunchiat
-
-P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/assets/python/agent.py -> agentul Python din APK (assets vN se re-extragg pe device la .assets_vN din MainActivity) -> la orice schimbare de assets INCREMENTEAZA versiunea sau ramane copia veche
 
 OK: testare Android fara laptop prin tunel adb -> bridge-ul raspunde via `adb shell 'echo -n <json> | nc 127.0.0.1 <port>'` (port din files/bridge.port) -> functioneaza chiar si cu ecranul blocat, spre deosebire de adb forward care moare in Doze
 
@@ -336,8 +327,6 @@ P: ADB wireless debugging state on this Android (RZGL102X5AT) is live: adbd list
 OK: /data/local/tmp/adbkey.pub on this device is world-readable (mode 666) and readable by an app via adb shell run-as -> the public key can be read from an app, but the PRIVATE key ~/.android/adbkey stays on the laptop, so an app cannot self-authenticate to adbd; ADB must come from outside.
 
 OK: adb reverse tcp:9500 tcp:9500 works over UsbFfs on this device -> any privileged command can be tunneled to an app on 127.0.0.1:9500, giving uid=shell (2000) rights (pm grant, dumpsys, input, settings put, run-as all confirmed working) without root.
-
-TRAP: `adb shell run-as <pkg> env ... <path-in-filesDir>.py` -> SELinux denies exec of scripts in app filesDir ("Permission denied") -> run the script via `run-as <pkg> sh -c 'export ...; exec $LIBDIR/libpyexec.so $F/script.py'` instead.
 
 TRAP: `adb -s <serial> reverse --list` can print `UsbFfs tcp:N tcp:N` (device<->host reverse) while a same-port entry also shows in device `/proc/net/tcp` LISTEN, so port collisions with planned adb-reverse ports (e.g. 9500) must be checked via `adb reverse --list` AND `adb shell cat /proc/net/tcp | grep <hex>` before hardcoding one.
 
@@ -457,8 +446,6 @@ DEAD: python cryptography nu e instalat pe acest Linux (ImportError) -> nu te ba
 
 OK: adb server (this machine) autorizează per public-key fingerprint, nu per device -> cheia generată de o altă aplicație/agent (alt fingerprint) declanșează din nou dialogul Allow USB debugging chiar dacă laptopul e deja autorizat; verifică cu `dumpsys adb | grep last_key_received` și compară amprenta SHA256 a cheii trimise.
 
-TRAP: `adb shell run-as <pkg> ls -la <dir>/prefix*` nu expandează glob (nu e shell interactiv) -> întoarce "No such file"; verifică existența fișierelor cu `run-as <pkg> ls <full-path>` per fișier sau `ls <dir>/` fără wildcard.
-
 DEAD: adb USB-authorization for an unauthorized device cannot be bypassed from an app on the phone itself (dumpsys adb shows user_keys holds only the laptop key; app-process adbd is sandboxed SELinux and adbd refuses its key) -> don't retry adb shell am start / libadb_pairing_connection tricks to become authorized; the only path is the Wireless debugging pairing-code flow, which needs a live 6-digit code from the on-screen dialog.
 
 OK: /home/gab/android/platform-tools/adb is the working adb binary on this box; device serial RZGL102X5AT is reachable via adb -s -> use it directly instead of hunting for adb elsewhere.
@@ -533,10 +520,6 @@ TRAP: resolving a device's own mobile IP with `ip route get <remote>` returns "v
 
 TRAP: `adb -s <serial> exec-out run-as <pkg> cat <file>` intoarce 0 bytes desi fisierul exista -> exec-out+run-as+cat e fragil pe Samsung -> foloseste `adb shell run-as <pkg> cat <file>` sau `head -25`/`grep -n` in loc de cat.
 
-DEAD: `adb shell run-as <pkg> grep -n '...' <file>` cu pattern-uri multi-alternativa intoarce gol desi `head` pe acelasi fisier arata continut -> grep+run-as pe Android e nesigur -> verifica cu `head`/`sed` direct.
-
-P: /home/gab/android/platform-tools/adb este binarul adb folosit pe acest desktop (nu `adb` din PATH) -> foloseste calea absoluta in scripturi.
-
 TRAP: cand USB-ul e instabil, `adb -s <serial>` da "device not found" si apoi "unauthorized" -> repornirea adbd/Telefon re-apare cu "device" dupa ~25s -> pune retry cu poll pe `adb devices` inainte sa conchizi ca tool-ul nu merge.
 
 DEAD: adb wireless debugging port 6100 stays ESTABLISHED to remote 10.0.0.2 and survives even `adb kill-server` + `settings put global adb_wifi_enabled 0` -> not the local host's own adb; to free the port requires phone reboot or revoking debug authorizations, agent can't kill it via shell.
@@ -560,8 +543,6 @@ OK: check which uid owns an ADB listen port on the phone via getprop/adb shell `
 DEAD: Wireshark on this Linux desktop cannot capture the Android USB/adb tcp:5555 loopback traffic -> loopback iface and Android-internal sockets are not visible to host capture -> use `adb -s RZGL102X5AT shell` / dumpsys directly instead of host packet capture.
 
 OK: real adbd process state on Android is readable via `adb shell ps -A | grep adbd` and `adb shell getprop service.adb.*` -> adb forward/connect output is stale -> always confirm with ps/getprop before believing port state.
-
-P: /home/gab/android/platform-tools/adb is the working adb binary and device serial RZGL102X5AT is the connected Android device here -> adb from PATH may differ -> always call the absolute path with `-s RZGL102X5AT`.
 
 DEAD: Python ssl module on this Linux desktop (and Android python build) does not expose SSL_export_keying_material, so ADB wireless TLS pairing cannot be completed from Python alone -> SPAKE2 key derivation needs TLS ExportKeyingMaterial(64) appended to the code -> use libadb_pairing_connection.so or a real PC adb pair client instead of hand-rolling pairing in Python.
 
@@ -647,8 +628,6 @@ OK: adb device serial RZGL102X5AT is the connected Android phone -> all adb call
 
 OK: Android APK audit on this machine -> unzip -l on app-debug.apk lists assets/python/ and lib/arm64-v8a/ contents -> use to verify packaging without installing
 
-P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/ holds the Android agent project -> main sources under app/src/main/{java/net/sys32/agent,assets/python,jniLibs} -> use these absolute paths next time
-
 OK: `git add -A` + `git commit` in /home/gab/Desktop/agent works from bash tool and pushes to github.com:fetidness/android_agent.git master -> use it for committing repo changes there.
 
 TRAP: /sdcard/Download/Agent/context.json scris de app nu e JSON valid (are "Extra data" dupa array, ~76 bytes in plus) -> json.loads() esueaza cu "Extra data" -> foloseste json.JSONDecoder().raw_decode(raw) care intoarce (obj, idx) si parseaza pana la primul obiect valid.
@@ -666,8 +645,6 @@ P: pe acest telefon Python-ul ruleaza ca `run-as net.sys32.agent sh -c 'HOME=.. 
 TRAP: pentru Python pe telefon, `sys.path.insert(0,"/data/local/tmp/...")` face importul sa incerce .so din /data/local/tmp si esueaza cu Permission denied, mascand faptul ca o copie valida exista in site-packages -> sterge/evita path-ul din /data/local/tmp in scriptul de test.
 
 P: Termux packages on this Samsung are managed without root/Termux via /data/local/tmp/tpm + tpm.py (repo packages.termux.dev apt termux-main aarch64); toolchain.py/tpm.py in assets/python reach them; check state with `toolchain.py check` -> clang/python/ld/ar/git show false until a full `install` bootstrap (~500MB) runs.
-
-TRAP: run-as net.sys32.agent python on this device works only with the full env prefix (HOME=.../files/home PYTHONHOME=.../files/pyhome LD_LIBRARY_PATH=.../files/libs:<codePath>/lib/arm64 and invoke <libdir>/libpyexec.so script.py) -> bare run-as ... python3 script.py fails -> get codePath via `dumpsys package net.sys32.agent | grep codePath` and build that exact prefix.
 
 OK: toolchain.py/tpm.py descarca .deb-uri Termux (bionic) in /data/local/tmp/tpm/usr si ruleaza pe Android fara Termux -> pentru compilare nativa pe telefon foloseste samu nu ninja (ninja Termux e rupt: libandroid-spawn.so, exit 127) si tine binarele in /data/local/tmp (nu /sdcard, montat noexec)
 
@@ -726,8 +703,6 @@ TRAP: adb_client.py had a global signal.alarm(40) that aborts long-running adb s
 DEAD: symlink(.deb typeflag 2) members are skipped by the tar reader -> recreate libX.so.N -> libX.so.N.M and tool aliases (clang/ld/ar) manually via a _fix_symlinks() pass after extraction.
 
 TRAP: `pm uninstall` returning "Failure [DELETE_FAILED_INTERNAL_ERROR]" does NOT mean the app is still installed -> verify with `pm list packages | grep <pkg>` -> package may be already gone; don't retry uninstall endlessly.
-
-TRAP: adb shell run-as <pkg> python import fails with ImportError "cannot import name X from Y" even when the target .py file exists and has correct size -> stale __pycache__/*.pyc left over from an earlier broken state shadows the source -> always "run-as <pkg> rm -rf <dir>/__pycache__ <dir>/_common/__pycache__" before retesting imports; verify with ls -la that the .py is real and then purge caches.
 
 PREVENT: when an agent/script patches a Python package split (e.g. compression._common should be a PACKAGE dir with __init__.py + _streams.py, not a _common.py file) -> a lone _common.py file makes `from compression._common import _streams` fail though os.path.exists is true -> fix must os.remove the _common.py file AND os.makedirs the _common/ dir, guarded by `if os.path.isdir(common) and os.path.exists(common/_streams.py)` not just isdir.
 
@@ -841,8 +816,6 @@ TRAP: adb `shell 'cmd'` hangs forever (no output, rc never returns) when adbd is
 
 OK: AOSP source for the real ADB auth protocol is fetchable from this machine via `git clone --depth 1 https://android.googlesource.com/platform/packages/modules/adb /tmp/adbtest` and single files via `curl -s 'https://android.googlesource.com/platform/<proj>/+/refs/heads/main/<path>?format=TEXT' | base64 -d` -> use this instead of guessing protocol formats.
 
-TRAP: `dumpsys adb | grep user_keys` arata chei posibil TRUNCHIATE (ex. "AAABAM2roh7") -> nu iti spune daca cheia e valida; adbd pe Android 16 nu persista chei in user_keys fara aprobare dialog, iar /data/misc/adb/adb_keys e doar-root -> solutia NU e sa adaugi cheia, ci sa NU inchizi conexiunea ADB intre comenzi (socket persistent + keepalive).
-
 PREVENT: in ORICE client ADB propriu, nu face close()+connect() la exceptii de executie sau la output gol -> adbd re-cere "Allow USB debugging"; arunca socket-ul DOAR la EOF real (recv MSG_PEEK == b"") sau errno 9/104/107, si seteaza SO_KEEPALIVE/TCP_KEEPIDLE ca adbd sa nu inchida conexiunea idle.
 
 OK: adb USB pe acest device (Samsung RZGL102X5AT) foloseste portul TCP local 1234 (nu 5555); adb_client.py detecteaza automat portul citind `getprop service.adb.tcp.port` -> conectarea la 127.0.0.1:1234 merge cu RSAPUBLICKEY de 524B (format corect, prefix AAEA), semnatura RSA (A_AUTH type 2) e respinsa mereu.
@@ -858,10 +831,6 @@ P: pe Android/adbd, fiecare `Adb().connect()` nou (chiar si in acelasi proces sa
 DEAD: rularea unui script Python cu `run-as <pkg> ... libpyexec.so script.py` prin adb shell esueaza cu TimeoutError la AUTH adbd deoarece ruleaza ca uid=2000 (shell), nu ca uid-ul app-ului -> pentru testarea codului app-ului trebuie pornit din aplicatie, nu din shell
 
 OK: adb connect/shell via wireless debugging on this machine needs a SINGLE shared transport so the "Allow USB debugging" dialog is shown once -> opening/closing a fresh connection per operation re-triggers the prompt and drops mid-op -> build one persistent adb client reused for all calls (toolchain inline, not subprocess), add TCP keepalive.
-
-P: /home/gab/android/platform-tools/adb -s RZGL102X5AT shell ... -> this is the working adb path/serial on this machine, not the adb on PATH.
-
-OK: adb -s <serial> shell "rm -rf /data/local/tmp/* /data/local/tmp/.[!.]*" -> plain rm -rf /data/local/tmp/* leaves dotfiles -> use the .[!.]* glob to fully clear it for a clean reset.
 
 TRAP: ls -A /data/local/tmp | wc -l returning 0 is the reliable empty-check -> leftover hidden files otherwise give a false clean state.
 
@@ -901,8 +870,6 @@ P: inainte de a rescrie un fisier mare (readme 75-92KB) fa backup in temp/ si ve
 
 OK: citirea unui fisier mare in readme.md -> tool python `print` trunchiaza afisajul la ~6200 chars si ascunde mijlocul ("NOT LOST" in logs/) -> itereaza pe intervale mici de linii (ex. 25-100, apoi 47-140), nu te increde ca ai vazut tot.
 
-P: /home/gab/android/platform-tools/adb e calea absoluta pentru adb, NU e in PATH -> orice transport/device comand trebuie cu calea absoluta.
-
 TRAP: adb devices -l returneaza lista goala fara device conectat si nu da eroare -> verifica intai `adb devices -l` inainte de a planui build+install.
 
 TRAP: tool output is hard-capped at ~8000 chars, keeping head+tail and replacing the middle with "[... N chars in the middle, NOT LOST: complete text in logs/tool_<ts>.log ...]" -> the referenced log file is ITSELF capped at 8000 chars so the middle is truly lost, marker lies -> never emit >8000 chars per python call; budget output in code (stop when used+len(line)>7000) and read huge files (e.g. readme.md 92KB) via targeted section slices, not full sequential dumps.
@@ -912,7 +879,6 @@ TRAP: tool output is hard-capped at ~8000 chars, keeping head+tail and replacing
 - OK: `agent-original.py` are acum tool `read` (path/offset/limit/budget/grep): buget GARANTAT pe caractere (default 6000, plafon 7000) + footer "NEXT: offset=N"; `grep` = regex cu numere de linie -> harta unui fisier mare in 1 apel, apoi citire tintita (2 apeluri in loc de ~7)
 - OK: `CHUNK` (env AGENT_CHUNK, default 7000) ridica plafonul ferestrei fata de TOOLMAX=1800; AGENT_CHUNK=0 revine la comportamentul vechi
 - OK: `_store()` verifica cu os.path.getsize ca logul de pe disc e COMPLET, iar `_cut()` scrie "NOT LOST" doar daca chiar e; altfel scrie explicit "LOST - RE-RUN in smaller parts"
-- P: /home/gab/Desktop/agent/agent-original.py -> agentul Linux; backup la /tmp/agent-original.py.optimized-<ts> si agent-original.py.bak-optimized (temp/ se CURATA, nu pastra backup-uri acolo)
 - TRAP: editarea textelor din TOOLGUIDE/M=... (system prompt) cu GHILIMELE DUBLE in interior le rupe: `(e.g. "^#{2,3} ")` inchide string-ul Python si `^` devine operator binar pe str -> TypeError: unsupported operand type(s) for ^: 'str' and 'str' -> foloseste ghilimele simple in text
 - TRAP: py_compile NU prinde erorile de concatenare din blocuri multi-linie de string-uri -> ruleaza si un smoke-test cu exec(compile(open(f).read(),f,"exec"), {"__name__":"notmain"}) si stdin=DEVNULL; daca da TIMEOUT la 30-60s inseamna ca a intrat in bucla input() = EXECUTIE REUSITA
 - OK: fisierul de pe disc avea deja rupturi inainte de editarea mea (8 in git HEAD) - verifica git show HEAD:<fisier> ca sa stii daca o eroare e a ta sau preexistanta
@@ -924,8 +890,6 @@ TRAP: py_compile trece dar fisierul crapa la executie (erori in blocuri multi-li
 TRAP: /home/gab/Desktop/agent/temp/ se CURATA periodic -> backup-urile puse acolo dispar la mijlocul lucrului -> scrie backup-uri durabile in /tmp sau langa fisier (agent-original.py.bak-optimized)
 
 PREVENT: inainte de a repara o eroare intr-un fisier, verifica daca e preexistanta cu `git show HEAD:<fisier>` -> agent-original.py avea 8 rupturi chiar in git HEAD, deci nu erau ale mele -> nu pierde timp cautand propria eroare
-
-P: /home/gab/Desktop/agent/agent-original.py -> sursa agentului Linux, plafon tool outputs TOOLMAX=1800/CHUNK=7000, tool `read` adaugat pentru citire paginata cu buget garantat
 
 ## 2026-09-23 - compactare DEZACTIVATA complet (decizie operator)
 - OK: `agent-original.py` NU mai comprima contextul deloc: `CTXBUDGET=0` + `compact_history()` e no-op cu `return 0` (orice apel, inclusiv force=True de la /compact) -> memoria inserata la startup ramane INTREAGA pana la /reset
@@ -1005,19 +969,13 @@ P: ctx_check_window() at startup queries the API once (cached via CTXWINDOW_VERI
 - TRAP: agent.py are multimodalitati proprii (run_android_tool, run_adbsh_tool, run_toolchain_tool, bg_tool, media_rescan) si `_task_foot` minimal (tokenii se afiseaza in flush_task_tokens, nu in footer) -> sincronizarea se face functie cu functie, nu prin copiere de fisier
 - TRAP: cand o inlocuire esueaza la mijlocul unui script, modificarile ANTERIOARE din acelasi script NU se salveaza (scriu fisierul abia la final) -> TASK["cache"] a trebuit aplicat in al doilea pas; verifica intotdeauna DUPĂ salvare, nu doar inainte
 
-OK: /home/gab/android/platform-tools/adb is the working adb on this machine -> `adb devices -l` on PATH returns "command not found", the SDK copy lives at that absolute path -> always call adb by full path /home/gab/android/platform-tools/adb.
-
 OK: building this Android app offline works with JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ANDROID_HOME=/home/gab/android ANDROID_SDK_ROOT=/home/gab/android and `./gradlew --offline assembleDebug` from /home/gab/Desktop/agent/workspace/app/net.sys32.agent -> completes in ~14s with BUILD SUCCESSFUL.
 
 TRAP: agent.py in the APK is not the desktop copy -> the mobile agent.py has its own signatures (run_tool(code) and run_bash_tool(cmd) take ONE arg), so porting desktop code 1:1 fails -> read the target file's real signatures before replacing blocks.
 
-P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/src/main/java/net/sys32/agent/MainActivity.kt holds a `.assets_vNN` marker -> if it is not incremented, the freshly edited python assets are NOT picked up and the device keeps running the old copy -> bump .assets_vNN (e.g. v81->v82) after every change under app/src/main/assets.
-
 OK: verifying that edited assets really landed in the built APK -> `unzip -p app/build/outputs/apk/debug/app-debug.apk assets/python/agent.py | grep ...` or python zipfile on that path reads the packaged file directly -> confirm the change inside the APK, not just on disk.
 
 PREVENT: after `adb install -r` of this app the accessibility service is disabled again -> the agent cannot act on the phone -> re-apply `settings put secure enabled_accessibility_services net.sys32.agent/net.sys32.agent.AgentAccessibilityService` and `settings put secure accessibility_enabled 1` via the full-path adb.
-
-TRAP: adb shell input text cu paranteze/caractere speciale -> shell-ul de pe device da "syntax error: unexpected '('" si textul nu ajunge in camp -> trimite doar text alfanumeric si spatii (spatii ca %s); verifica rezultatul cu dump proaspat.
 
 TRAP: adb shell uiautomator dump + exec-out cat refolosind acelasi fisier -> bounds se schimba intre dump-uri (EditText a sarit de la y=1317 la y=2148), iar citirea cache da text vechi -> fa dump proaspat inainte de fiecare tap si citeste nodul EditText nou.
 
@@ -1082,12 +1040,9 @@ P: portul adbd local nu e mereu 5555 -> se detectează din `getprop service.adb.
 - TRAP: `_drain()` cu `_recv(0.2)` (timeout mic) transforma un header partial in exceptie si ardea tot timeout-ul -> foloseste select() + bucla de citire a headerului de 24 bytes
 - OK: verificat 6/6 comenzi consecutive cu markere unice (manual pe device + E2E prin agent); `echo` in 0.58s
 - OK: integrity guard in agent.py: prefix `echo __MK<ts>__; <cmd>`, daca markerul lipseste -> drain + retry o data, markerul e sters din output
-- P: /home/gab/Desktop/agent/temp/raport_buffer_adbsh.md (raportul agentului) si /tmp/adb_client.py.before-fix
 - LECTIE: cand un tool comunica prin protocol binar, NU presupune semantica campurilor - dumpuieste pachetele brute si citeste-le
 
 TRAP: `select()` pe un socket ADB care returneaza "ready to read" cu un header de 24 bytes fragmentat -> citirea directa a headerului arunca exceptie si arde tot timeout-ul -> citeste bucla pana ai 24 bytes, tolereaza recv() partiale
-
-OK: `/home/gab/android/platform-tools/adb` nu e in PATH -> foloseste calea absoluta `/home/gab/android/platform-tools/adb -s RZGL102X5AT exec-out cat ...` pentru a citi fisiere de pe device
 
 TRAP: `git commit -F -` cu input prin subprocess: mesajul multi-linii se transmite corect doar cu `input=msg, text=True`; fara `text=True` (bytes) encode-ul difera -> foloseste intotdeauna `capture_output=True, text=True, input=msg
 
@@ -1112,8 +1067,6 @@ TRAP: an inline action dispatcher in agent.py `_run()` hardcodes its supported t
 - TRAP: editarea `MainActivity.kt` cu sed prin tool-ul bash poate da output gol si NU aplica -> foloseste python (re.search + replace + write) si verifica rezultatul
 - TRAP: ghilimelele duble in descrierile de tool (schema JSON) rup string-ul Python -> foloseste ghilimele simple in textul din descriere
 - P: /home/gab/Desktop/agent/docs/raport_numpy_android.md -> raportul agentului (auto-diagnostic exemplar)
-
-P: /home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk -> APK-ul construit; `unzip -p app-debug.apk assets/python/agent.py` verifica ca optimizarile au ajuns in pachet, nu doar in sursa
 
 TRAP: verificarea finala a unui fix de tool in acest proiect cere 4 locuri sincronizate -> schema JSON cu enum, dispatcher in agent.py, lista inline hardcodata din _run si CLI in modul -> daca lipseste unul, agentul raspunde "actiune necunoscuta" desi handler-ul exista; verifica toate patru inainte de build
 
@@ -1144,3 +1097,26 @@ DEAD: `python3` NU exista pe acest Android (prefixul are python3.14); setexec.py
 - OK: reguli noi in prompt: STOPPING CRITERION (task gata doar cand VERIFICAREA FINALA da rezultatul cerut) + TIMING (un pas care ia secunde ASTEPTA -> investigheaza, nu dormi)
 - P: /tmp/agent-original.py.before-chirurg-<ts> -> backup inainte de modificari
 - PREVENT: dupa ORICE modificare la agent-original.py (fisierul care ma ruleaza) rulez py_compile + test exec cu __name__=notmain si stdin=DEVNULL
+
+## 2026-09-24 - android build+install (session: /home/gab/Desktop/android_agent/temp)
+P: /home/gab/Desktop/android_agent/workspace/app -> ./build_app.sh (build+install+start); build solo: net.sys32.agent/./gradlew assembleDebug
+TRAP: checkout laptop incomplet pt build -> lipsesc gradlew+gradle-wrapper.jar, jniLibs/*.so, assets/python/Lib/* (toate in .gitignore) -> regenerez wrapper: /home/gab/android/gradle-8.11.1/bin/gradle wrapper --gradle-version 8.11.1 ; .so+Lib+libdynload le extrag DE PE DEVICE
+OK: adb pull <codePath>/lib/arm64/. <proj>/app/src/main/jniLibs/arm64-v8a -> 6 .so (libpyexec/libpython3.14/libcrypto_python/libssl_python/libsqlite3_python)
+OK: assets de pe device: adb shell "run-as net.sys32.agent sh -c 'cd /data/data/net.sys32.agent/files/python && tar cf - Lib libdynload'" > tar; untar in assets/python (Lib=17M, libdynload arm64+x86_64=42M)
+TRAP: assets locale mai vechi decat device -> agent.py 178678B vs 189931B pe device -> sync din files/python DUPA extragere, altfel APK livreaza cod vechi
+PREVENT: la orice rebuild incremental, compara size fiecarui .py assets vs device (files/python/) si incrementeaza .assets_vNN in MainActivity.kt (era v97->v99)
+TRAP: editezi assets dar app-ul nu le re-extrage -> marker .assets_vNN+1 OBLIGATORIU; verificare: adb shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/ | grep assets_v (dotfiles: NEcesita -a)
+TRAP: pm uninstall NU sterge /sdcard/Download/Agent (adbkey persistent) nici reziduurile /data/local/tmp (agent_*.py, tpm/, wrap/, apkx/) -> le sterg explicit
+TRAP: adb install -r dezactiveaza accessibility -> re-activare: settings put secure enabled_accessibility_services net.sys32.agent/net.sys32.agent.AgentAccessibilityService ; settings put secure accessibility_enabled 1 ; verificare dumpsys accessibility
+OK: date cheie device (necesita adb aut) DE PE PC: adb shell run-as net.sys32.agent ... ; cel mai important: dumpsys package net.sys32.agent | grep -E 'codePath|firstInstallTime'
+OK: cheie API NU e in APK (key.txt in .gitignore) -> se pune manual in files/python/key.txt (sau home/key.txt)
+
+## 2026-09-24 - env adb+shell fragil (session: /home/gab/Desktop/android_agent/temp)
+TRAP: adb pm uninstall/rm masiv pe /sdcard -> adbd se agata, "no output" pe ORICE adb shell/ps (bash -lc returneaza gol) -> solutie: ruleaza adb prin tool python (subprocess.run), nu prin bash; python merge chiar cand bash e blocat
+PREVENT: pe acest mediu NU pune adb in variabila $ADB urmata de comenzi multiple in bash -lc -> executa doar calea absoluta /home/gab/android/platform-tools/adb, o comanda per apel
+TRAP: tel autorizare adb revocata -> start-server trebuie; adb devices gol pana reaproba dialogul "Allow USB debugging"
+
+## 2026-09-24 - agent python key.txt (session: /home/gab/Desktop/android_agent/temp)
+TRAP: agent.py linia ~292 citea key.txt modul-level -> fara key.txt = crash instant la pornire -> fix: def _load_key() cu fallback env DEEPSEEK_API_KEY -> key.txt(dir script) -> HOME/key.txt, returneaza "" fara crash
+OK: onboarding cheie in MainActivity.kt: startPythonIfKey() verifica readStoredKey() (python/key.txt, home/key.txt); lipsa -> awaitingKey=true, sendLine() o scrie in files/python/key.txt + home/key.txt, apoi startPythonProcess(key) paseaza env DEEPSEEK_API_KEY
+OK: input EditText hint e ceea ce trebuie setat pentru prompt ("paste DeepSeek key (sk-...) and send"); ecran 1080x2340@450, buton trimitere center=(989,2211)

@@ -441,6 +441,11 @@ class MainActivity : AppCompatActivity() {
     /** countdown-ul ruleaza doar la prima configurare. */
     private var firstConfig = false
 
+    /** ★ onboarding cheie API: daca key.txt lipseste, input-ul colecteaza cheia
+     *  DeepSeek in loc sa fie trimisa agentului (care inca nu ruleaza). */
+    private var awaitingKey = false
+    private var agentStarted = false
+
     /** ★ Dupa ce userul se intoarce din ecranele de permisiuni (Settings), verificam
      *  si pornim motorul. Asa nu mai depindem doar de callback-ul de permisiuni. */
     override fun onResume() {
@@ -473,7 +478,7 @@ class MainActivity : AppCompatActivity() {
                         bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
                         bridge!!.start()
                     } catch (_: Exception) {}
-                    startPython()
+                    startPythonIfKey()
                     startAgentService()
                 }
             }.start()
@@ -521,7 +526,7 @@ class MainActivity : AppCompatActivity() {
                     bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
                     bridge!!.start()
                 } catch (e: Exception) { appendAnsi(RED + "Bridge error: $e" + NRM + "\n") }
-                startPython()
+                startPythonIfKey()
                 startAgentService()
                 requestIgnoreBatteryOptimizations()
             }
@@ -551,7 +556,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v97")
+        val stamp = File(filesDir, ".assets_v100")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -578,7 +583,37 @@ class MainActivity : AppCompatActivity() {
         stamp.writeText("ok")
     }
 
-    private fun startPython() {
+    /** ★ Poarta: porneste agentul doar daca exista cheia; altfel o cere (onboarding).
+     *  Cheia se cauta in files/python/key.txt, apoi files/home/key.txt, apoi env. */
+    private fun startPythonIfKey() {
+        val GREEN = "\u001b[38;5;114m"
+        val NRM = "\u001b[0m"
+        val OF = "\u001b[38;5;208m"
+        val k = readStoredKey()
+        if (k.isNullOrBlank()) {
+            awaitingKey = true
+            runOnUiThread {
+                appendAnsi("\n" + OF + "\u26a0  LIPSA CHEIA DeepSeek API." + NRM + "\n")
+                appendAnsi(OF + "Lipeste cheia (sk-...) in campul de jos si apasa trimitere." + NRM + "\n")
+                appendAnsi(OF + "O scriu automat in files/python/key.txt si pornesc agentul." + NRM + "\n\n")
+                input.hint = "paste DeepSeek key (sk-...) and send"
+                input.requestFocus()
+            }
+            return
+        }
+        runOnUiThread { appendAnsi(GREEN + "[key] cheie gasita - pornesc agentul." + NRM + "\n") }
+        startPythonProcess(k)
+    }
+
+    /** Citeste cheia din locurile posibile (scris de noi sau de alta sesiune). NU exista => null. */
+    private fun readStoredKey(): String? {
+        for (p in arrayOf(File(filesDir, "python/key.txt"), File(filesDir, "home/key.txt"))) {
+            try { if (p.exists()) { val t = p.readText().trim(); if (t.isNotEmpty()) return t } } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun startPythonProcess(keyIn: String?) {
         Thread {
             try {
                 val home = File(filesDir, "home").apply { mkdirs() }
@@ -631,6 +666,8 @@ class MainActivity : AppCompatActivity() {
                 pb.environment()["HOME"] = home.absolutePath
                 pb.environment()["PATH"] = "/system/bin:/vendor/bin"
                 pb.environment()["PYTHONUNBUFFERED"] = "1"
+                // ★ cheia API: o pasa explicit agentului (agent.py o citeste din env SAU key.txt)
+                if (!keyIn.isNullOrBlank()) pb.environment()["DEEPSEEK_API_KEY"] = keyIn
                 pb.environment()["TERM"] = "xterm-256color"
                 pb.environment()["ANDROID_BRIDGE"] = File(filesDir, "bridge.sock").absolutePath
                 pb.environment()["AGENT_BRIDGE_PORT_FILE"] = File(filesDir, "bridge.port").absolutePath
@@ -669,7 +706,7 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
                         }
                     }
                 }
-                runOnUiThread { appendAnsi("\n[proces terminat]\n") }
+                runOnUiThread { agentStarted = false; appendAnsi("\n[proces terminat]\n") }
             } catch (e: Exception) {
                 val msg = e.toString()
                 runOnUiThread { appendAnsi("\n[EROARE] $msg\n") }
@@ -683,11 +720,40 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
         val t = input.text.toString().replace("\r", "").replace("\n", " ").trim()
         if (t.isEmpty()) return
         input.setText("")
+        // ★ ONBOARDING: daca asteptam cheia API, o salvam si pornim agentul.
+        if (awaitingKey) {
+            saveKeyAndStart(t)
+            return
+        }
         // NU afisam ecou aici: agentul afiseaza el linia "You > <mesaj>" in _task_head.
         btnStop.visibility = View.VISIBLE
         setTaskScreenOn(true)
         try { pyIn?.write(t + "\n"); pyIn?.flush() } catch (e: Exception) {
             appendAnsi("[write failed: $e]\n")
+        }
+    }
+
+    /** ★ Scrie cheia DeepSeek in files/python/key.txt (unde o citeste agent.py),
+     *  dar si in HOME ca rezerva, apoi porneste agentul. */
+    private fun saveKeyAndStart(key: String) {
+        val GREEN = "\u001b[38;5;114m"
+        val NRM = "\u001b[0m"
+        val RED = "\u001b[38;5;203m"
+        try {
+            val f = File(filesDir, "python/key.txt")
+            f.parentFile?.mkdirs()
+            f.writeText(key.trim() + "\n")
+            // rezerva in HOME (agent.py o cauta si acolo)
+            try { File(filesDir, "home/key.txt").writeText(key.trim() + "\n") } catch (_: Exception) {}
+            // sterge ecoul cheii din ecran (nu lasam cheia vizibila in scrollback)
+            appendAnsi(GREEN + "\n[key] cheia salvata in " + f.absolutePath + NRM + "\n")
+            appendAnsi(GREEN + "[key] pornesc agentul..." + NRM + "\n\n")
+            awaitingKey = false
+            input.hint = "message the agent..."
+            startPythonProcess(key.trim())
+        } catch (e: Exception) {
+            appendAnsi(RED + "[key] EROARE la salvare: " + e.message + NRM + "\n")
+            input.hint = "paste DeepSeek key (sk-...) and send"
         }
     }
 
