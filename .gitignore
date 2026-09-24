@@ -67,3 +67,6 @@ key.txt
 
 # ---- logul auto-learn (artefact de rulare) ----
 auto_learn.log
+
+# ---- memorie agent (locala, nu se urca in git) ----
+memory.md
