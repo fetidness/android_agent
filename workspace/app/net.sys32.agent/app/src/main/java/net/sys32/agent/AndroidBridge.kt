@@ -188,10 +188,23 @@ class AndroidBridge(
     }
 
     // ---------------- FIX 3: IME ----------------
+    /** Mesaj de ajutor in functie de starea IME: neselectat vs neinstalat. */
+    private fun imeNotActiveHelp(): String {
+        val pkg = ctx.packageName
+        val installed = try {
+            val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.enabledInputMethodList.any { it.packageName == pkg }
+        } catch (_: Exception) { false }
+        return if (installed)
+            "IME is INSTALLED but NOT the active keyboard (this is normal - not a fault). " +
+            "To use it: adbsh 'ime set $pkg/.AgentIme'. It stays available in the keyboard list."
+        else
+            "IME not enabled at all. Add it: adbsh 'settings put secure enabled_input_methods <current>:$pkg/.AgentIme' then adbsh 'ime set $pkg/.AgentIme'"
+    }
+
     private fun ime(action: String, p: JSONObject): JSONObject {
         val svc = AgentIme.instance
-            ?: return JSONObject().put("ok", false).put("error",
-                "IME not active. Activeaza: settings put secure enabled_input_methods net.sys32.agent/.AgentIme ; ime set net.sys32.agent/.AgentIme")
+            ?: return JSONObject().put("ok", false).put("error", imeNotActiveHelp())
         return when (action) {
             "read", "field" -> svc.readField().put("ok", true)
             "type", "inject" -> JSONObject().put("ok", svc.inject(p.optString("text"), p.optInt("delete", 0)))
@@ -234,12 +247,48 @@ class AndroidBridge(
     private fun guard(action: String, p: JSONObject): JSONObject = when (action) {
         "start" -> { GuardService.start(ctx); JSONObject().put("ok", true).put("guard", "started") }
         "schedule" -> { GuardService.schedule(ctx); JSONObject().put("ok", true).put("alarm", "scheduled") }
-        "status" -> JSONObject().put("ok", true)
-            .put("foreground", AgentService.running)
-            .put("accessibility", AgentAccessibilityService.instance != null)
-            .put("notif_listener", AgentNotificationListener.instance != null)
-            .put("ime", AgentIme.instance != null)
+        "status" -> {
+            val r = JSONObject().put("ok", true)
+            r.put("foreground", AgentService.running)
+            r.put("accessibility", AgentAccessibilityService.instance != null)
+            r.put("notif_listener", AgentNotificationListener.instance != null)
+            // IME: distingem ACTIV vs INSTALAT-dar-neselectat vs LIPSA (altfel modelul
+            // crede ca e o defectiune cand e doar neselectat - bug de diagnoza).
+            val pkg = ctx.packageName
+            val imeOn = AgentIme.instance != null
+            val installed = try {
+                android.view.inputmethod.InputMethodManager::class.java.let {
+                    val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    imm.enabledInputMethodList.any { it.packageName == pkg }
+                }
+            } catch (_: Exception) { false }
+            val selected = try {
+                android.provider.Settings.Secure.getString(ctx.contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
+            } catch (_: Exception) { "" }
+            val isDefault = selected.startsWith(pkg)
+            r.put("ime", imeOn)
+            r.put("ime_state", when {
+                imeOn -> "active"
+                installed && isDefault -> "selected_but_not_bound"
+                installed -> "installed_not_selected"
+                else -> "not_installed"
+            })
+            r.put("ime_selected", isDefault)
+            // celelalte servicii: stare detaliata
+            r.put("accessibility_state", if (AgentAccessibilityService.instance != null) "active" else accessibilityEnabledHint())
+            r.put("notif_state", if (AgentNotificationListener.instance != null) "active" else "disabled_needs_allow_listener")
+            r
+        }
         else -> JSONObject().put("ok", false).put("error", "guard action? use start|schedule|status")
+    }
+
+    /** Spune daca a11y e pornit in settings dar serviciul nu e bound, sau oprit complet. */
+    private fun accessibilityEnabledHint(): String {
+        return try {
+            val cur = android.provider.Settings.Secure.getString(ctx.contentResolver,
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+            if (cur.contains(ctx.packageName)) "enabled_but_not_bound_yet" else "disabled"
+        } catch (_: Exception) { "unknown" }
     }
 
     // ---------------- UI (AccessibilityService) ----------------
