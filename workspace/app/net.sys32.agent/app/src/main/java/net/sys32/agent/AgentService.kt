@@ -30,6 +30,11 @@ import java.io.File
 class AgentService : Service() {
 
     companion object {
+        /** Reinnoieste wake lock-ul - apelat la inceputul unui task. */
+        fun renewWakeLock(ctx: Context) {
+            try { instance?.acquireWakeLock() } catch (_: Exception) {}
+        }
+
         const val CHANNEL_ID = "agent_bg"
         const val NOTIF_ID = 4711
         const val ACTION_START = "net.sys32.agent.START"
@@ -38,6 +43,7 @@ class AgentService : Service() {
         const val ACTION_SLEEP = "net.sys32.agent.SLEEP"
 
         @Volatile var running = false
+        @Volatile var instance: AgentService? = null
 
         /** Aprinde ecranul + il tine treaz (pentru task-uri care ating UI-ul altor aplicatii). */
         fun wakeScreen(ctx: Context) {
@@ -63,6 +69,7 @@ class AgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createChannel()
     }
 
@@ -131,7 +138,9 @@ class AgentService : Service() {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "net.sys32.agent::agent")
             wakeLock?.setReferenceCounted(false)
-            wakeLock?.acquire()
+            // OPTIMIZARE BATERIE: timeout de 30 min, nu la infinit. Daca nimic nu-l
+            // reinoieste (task activ), CPU-ul poate adormi -> consum mult mai mic in idle.
+            wakeLock?.acquire(30 * 60 * 1000L)
             // wake lock suplimentar care APRINDE ecranul (folosit doar pentru task-uri cu UI)
             wakeLockFull = pm.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
@@ -171,6 +180,7 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         releaseWakeLock()
         running = false
         super.onDestroy()

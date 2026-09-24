@@ -286,6 +286,8 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (on) {
                     window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    // reinoiesc wake lock-ul la inceput de task (are timeout 30min)
+                    AgentService.renewWakeLock(this)
                 } else {
                     window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
@@ -473,6 +475,41 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** ★ WATCHDOG: daca procesul Python moare (kill, OOM, crash), il repornim automat.
+     *  Altfel agentul rămâne mort pana la restart manual (bug descoperit in teste). */
+    private var watchdogOn = false
+    @Volatile private var lastPythonStart = 0L
+    /** Verifica daca procesul Python e viu, folosind DOAR referinta proprie (pyProc).
+     *  Nu folosim pgrep: un app nu poate lista procese ale altor uid-uri, deci
+     *  pgrep intorcea mereu gol -> watchdog bucla / nu repornea corect. */
+    private fun pythonRunning(): Boolean {
+        val pr = pyProc ?: return false
+        return try { pr.isAlive } catch (_: Exception) { false }
+    }
+    private fun startWatchdog() {
+        if (watchdogOn) return
+        watchdogOn = true
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                try {
+                    val k = readStoredKey()
+                    val now = System.currentTimeMillis()
+                    // cooldown 60s intre reporniri + verificare REALA a procesului
+                    if (k != null && coreStarted && !awaitingKey && (now - lastPythonStart) > 20000L) {
+                        if (!pythonRunning()) {
+                            appendAnsi("\n[watchdog] procesul Python lipseste - il repornesc\n")
+                            lastPythonStart = now
+                            Thread { startPythonProcess(k) }.start()
+                        }
+                    }
+                } catch (_: Exception) {}
+                h.postDelayed(this, 20000)
+            }
+        }
+        h.postDelayed(tick, 45000)
+    }
+
     private fun allEssentialPermsGranted(): Boolean {
         val ess = arrayOf(
             Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,
@@ -486,6 +523,7 @@ class MainActivity : AppCompatActivity() {
     private fun startCore() {
         if (coreStarted) return
         coreStarted = true
+        startWatchdog()
 
         // ★ daca setup-ul s-a facut deja -> pornesc DIRECT, fara mesaje/countdown
         if (setupDone()) {
@@ -598,7 +636,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v104")
+        val stamp = File(filesDir, ".assets_v109")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -658,6 +696,14 @@ class MainActivity : AppCompatActivity() {
     private fun startPythonProcess(keyIn: String?) {
         Thread {
             try {
+                // GARDA ANTI-DUPLICARE: daca un proces Python ruleaza deja, il oprim
+                // inainte sa pornim altul (altfel rămân procese agent.py orfane).
+                try {
+                    val old = pyProc
+                    if (old != null && old.isAlive) { old.destroy(); old.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) }
+                } catch (_: Exception) {}
+                // NU folosim pkill -f (ar putea omori procesul NOU). Ne bazam pe
+                // garda pyProc + watchdog (care verifica /proc).
                 val home = File(filesDir, "home").apply { mkdirs() }
                 val py = File(applicationInfo.nativeLibraryDir, "libpyexec.so")
                 val scripts = File(filesDir, "python")
@@ -726,6 +772,7 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
 
                 val p = pb.start()
                 pyProc = p
+                lastPythonStart = System.currentTimeMillis()
                 pyIn = OutputStreamWriter(p.outputStream)
 
                 val raw = p.inputStream
