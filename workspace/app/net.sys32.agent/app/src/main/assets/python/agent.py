@@ -266,6 +266,9 @@ def _writable(d):
 if not _writable(HOME_DIR):
     HOME_DIR=_DEFHOME; _writable(HOME_DIR)
 WORK=os.path.join(HOME_DIR,"workspace")
+# registrul job-urilor de fundal (persistent, langa context.json/memory.md)
+BG_REG=os.path.join(HOME_DIR,"bg_jobs.json")   # lista job-urilor cunoscute (id, pid, log, stare)
+BG_LOG=os.path.join(HOME_DIR,"logs")           # cate un <job_id>.log per job de fundal
 os.makedirs(WORK,exist_ok=True)
 # Folderul de lucru poate fi mutat intr-un loc VIZIBIL (ex. /sdcard/agent), ca operatorul
 CTXNAME="context.json"       # conversation history: lives permanently in HOME_DIR (next to memory.md)
@@ -579,11 +582,13 @@ def ctx_warn():
             print(R+"   "+bar+N+"\n")
     elif pct<CTXWARN-10:
         CTXWARNED[0]=False
+# Compactarea automata e OPIRTA (decizie operator). Istoricul ramane complet viu.
+CTXAUTO=0   # 0 = niciodata compactare automata
 def compact_history(force=False):
-    """DISABLED on purpose (operator decision). It used to move heavy tool outputs and old steps to
-    disk and replace them with pointers, so the window stayed small. The operator wants the memory -
-    inserted ONCE at startup - to stay present, untouched, until THEY say /reset, so this now does
-    nothing at all: neither automatically nor via /compact. Returning 0 = 'nothing was compressed'."""
+    """COMPACTAREA AUTOMATA E OPRIATA (decizie operator: nu vrea sa vada notificari
+    [ctx] fereastra ... referinte ... archive, si istoricul complet sa ramana viu).
+    Nu arhiveaza, nu inlocuieste nimic, nu afiseaza nimic. Ramane doar ca sa nu
+    fie nevoie sa schimbam cele ~4 locuri care o cheama (no-op instant)."""
     return 0
 def _compact_history_DISABLED(force=False):
     """The old lossless compression, kept for reference only - never called."""
@@ -1649,8 +1654,19 @@ def run_adbsh_tool(cmd, timeout=20):
     def _run():
         try:
             import signal as _sig
-            def _to(s,f): raise TimeoutError("adbsh timeout")
-            old=_sig.signal(_sig.SIGALRM,_to); _sig.alarm(max(min(int(timeout),3600),1))
+            # ★ SIGALRM merge DOAR in thread-ul principal. Bootstrap-ul ruleaza pe un
+            # thread secundar -> signal.signal() arunca "signal only works in main
+            # thread" si TOATA comanda adbsh cadea (toolchain-ul nu se instala deloc).
+            # In thread sarim peste alarm: socket-ul are deja propriul timeout.
+            _main_thread = (getattr(__import__("threading"), "current_thread", lambda: None)() 
+                            is getattr(__import__("threading"), "main_thread", lambda: None)())
+            old=None
+            if _main_thread:
+                old=_sig.getsignal(_sig.SIGALRM)
+                def _to(s,f):
+                    raise TimeoutError("adbsh timeout")
+                _sig.signal(_sig.SIGALRM,_to)
+                _sig.alarm(max(min(int(timeout),3600),1))
             try:
                 # ★ CONEXIUNE PERSISTENTA: refolosim ACELASI obiect Adb intre comenzi.
                 # adbd cere confirmare (fereastra "Allow USB debugging") doar la conexiuni NOI;
@@ -1754,7 +1770,9 @@ def run_adbsh_tool(cmd, timeout=20):
                         pass
                 return _out
             finally:
-                _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
+                if old is not None:
+                    try: _sig.alarm(0); _sig.signal(_sig.SIGALRM,old)
+                    except Exception: pass
         except Exception as e:
             # ★ IMPORTANT: NU aruncam conexiunea la orice eroare! Majoritatea
             # erorilor sunt de EXECUTIE (comanda a eșuat, timeout de comanda),
@@ -1945,8 +1963,11 @@ def run_toolchain_tool(a):
         (simptomul raportat de operator)."""
         # daca comanda e [python, toolchain.py, actiune, ...] o rulam inline
         try:
+            _act0 = cmd[2] if len(cmd) > 2 else ""
+            _NOINLINE = ("bootstrap_direct", "install", "bootstrap", "bootstrap_tpm")
             if (len(cmd) >= 2 and str(cmd[0]).endswith(("python3", "python", "libpyexec.so"))
-                    and os.path.basename(str(cmd[1])) == "toolchain.py"):
+                    and os.path.basename(str(cmd[1])) == "toolchain.py"
+                    and _act0 not in _NOINLINE):
                 import importlib.util as _ilu2
                 _spec = _ilu2.spec_from_file_location("_tc_inline", tc)
                 _mod = _ilu2.module_from_spec(_spec)
@@ -2014,7 +2035,66 @@ def run_toolchain_tool(a):
     if action == "env-file":
         return _run([sys.executable, tc, "env-file"], 120)
     if action == "bootstrap":
-        return _run([sys.executable, tc, "bootstrap_direct"], int(a.get("timeout", 3600) or 3600))
+        # ★ RULEAZA PE THREAD in procesul app-ului (NU subproces, NU shell):
+        # shell-ul (uid 2000) NU poate citi /data/data/net.sys32.agent/ (permisiuni),
+        # deci un python detasat prin shell moare cu "libpython3.14.so not found"
+        # sau Permission denied. In schimb, in procesul app-ului avem acces deplin.
+        # Thread = nu blocheaza UI-ul, iar progresul merge in log pe disc.
+        _log = os.path.join(BG_LOG, "toolchain_bootstrap_%s.log" % time.strftime("%Y%m%d-%H%M%S"))
+        try: os.makedirs(BG_LOG, exist_ok=True)
+        except Exception: pass
+        _jid = os.path.basename(_log).replace(".log", "")
+        # inregistrez jobul in registrul bg ca sa apara la bg action=status
+        try:
+            _reg = _bg_load()
+            _reg[_jid] = {"pid": os.getpid(), "name": "toolchain_bootstrap", "cmd": "toolchain bootstrap",
+                          "log": _log, "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+                          "ts": time.time(), "status": "running"}
+            _bg_save(_reg)
+        except Exception: pass
+
+        def _do_bootstrap(_logf=_log, _jid=_jid):
+            import importlib.util as _ilu3, traceback as _tb
+            try:
+                with open(_logf, "w", encoding="utf-8", buffering=1) as _lf:
+                    _lf.write("[toolchain] bootstrap pornit %s\n" % time.strftime("%H:%M:%S"))
+                    _spec3 = _ilu3.spec_from_file_location("_tc_boot", tc)
+                    _m3 = _ilu3.module_from_spec(_spec3)
+                    _spec3.loader.exec_module(_m3)
+                    import io as _io3, contextlib as _cl3
+                    _orig_print = getattr(_m3, "print", None)
+                    def _log_print(*a, **kw):
+                        try:
+                            _lf.write(" ".join(str(x) for x in a) + "\n"); _lf.flush()
+                        except Exception: pass
+                    try: _m3.print = _log_print
+                    except Exception: pass
+                    _m3.bootstrap_direct()
+                    _lf.write("[toolchain] BOOTSTRAP TERMINAT %s\n" % time.strftime("%H:%M:%S"))
+                _r = _bg_load()
+                if _jid in _r: _r[_jid]["status"] = "done"
+                _bg_save(_r)
+            except Exception as _e:
+                try:
+                    with open(_logf, "a", encoding="utf-8") as _lf2:
+                        _lf2.write("\n[toolchain] EROARE: %s\n" % str(_e)[:300])
+                        _lf2.write(_tb.format_exc()[-2000:])
+                except Exception: pass
+                try:
+                    _r = _bg_load()
+                    if _jid in _r: _r[_jid]["status"] = "error"
+                    _bg_save(_r)
+                except Exception: pass
+
+        import threading as _th
+        _t = _th.Thread(target=_do_bootstrap, daemon=True, name="toolchain_bootstrap")
+        _t.start()
+        return ("bootstrap pornit pe THREAD (ruleaza in fundal, agentul rămâne viu)\n"
+                "  log=%s\n"
+                "  urmareste cu: bg action=log job=%s   SAU   cat %s\n"
+                "  cand termina: toolchain action=status"
+                % (_log, _jid, _log))
+
     if action == "bootstrap_tpm":
         return _run([sys.executable, tc, "install"], int(a.get("timeout", 3600) or 3600))
     if action == "env":

@@ -80,8 +80,16 @@ AUTH_TOKEN, AUTH_SIGNATURE, AUTH_RSAPUBLICKEY = 1, 2, 3
 _GT = int(os.environ.get("ADB_GLOBAL_TIMEOUT", "600") or "600")
 def _alarm(s,f):
     print("[GLOBAL TIMEOUT %ss]" % _GT, flush=True); os._exit(2)
-if _GT > 0:
-    signal.signal(signal.SIGALRM, _alarm); signal.alarm(_GT)
+# ★ SIGALRM merge DOAR in thread-ul principal. Importul se face si din thread-uri
+# secundare (ex. bootstrap-ul toolchain-ului ruleaza pe un thread) -> signal.signal()
+# arunca "signal only works in main thread" si ORICE comanda adbsh cadea.
+# De aceea: instalăm handler-ul DOAR daca suntem pe thread-ul principal.
+try:
+    import threading as _thr
+    if _GT > 0 and _thr.current_thread() is _thr.main_thread():
+        signal.signal(signal.SIGALRM, _alarm); signal.alarm(_GT)
+except Exception:
+    pass  # thread secundar: fara alarm global (socket-ul are propriul timeout)
 
 # ============================================================================
 # CONEXIUNE PARTEJATA (module-level singleton)
