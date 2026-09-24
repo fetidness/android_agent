@@ -974,7 +974,7 @@ LEARN_TAG="[[MEMORY-UPDATE]]"
 # care retine la ce INDEX din istoric s-a facut fiecare /learn. La /learn nou se invata DOAR
 # mesajele de dupa ULTIMUL checkpoint (nu tot, nu de la 0) => zero re-procesare, zero duplicate.
 # Checkpoint-urile vechi raman pentru audit: se vede exact ce interval a acoperit fiecare /learn.
-LEARN_CKPT=os.path.join(_SANDBOX,".learn_checkpoints.json")
+LEARN_CKPT=os.path.join(HOME_DIR,".learn_checkpoints.json")   # in HOME_DIR (nu in _SANDBOX, care e folderul scriptului)
 
 def _learn_ckpts():
     """Lista de checkpointuri (indici de mesaj) la care s-a rulat /learn, in ordine."""
