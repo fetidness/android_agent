@@ -2652,7 +2652,12 @@ if __name__ == "__main__":
             _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
         if q=="/reset":
             M[:]=M[:1]; save_ctx()
-            print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
+            # FIX: /reset goleste si checkpointurile /learn (altfel fisierul acumula indici
+            # stale din sesiuni vechi; logica ii ignora, dar fisierul crestea inutil).
+            try:
+                if os.path.exists(LEARN_CKPT): os.remove(LEARN_CKPT)
+            except Exception: pass
+            print(G+"   [reset] history erased ("+os.path.basename(CTX)+") and /learn checkpoints cleared."+N); continue
         if q.startswith("/auto-learn") or q.startswith("/autolearn"):
             print(OF+"   [auto-learn] ELIMINAT - agentul nu mai invata singur dupa task."+N)
             print(G+"   [auto-learn] memoria se actualizeaza DOAR manual, cu /learn."+N); continue
