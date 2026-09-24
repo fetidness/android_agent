@@ -383,7 +383,13 @@ def mem_lint(txt):
     - section heading present and well formed.
     Read-only: it NEVER edits or truncates the file. Returns (warnings, lessons)."""
     import re as _re
-    MAXLINE = 500
+    # ★ FIX (bug real 24 sept: /learn a STERS o lectie TRAP de 584 chars de pe disc):
+    # MAXLINE era 500 si blocul de ENFORCE de mai jos ELIMINA fizic liniile prea lungi,
+    # cu un open(MEM,"w") care rescria tot fisierul. Rezultat: cea mai valoroasa lectie
+    # (lant cauza->eroare->fix cu multe detalii) devenea exact cea mai fragila, pentru
+    # ca e lunga prin natura ei. Memoria e declarata UNLIMITED, deci lungimea NU e un
+    # motiv de stergere. Acum limita urca mult si e DOAR un avertisment de densitate.
+    MAXLINE = 2000
     FORBID = [
         (r"\b(am citit|am rulat|am apelat|am folosit tool|tool call)\b", "narration/tool-call"),
         (r"\b(operatorul|utilizatorul a spus|buna seara)\b", "operator dialogue"),
@@ -2271,10 +2277,11 @@ def do_learn(trigger="/learn"):
         # ENFORCE the rules: drop the offending lesson lines from the proposed memory
         # BEFORE writing, so bad lessons never reach the file (not just a warning).
         _bad = set()
+        _long = 0
         for _w in _lint:
             _txt = _w[1]
-            if _w[0]:  # (length, line) -> too long
-                _bad.add(_w[1].strip())
+            if _w[0]:  # (length, line) -> too long: DOAR avertizare, NU stergere (memoria e unlimited)
+                _long += 1
             elif _txt.startswith("forbidden"):
                 _bad.add(_txt.split("]: ", 1)[-1].strip())
         _kept = [l for l in now.split("\n")
@@ -2284,13 +2291,13 @@ def do_learn(trigger="/learn"):
             now = "\n".join(_kept)
             try: open(MEM, "w", encoding="utf-8").write(now)
             except Exception as _e: print(R+"   [mem] could not rewrite memory: "+str(_e)+N)
-        print(R+"   [mem] LINT: "+str(len(_lint))+" issue(s); dropped "+str(_dropped)+" bad lesson line(s) (not saved to memory)."+N)
+        print(R+"   [mem] LINT: "+str(len(_lint))+" issue(s); dropped "+str(_dropped)+" line(s) with FORBIDDEN content; kept "+str(_long)+" long line(s)."+N)
         for _w in _lint[:6]:
-            _msg = ("line "+str(_w[0])+" chars (>300): "+_w[1][:90]) if _w[0] else _w[1]
+            _msg = ("line "+str(_w[0])+" chars (long, kept - only a density note): "+_w[1][:90]) if _w[0] else _w[1]
             print(R+"        ! "+_msg+N)
         if len(_lint)>6: print(R+"        ... +"+str(len(_lint)-6)+" more"+N)
     elif _nless:
-        print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), all <=300 chars, no forbidden content."+N)
+        print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), no forbidden content, none over "+str(2000)+" chars."+N)
     save_ctx()
     if m and m.get("content"): print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render(m["content"].strip()))
     print(G+"   [/learn] the new memory loads into the system prompt at the NEXT startup."+N)
