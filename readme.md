@@ -4,6 +4,23 @@
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
 
+### Starea repo-ului (25 sept 2026) — VERIFICAT
+
+| Ce | Valoare reala |
+|----|---------------|
+| Ultimul commit | `d8cc3c1` (din **138** in total) |
+| Autori | gab (111), fetidness (27) |
+| Perioada | 19 sept -> 25 sept 2026 |
+| Marker assets activ | **`.assets_v115`** |
+| APK debug | 29 753 129 B (**28.4 MB**) |
+| `agent.py` | **183 434 B** / 2684 linii |
+| Module Kotlin | **15** |
+| Assets Python | 9 `.py` + `Lib/` (188 intrari) |
+| Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
+
+> Documentul acesta e aliniat la codul de la commit `d8cc3c1`. Daca HEAD difera,
+> verifica intai cu `git log -1` inainte sa ai incredere in cifrele de mai sus.
+
 ### Ce esti
 Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 (Samsung SM-A366B, Android 16), compilat de la zero cu:
@@ -12,6 +29,9 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 - **DeepSeek API** pentru creier
 
 ### Ce poti face (11 tool-uri)
+
+> Ultima revizuire a tabelului: 25 sept 2026, commit `d8cc3c1`. Tool-urile de mai jos sunt
+> EXACT cele definite in `agent.py` (verificate in sursa, nu presupuse).
 
 | Tool | Ce face | Uid |
 |------|---------|-----|
@@ -52,12 +72,19 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
   home/, pyhome/   HOME + PYTHONHOME
   libdir.txt       calea catre libpyexec.so (SE SCHIMBA la reinstalare!)
   bridge.port      portul bridge-ului Kotlin
-/sdcard/Download/Agent/
+/sdcard/Download/Agent/            (PARTIAL - doar ce trebuie vizibil/durabil)
   adbkey, adbkey.pub   ★ CHEIA PERSISTENTA (supravietuieste reinstalarilor)
-  context.json     istoricul conversatiei
-  memory.md        memoria pe termen lung (lectiile)
-  workspace/       fisierele de lucru
+  workspace/       fisierele de lucru (vizibil in file manager)
+                   + .agent_folder.png (marker MediaScanner)
+                   + logs/  archive/  __pycache__/
+  .old_sdcard_home/    reziduu istoric (vechiul HOME mutat in stocarea privata)
 ```
+
+⚠️ **ATENTIE (schimbat 24 sept): `context.json` si `memory.md` NU mai sunt pe /sdcard.**
+Traiesc in **stocarea privata**: `/data/data/net.sys32.agent/files/`
+(motiv: elimina zgomotul MediaProvider/FUSE; vezi Etapa 32). `AGENT_HOME` se
+IGNORa acum pentru HOME (ramane doar pentru compat) — il folosim doar ca sa
+localizam `workspace/` de pe sdcard.
 
 ### Cum pornesti Python-ul manual (pe device, prin adb)
 ```bash
@@ -89,7 +116,9 @@ run-as net.sys32.agent sh -c "cd /data/data/net.sys32.agent/files/python && \
 **IN APK (auto, dupa instalare):**
 - Python 3.14 ARM64 + libpyexec + stdlib + libdynload
 - agent.py, adb_client.py, adb_setup.py, android_bridge.py
-- 9 module Kotlin (UI, bridge, accessibility, reflection, service)
+- 15 module Kotlin: MainActivity, AndroidBridge, Reflection, Primitives, Components, Ansi,
+  AgentService, AgentAccessibilityService, AgentNotificationListener, AgentIme,
+  AgentVpn, AgentDeviceAdmin, ScreenCaptureService, CameraActivity, BootReceiver
 - memory.md (default), key.txt (API)
 - LA PRIMA PORNIRE se AUTO-GENEREAZA: cheia RSA, certificatul X.509,
   libs-urile crypto/ssl (copiate din /apex)
@@ -229,7 +258,7 @@ ls -lh $APK            # -> -rw-rw-r-- 33M  app-debug.apk
 #      minSdkVersion:'26' / targetSdkVersion:'36'
 #      uses-permission: name='android.permission.INTERNET' ...
 unzip -l $APK | grep -c 'assets/python/'              # -> 928 fisiere Python ambalate
-unzip -l $APK | grep 'assets/python/agent.py'         # -> 151871  assets/python/agent.py
+unzip -l $APK | grep 'assets/python/agent.py'         # -> 183434  assets/python/agent.py
 unzip -l $APK | grep 'lib/arm64-v8a/'
 #   -> 4537664  lib/arm64-v8a/libcrypto_python.so
 #        4400  lib/arm64-v8a/libpyexec.so          (mic = interpreterul)
@@ -267,7 +296,7 @@ $ADB shell pm list packages | grep sys32                       # package present
 
 `MainActivity.kt` in `extractAssets()`:
 ```kotlin
-val stamp = File(filesDir, ".assets_v81")
+val stamp = File(filesDir, ".assets_v115")
 if (stamp.exists() && dest.exists()) return   // ← iese IMEDIAT daca markerul exista
 ```
 Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi markerul.
@@ -276,14 +305,14 @@ Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi mar
 ```bash
 # 1. gaseste markerul curent
 grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt
-#    -> 554:  val stamp = File(filesDir, ".assets_v81")
+#    -> 654:  val stamp = File(filesDir, ".assets_v115")
 
-# 2. incrementeaza-l (v81 -> v82)
-sed -i 's/\.assets_v81/.assets_v82/' app/src/main/java/net/sys32/agent/MainActivity.kt
+# 2. incrementeaza-l (v115 -> v116)
+sed -i 's/\.assets_v115/.assets_v116/' app/src/main/java/net/sys32/agent/MainActivity.kt
 
 # 3. rebuild + install, apoi verifica PE DEVICE
 $ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/ | grep assets_v
-#    -> .assets_v82  (trebuie sa fie NOU)
+#    -> .assets_v116  (trebuie sa fie NOU)
 ```
 
 Ce face re-extragerea (util cand ceva „nu se actualizeaza"):
@@ -389,7 +418,7 @@ $ADB shell cat /sdcard/Download/Agent/memory.md        # lectiile invatate
 APK=/home/gab/Desktop/android_agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk
 /home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -20   # ★ 2>&1: scrie pe stderr!
 unzip -l $APK | grep 'assets/python/' | wc -l        # 928 fisiere Python (masurat)
-unzip -l $APK | grep 'assets/python/agent.py'        # 151871 bytes (masurat)
+unzip -l $APK | grep 'assets/python/agent.py'        # 183434 bytes (masurat)
 unzip -l $APK | grep 'lib/arm64-v8a/'                # 6 .so-uri (libpyexec 4400, libpython3.14 5828792)
 /home/gab/android/build-tools/35.0.1/dexdump -f $APK >/dev/null 2>&1 && echo dex-ok
 ```
@@ -565,9 +594,9 @@ ent Android (net.sys32.agent)
 
 1. Prezentare generala
 2. Arhitectura
-3. Componentele aplicatiei (3.1-3.6: UI, Bridge, Reflection, Agent, AgentService, Accessibility)
+3. Componentele aplicatiei (3.1-3.6 + cele 15 module Kotlin si 9 fisiere Python)
 4. Cum functioneaza Python pe Android
-5. Pasii dezvoltarii de la 0 (etape 1-20)
+5. Pasii dezvoltarii de la 0 (etape 1-38, ordonate cronologic)
 6. Probleme intalnite si solutii
 7. Structura de fisiere a aplicatiei
 8. Structura pe dispozitiv (in rulare)
@@ -683,6 +712,59 @@ Capabilitati expuse prin bridge (tool `ui`):
 Config: res/xml/accessibility_service_config.xml (canRetrieveWindowContent=true,
 canPerformGestures=true, flagReportViewIds, flagRetrieveInteractiveWindows).
 Serviciul se activeaza de UTILIZATOR din Settings > Accessibility (vezi sec. 9).
+### 3.7 Servicii privilegiate (FIX 1-8 ACCES MAXIM, commit `c47e3b4`)
+Module Kotlin adaugate pentru acces extins fara root. Fiecare expune actiuni in
+bridge, apelabile ca sub-tool-uri: `android(tool="notif", action="list")` etc.
+
+| Modul | Ce face | Actiune bridge |
+|-------|---------|----------------|
+| `AgentNotificationListener.kt` | citeste notificarile altor app-uri | `notif` |
+| `AgentIme.kt` | citeste text din campuri de input | `ime` |
+| `AgentVpn.kt` | VpnService (interceptare trafic) | `vpn` |
+| `ScreenCaptureService.kt` | MediaProjection FGS (captura ecran) | `capture` |
+| `AgentDeviceAdmin.kt` | DeviceAdmin (dpm) | `guard` |
+| `BootReceiver.kt` + GuardService | anti-kill + repornire la boot | - |
+| `CameraActivity.kt` | captura foto/video | `camera` |
+| `AgentAccessibilityService.kt` | vedere + control UI (vezi 3.6) | `ui` |
+
+**Capcane reale (documentate in memory.md):**
+- `takeScreenshot()` a11y NU merge in `/data/local/tmp` (EACCES) -> scrie in filesDir
+- rate-limit: ~1 captura/secunda (limita Android, nu bug)
+- MediaProjection (Android 14+) cere `registerCallback` INAINTE de `createVirtualDisplay`
+
+### 3.8 Primitives.kt - primitive generale de reflection
+Operatii de acces avansat expuse agentului (commit `c47e3b4`, etape 15):
+- **proxy** de interfete (java.lang.reflect.Proxy) - implementeaza orice interfata la runtime
+- **referinte la obiecte** (tin obiecte Java vii intre apeluri, cu id)
+- **subclasare la runtime** prin DexMaker (`op=subclass`)
+- **await/evenimente async** (asteapta emiteri de la obiecte Java)
+
+### 3.9 AgentService.kt - foreground service
+Agentul ruleaza si cind app-ul e minimizat. Notificare persistenta "AGENT ruleaza".
+Wakelock cu timeout 30min + renew la inceputul fiecarui task (optimizare baterie,
+commit `99f2335`). Watchdog propriu (verificare `pyProc`, nu `pgrep` - pe Android
+un app NU poate lista procese ale altor uid-uri) cu cooldown 20s.
+
+### 3.10 Componente UI (Components.kt, Ansi.kt)
+- `Ansi.kt` - converteste secvente SGR in span-uri de culoare pentru TextView
+- `Components.kt` - widget-uri reutilizabile
+- Paleta One Dark, font DejaVuSansMono, `MAX_UI_CHARS=200000` (fix lag,
+  commit `76fbbba`)
+
+### 3.11 Fisierele Python din sandbox (`files/python/`)
+`sandboxul` ruleaza 9 fisiere `.py` + `Lib/` (188 intrari) + `libdynload/`:
+
+| Fisier | Rol |
+|--------|-----|
+| `agent.py` (183 434 B) | bucla principala, tool-uri, comenzi `/`, sistemul de memorie |
+| `adb_client.py` | client ADB PYTHON-FIRST (drenare select-gated, 48 ms/comanda) |
+| `adb_setup.py` | auto-setup: cheie RSA, certificat X.509, libs din /apex |
+| `android_bridge.py` | clientul socket catre AndroidBridge.kt |
+| `toolchain.py` | compilare C/C++ nativa pe telefon (clang-21, pkg Termux) |
+| `tpm.py` | package manager portat (bootstrap toolchain) |
+| `build.py` | helper de build |
+| `setexec.py` | seteaza bitul de executie pe .so extrase |
+| `_streams.py` | drenare neblocanta pentru subprocess (produs de AAPT2 care ignora `_`) |
 
 ## 4. CUM FUNCTIONEAZA PYTHON PE ANDROID
 
@@ -1010,40 +1092,58 @@ TEST COMPLET CURAT (memoria + contextul STERSE, WhatsApp pe ecranul principal):
 
 ## 8. STRUCTURA PE DISPOZITIV (IN RULARE)
 
-    /sdcard/Download/Agent/              <-- VIZIBIL in file manager
-    |-- memory.md                        (memoria agentului)
+    /data/data/net.sys32.agent/files/    <-- HOME_DIR (stocare PRIVATA, din 24 sept)
+    |-- memory.md                        (memoria pe termen lung - lectiile)
     |-- context.json                     (istoricul conversatiei)
-    `-- workspace/                       (tot ce genereaza agentul)
-        |-- .agent_folder.png            (marker pentru indexare)
-        |-- logs/                        (output-uri complete de tool)
-        `-- archive/                     (snapshot-uri context)
+    |-- .learn_checkpoints.json          (checkpointuri /learn - ce s-a invatat deja)
+    |-- bg_jobs.json                     (registrul job-urilor de fundal)
+    |-- logs/                            (<job_id>.log per job + capturi streaming)
+    |-- workspace/                       (fallback daca sdcard-ul nu e scriibil)
+    |-- adbkey / adbkey.pub              (cheia RSA auto-generata)
+    |-- tls.crt / tls.key                (certificat X.509)
+    |-- libs/                            (libcrypto, libssl, pairing_* din /apex)
+    |-- home/  pyhome/                   (HOME + PYTHONHOME)
+    |-- python/                          (Python extras din assets + Lib/ + libdynload/)
+    |-- bridge.port                      (portul bridge-ului Kotlin)
+    |-- .setup_done                      (setup o singura data)
+    |-- .assets_vNN                      (marker versiune assets)
+    `-- key.txt                          (cheia API DeepSeek, optional)
 
-    /data/data/net.sys32.agent/files/    <-- sandbox privat
-    |-- bridge.port                      (portul serverului)
-    |-- home/bridge.port
-    |-- pyhome/                          (PYTHONHOME)
-    `-- python/                          (Python extras din assets)
+    /sdcard/Download/Agent/              <-- VIZIBIL in file manager (doar ce e durabil)
+    |-- adbkey, adbkey.pub               (* CHEIA PERSISTENTA - supravietuieste reinstalarilor)
+    |-- workspace/                       (tot ce genereaza agentul)
+    |   |-- .agent_folder.png            (marker pentru indexare MediaScanner)
+    |   |-- logs/                        (output-uri complete de tool)
+    |   `-- archive/                     (snapshot-uri context)
+    `-- .old_sdcard_home/                (reziduu: vechiul HOME mutat in privat)
 
-Nota: tot ce face agentul ajunge in /sdcard/Download/Agent/ (vizibil in
-My Files -> Internal storage -> Download -> Agent, sau prin USB/MTP).
-La dezinstalare, aceste fisiere SUPRAVIETUIESC.
+Nota: din 24 septembrie memory.md + context.json traiesc in STOCAREA PRIVATA
+(fara FUSE/MediaProvider). Doar workspace-ul + cheia ADB raman pe sdcard, ca sa
+fie accesibile din My Files -> Internal storage -> Download -> Agent (sau USB/MTP).
+Fisierele de pe /sdcard SUPRAVIETUIESC la dezinstalare; cele din files/ NU.
 
 ---
 
 ## 9. COMENZI DISPONIBILE
 
     /help, /?           lista de comenzi
-    /learn              actualizeaza memoria acum (invatare manuala)
-    /auto-learn on|off  invata SINGUR dupa fiecare task
+    /learn              actualizeaza memoria acum (INVATARE MANUALA - singura forma)
     /mem                statistici memorie (marime, bullets, densitate)
     /ctx                context + arhive/log-uri pe disc
     /compact            comprima contextul acum
     /verbose            comuta afisarea completa a codului/output-ului
-    /nospin             fara linia live (scrollback curat)
-    /where              arata unde traieste totul
+    /spin on|off        linia live "se gandeste" (default ON)
+    /nospin             alias: fara linia live (scrollback curat)
+    /watch              urmareste un log/job in timp real
+    /where              arata unde traieste totul (home, workspace, memory, ctx, logs)
     /run <script.py> [args]   ruleaza un script Python din workspace, cu output STREAMING
-    /reset              sterge istoricul conversatiei
+    /run_su <script.py>       ruleaza cu DREPTURI DE SHELL (uid=2000) - depasit de tool-ul `adbsh`
+    /reset              sterge istoricul + checkpointurile /learn
     /exit, /quit        iese
+
+Nota: `/auto-learn` a FOST ELIMINAT (24 sept, commit `31e342f`). Raspunde explicit
+"ELIMINAT - memoria se actualizeaza DOAR manual, cu /learn". Invatarea automata dupa
+fiecare task a fost scoasa din AMBELE fisiere (agent.py Android + agent-original.py Linux).
 
 ---
 
@@ -1444,6 +1544,103 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - Reducere dimensiune: split ABI (arm64-only ~18MB), scoatere _testcapi
 - Eventual: descoperire SD card extern
 
+
+---
+
+### Etapa 32 - HOME_DIR in stocarea PRIVATA (context.json/memory.md nu mai stau pe /sdcard)
+
+**Problema:** `context.json` traia in DOUA locuri (copia privata + oglinda pe /sdcard).
+MediaProvider/FUSE genera zgomot in logcat si erori de quota:
+    "Failed to update quota type for .../context.json.tmp: No such file or directory"
+    "Failed to revoke permissions for .../context.json from DownloadStorageProvider"
+
+**Fix (commits `f514c36`, `54d3fa7`, `207d2c6`, `91ab81c`):**
+- `HOME_DIR` = sandbox-ul PRIVAT (`/data/data/net.sys32.agent/files/`), NU sdcard-ul
+- `context.json`, `memory.md`, `bg_jobs.json`, `logs/`, `.learn_checkpoints.json`
+  traiesc acolo (zero FUSE, zero zgomot MediaProvider)
+- `AGENT_HOME` se IGNORA acum pentru HOME (ramane doar ptr compat) - il folosim
+  DOAR ca sa localizam `workspace/` de pe sdcard
+- `workspace/` ramane pe /sdcard (vizibil in file manager)
+- migrare automata o singura data din locatiile vechi (`/sdcard/agent`, sandbox)
+
+**Dovada (pe device, 25 sept):** `files/context.json` = 674 KB, `files/memory.md` = 6.6 KB,
+`/sdcard/Download/Agent/` contine doar `adbkey*` + `workspace/` + `.old_sdcard_home/`.
+
+### Etapa 33 - Sistem de checkpoint la /learn (nu mai re-invata lectiile stiute)
+
+**Problema:** `/learn` re-analiza TOATA sesiunea si rescria lectii deja existente
+(reformulate), umfland artificial memoria.
+
+**Fix (commits `48d1f0a`, `685c622`, `5e74742`, `39b9771`):**
+- `/learn` acopera INTREAGA sesiune (nu doar coada)
+- fisiere de checkpoint `.learn_checkpoints.json` retine ce s-a invatat deja
+- `/reset` goleste SI checkpointurile, nu doar istoricul
+- `/learn` NU mai sterge lectiile lungi din memory.md (regresie reparata)
+
+### Etapa 34 - ANTI-POISON: porti de validitate inainte de scrierea in memory.md
+
+**Obiectiv:** nicio lectie contrazicatoare/greșita sa nu ajunga in memoria permanenta.
+
+**Fix (commits `eb052a4`, `0a35b4e`, `38a9341`, `da96836`):**
+- DOUA porti inainte de scriere: poarta de CONTRADICTIE + poarta de VALIDITATE API
+- lectiile blocate merg in `memory_quarantine.md`, NICIODATA in `memory.md`
+- poarta optimizata: mai putine fals-pozitive (40/40 pe ambele fisiere)
+- portat identic in `agent.py` (Android) si `agent-original.py` (Linux)
+
+### Etapa 35 - ADB PYTHON-FIRST: adbsh rescris pe adb_client direct
+
+**Problema:** sesiunea ADB persistenta aduna erori (output cu un apel in urma, output gol
+intermitent, pachete straine in ordine gresita).
+
+**Fix (commits `f90aa3d`, `d26833f`, `cf682eb`, `ad26cbd`, `cbcdd5b`):**
+- `run_adbsh_tool` rescris pe `adb_client` direct (fara sesiune persistenta)
+- drenare `select-gated`: **588 ms -> 48 ms/comanda (12x)**
+- global timeout DOAR la cerere (nu pe fiecare comanda)
+- cheie publica in format big-endian (AOSP)
+
+### Etapa 36 - FIX 1-8 ACCES MAXIM (raportul AGENT SUPREM)
+
+**Implementat (commit `c47e3b4`, testat 8/8 pe SM-A366B):**
+- screenshot prin AccessibilityService (`takeScreenshot`)
+- NotificationListener (citire notificari ale altor app-uri)
+- IME (citire text din campurile de input)
+- VpnService, MediaProjection FGS, DeviceAdmin
+- GuardService + BootReceiver (anti-kill, repornire automata)
+- actiuni noi in bridge: `notif`, `ime`, `vpn`, `capture`, `guard`
+
+**Capcane documentate (in memory.md):**
+- `takeScreenshot()` a11y NU merge in `/data/local/tmp` (EACCES) -> scrie in filesDir
+- rate-limit real: ~1 captura/secunda (nu e bug)
+- MediaProjection (Android 14+) cere `registerCallback` INAINTE de `createVirtualDisplay`
+
+### Etapa 37 - FIX URGENT: touch exploration bloca TOT telefonul
+
+**Problema (commit `1c308d5`):** flag-urile `flagRequestTouchExplorationMode` +
+`canRequestTouchExplorationMode` din `accessibility_service_config.xml` activau
+`touch_exploration_enabled=1` -> TOATA atingerea pe telefon devenea blocata
+(prima atingere doar exploreaza, a doua apasa). Utilizatorul credea ca s-a blocat telefonul.
+
+**Fix:** scoase AMBELE din config XML (nu sunt necesare pentru acces). Verificat:
+`touch_exploration` ramane 0 chiar cu a11y activ; home/recents/tap merg normal.
+
+**DEBLOCARE RAPIDA (daca se intampla):**
+    settings put secure enabled_accessibility_services ''
+    settings put secure accessibility_enabled 0
+    settings put secure touch_exploration_enabled 0
+
+### Etapa 38 - Optimizari robustete + baterie + UI
+
+**Watchdog (commit `99f2335`):** verifica prea agresiv `pyProc.isAlive` (setat cu
+intarziere in thread -> null -> repornire in bucla, 3 PID in 15s). Fix: verificare
+proprie `pyProc` + cooldown 20s + `lastPythonStart` la pornire -> 1 PID stabil.
+
+**Baterie:** wake lock cu `acquire(30min timeout)` + renew la inceputul taskului.
+Idle: CPU 0%, RAM 105 MB (locul 11, sub systemui/gms).
+
+**UI (commit `76fbbba`):**
+- sageata scroll `btnDown` ELIMINATA
+- `launchMode="singleTask"` (notificarea nu mai deschide instanta noua)
+- limita `MAX_UI_CHARS=200000` + `lastLine()` optimizat (fara lag la revenire din bg)
 
 ---
 
@@ -2015,7 +2212,7 @@ adaptate pentru particularitatile telefonului (NU copiate 1:1):
 | `py(code, cwd)` | `run_tool(code)` |
 | tool-uri standard | + `run_android_tool`, `run_adbsh_tool`, `run_toolchain_tool`, `bg_tool` |
 
-**Build:** `./build_app.sh` → BUILD SUCCESSFUL, instally, `.assets_v83` extras pe device.
+**Build:** `./build_app.sh` → BUILD SUCCESSFUL, instalat, `.assets_v115` extras pe device.
 Optimizarile confirmate **in APK** (citite din zip).
 
 > **⚠️ CAPCANA:** markerul `.assets_vNN` din `MainActivity.kt` trebuie INCREMENTAT la fiecare
