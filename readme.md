@@ -17,9 +17,13 @@
 | Module Kotlin | **15** |
 | Assets Python | 9 `.py` + `Lib/` (188 intrari) |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
+| Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** (139 commituri, actualizat periodic) |
 
-> Documentul acesta e aliniat la codul de la commit `d8cc3c1`. Daca HEAD difera,
+> Documentul acesta e aliniat la codul de la commit `5f65990`. Daca HEAD difera,
 > verifica intai cu `git log -1` inainte sa ai incredere in cifrele de mai sus.
+>
+> ★ **Istoricul complet al dezvoltatarii** (toate commiturile, grupate pe zile si
+> pe categorii) este in **[`CHANGELOG.md`](CHANGELOG.md)** — actualizat periodic.
 
 ### Ce esti
 Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
@@ -517,6 +521,22 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 - [ ] `grep -rn 'key.txt\|AIza\|sk-' --include='*.py' --include='*.kt' .` → **nicio cheie** in repo
 - [ ] `git status --short` → doar fisierele intentionate
 - [ ] `py_compile` pe fisierele Python modificate (`python3 -m py_compile agent.py`)
+- [ ] **`CHANGELOG.md` actualizat** daca sesiunea a produs commituri noi (vezi mai jos)
+
+#### Regenerarea `CHANGELOG.md`
+
+`CHANGELOG.md` se genereaza din istoricul git. Rularea de mai jos rescrie
+documentul cu TOATE commiturile, grupate pe zile si pe categorii (UI, ADB,
+memorie, toolchain, acces Android etc.):
+
+```bash
+cd /home/gab/Desktop/android_agent
+git log --format='%h|%ad|%an|%s' --date=short > temp/all_commits.txt
+# apoi ruleaza generatorul (categorizare pe cuvinte cheie) si scrie CHANGELOG.md
+```
+
+> **Regula:** dupa fiecare sesiune de dezvoltare care produce commituri noi, regenereaza
+> `CHANGELOG.md` si comite-l in ACELASI push. Asa istoricul rămâne sincron cu codul.
 
 ---
 
@@ -605,6 +625,8 @@ ent Android (net.sys32.agent)
 11. Limitari cunoscute
 12. Lecții invatate
 13. Starea finala si pasii urmatori
+
+> Vezi si **[`CHANGELOG.md`](CHANGELOG.md)** — istoricul commiturilor (actualizat periodic).
 
 ---
 
