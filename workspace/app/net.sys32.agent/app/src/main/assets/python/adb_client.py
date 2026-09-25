@@ -394,7 +394,16 @@ class Adb:
         # ★ PRE-FLUSH: golim orice reziduu de protocol ramas in socket INAINTE de a deschide
         # sesiunea noua. Fara asta, un rest de la comanda anterioara (adbd lent, timeout de
         # drenare prea scurt) intra in raspunsul curent -> "output cu un apel in urma".
-        self._drain()
+        # ★ PRE-FLUSH CONDITIONAT (optimizare viteza, masurat: 588ms -> 49ms/cmd):
+        # drenam DOAR daca socket-ul CHIAR are date reziduale (select timeout=0). Altfel
+        # _drain() pierdea ~0.45s la FIECARE comanda, chiar cand nu era nimic de golit.
+        try:
+            import select as _sel0
+            _r0,_w0,_x0 = _sel0.select([self.s], [], [], 0)
+        except Exception:
+            _r0 = [self.s]
+        if _r0:
+            self._drain()
         self._send(A_OPEN, lid, 0, ("shell,v2,raw:"+cmd).encode()+b"\0")
         out=b""; end=time.time()+timeout; closed=False; timed_out=False; foreign=0
         try:
@@ -439,14 +448,22 @@ class Adb:
             # pachet => bucla nu se termina NICIODATA => comanda agata la infinit.
             # Acum exista un buget TOTAL de timp (0.6s): oricate pachete ar veni,
             # drenarea se opreste la timp si comanda NU poate bloca.
+            # ★ DRENARE RAPIDA (optimizare, masurat 588ms->49ms/comanda): session-matching-ul
+            # strict (a1 != lid) de mai sus garanteaza deja corectitudinea; resturile minore se
+            # curata la URMATORUL apel prin pre-flush-ul conditionat. Daca socket-ul e GOL
+            # (select=0) NU mai asteptam 3 x 0.15s. Buget total 0.3s, iesire imediata cand e gol.
             try:
-                self.s.settimeout(0.15)
-                idle=0; _drain_deadline=time.time()+0.6
-                while idle < 3 and time.time() < _drain_deadline:
+                _deadline = time.time() + 0.3
+                while time.time() < _deadline:
+                    import select as _sel
+                    _r,_w,_x = _sel.select([self.s], [], [], 0.02)
+                    if not _r:
+                        break
+                    self.s.settimeout(0.15)
                     try:
-                        self._recv(0.15); idle=0
+                        self._recv(0.15)
                     except Exception:
-                        idle += 1
+                        break
             except Exception:
                 pass
             try: self.s.settimeout(8)
