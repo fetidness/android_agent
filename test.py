@@ -1020,7 +1020,7 @@ def vision(path,prompt,max_tokens=None):
     msg=[{"role":"user","content":[{"type":"text","text":prompt or "Describe exactly what this image shows."},
           {"type":"image_url","image_url":{"url":"data:"+mime+";base64,"+b}}]}]
     body={"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":msg,"max_tokens":mt,
-          "thinking":{"type":os.environ.get("DS_VISION_THINKING","disabled")}}
+          "thinking":{"type":os.environ.get("DS_VISION_THINKING","enabled")}}
     r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps(body).encode(),
       headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
     try:
@@ -1042,7 +1042,7 @@ def py(c,cwd):
         try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
         except Exception: pass
         raise
-    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")[:8000]
+    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")
 
 # ==================== TOOL ROUTER: alege AUTOMAT python vs bash ====================
 # Euristici bazate pe masuratori reale (teste 1-3): bash castiga pe fluxuri/volum/paralelism,
@@ -1101,7 +1101,7 @@ def bash(cmd, cwd):
         try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
         except Exception: pass
         raise
-    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")[:8000]
+    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")
 
 def run_bash_tool(cmd):
     """Wrapper cu acelasi contor de pasi si aceeasi linie de afisare ca run_tool."""
@@ -1192,13 +1192,15 @@ def tool_multi(a):
             r = (r or "").rstrip()
         except Exception as e:
             r = "!! FAILED (isolated, the others still ran): " + e.__class__.__name__ + ": " + str(e)
-        # per-entry cap so one huge entry cannot blow the whole answer
-        if len(r) > 2000:
-            r = r[:1400] + "\n[... " + str(len(r)-1800) + " chars omitted - read it with the `read` tool if you need it ...]\n" + r[-400:]
+        # per-entry cap so one huge entry cannot blow the whole answer (scaled to the 1M window)
+        _cap = max(2000, _budget() // max(1, len(ops)))
+        if len(r) > _cap:
+            _keep = _cap - 600
+            r = r[:_keep] + "\n[... " + str(len(r)-_keep-400) + " chars omitted - read it with the `read` tool if you need it ...]\n" + r[-400:]
         out.append(head + "\n" + (r if r else "(no output)"))
     res = "\n".join(out)
-    if len(res) > 7000:
-        res = res[:6600] + "\n[... total capped; run fewer/smaller ops ...]"
+    if len(res) > _budget():
+        res = res[:_budget()-400] + "\n[... total capped; run fewer/smaller ops ...]"
     return res
 
 def call_tool(c):
