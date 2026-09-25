@@ -171,7 +171,7 @@ export PATH=$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
 **Verificare mediu (5 secunde):**
 ```bash
 java -version                                  # -> openjdk 21.0.12.1
-cd /home/gab/Desktop/agent/workspace/app/net.sys32.agent && ./gradlew --version
+cd /home/gab/Desktop/android_agent/workspace/app/net.sys32.agent && ./gradlew --version
 /home/gab/android/platform-tools/adb devices -l
 ```
 
@@ -182,7 +182,7 @@ cd /home/gab/Desktop/agent/workspace/app/net.sys32.agent && ./gradlew --version
 #### Calea normala (build + install + start) — 99% din cazuri
 
 ```bash
-cd /home/gab/Desktop/agent/workspace/app
+cd /home/gab/Desktop/android_agent/workspace/app
 ./build_app.sh
 ```
 
@@ -201,7 +201,7 @@ adb shell am start -n net.sys32.agent/.MainActivity        # START
 #### Doar build (fara install)
 
 ```bash
-cd /home/gab/Desktop/agent/workspace/app/net.sys32.agent
+cd /home/gab/Desktop/android_agent/workspace/app/net.sys32.agent
 ./gradlew assembleDebug                 # APK: app/build/outputs/apk/debug/app-debug.apk
 ./gradlew --offline assembleDebug       # fara retea (deps in cache) — ~14s incremental
 ./gradlew clean assembleDebug           # rebuild de la ZERO (lent: 59M assets + 24M libs)
@@ -336,8 +336,8 @@ linie si il deseneaza in TextView. Deci **orice `print()` din `agent.py` apare p
 
 Citire headless:
 ```bash
-$ADB exec-out screencap -p > /home/gab/Desktop/agent/temp/shot.png   # apoi tool `look`
-ls -l /home/gab/Desktop/agent/temp/shot.png     # ★ verifica >100KB, altfel frame gol/stale
+$ADB exec-out screencap -p > /home/gab/Desktop/android_agent/temp/shot.png   # apoi tool `look`
+ls -l /home/gab/Desktop/android_agent/temp/shot.png     # ★ verifica >100KB, altfel frame gol/stale
 ```
 Alternativa mai buna (fara OCR): scrie in `/sdcard/Download/Agent/` si citeste fisierul.
 ```bash
@@ -386,7 +386,7 @@ $ADB shell cat /sdcard/Download/Agent/memory.md        # lectiile invatate
 #### D6. INSPECTIA APK-ULUI
 
 ```bash
-APK=/home/gab/Desktop/agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk
+APK=/home/gab/Desktop/android_agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk
 /home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -20   # ★ 2>&1: scrie pe stderr!
 unzip -l $APK | grep 'assets/python/' | wc -l        # 928 fisiere Python (masurat)
 unzip -l $APK | grep 'assets/python/agent.py'        # 151871 bytes (masurat)
@@ -446,7 +446,7 @@ cross-toolchain manual; scriptul oficial face tot.
 
 ```bash
 # 1. re-descarca sursele (odata, ~25 MB)
-mkdir -p /home/gab/Desktop/agent/workspace/build && cd /home/gab/Desktop/agent/workspace/build
+mkdir -p /home/gab/Desktop/android_agent/workspace/build && cd /home/gab/Desktop/android_agent/workspace/build
 curl -LO https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tgz
 tar xf Python-3.14.7.tgz
 cd Python-3.14.7
@@ -516,7 +516,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 
 ### CUM REBUILDUIESTI APLICATIA (daca modifici cod)
 ```bash
-cd /home/gab/Desktop/agent/workspace/app
+cd /home/gab/Desktop/android_agent/workspace/app
 ./build_app.sh          # build + install + start (face tot)
 ```
 **ATENTIE:**
@@ -530,7 +530,7 @@ cd /home/gab/Desktop/agent/workspace/app
 
 ### UNDE E CODUL SURSA (pe laptop, pentru dezvoltare)
 ```
-/home/gab/Desktop/agent/
+/home/gab/Desktop/android_agent/
   agent-original.py                              agentul pentru LINUX (desktop)
   Documentatie_Agent_Android.md                  ACEST document
   memory.md                                      memoria agentului desktop
@@ -1581,7 +1581,7 @@ Singura intervenție: `adb tcpip 5555` + "Allow" o data (dupa restart).
 > `env.sh` NU mai exista (sters); variabilele sunt setate de `build_app.sh`.
 
     # build + install + start (recomandat, face tot)
-    cd /home/gab/Desktop/agent/workspace/app
+    cd /home/gab/Desktop/android_agent/workspace/app
     ./build_app.sh
 
     # sau manual:
@@ -1599,7 +1599,7 @@ Singura intervenție: `adb tcpip 5555` + "Allow" o data (dupa restart).
 
     # Python pentru Android (o singura data / rar) - vezi OP.6
     # ATENTIE: sursele NU sunt pe disc (build/ e in .gitignore) - re-descarca-le intai
-    cd /home/gab/Desktop/agent/workspace/build/Python-3.14.7
+    cd /home/gab/Desktop/android_agent/workspace/build/Python-3.14.7
     ./android.py build aarch64-linux-android     # telefon
     ./android.py build x86_64-linux-android      # emulator
 
