@@ -8,19 +8,25 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Ultimul commit | `d8cc3c1` (din **138** in total) |
-| Autori | gab (111), fetidness (27) |
+| Ultimul commit | `6e8f5a3` (din **153** in total) |
+| Autori | gab (111), fetidness (42) |
 | Perioada | 19 sept -> 25 sept 2026 |
 | Marker assets activ | **`.assets_v115`** |
 | APK debug | 29 753 129 B (**28.4 MB**) |
-| `agent.py` | **183 434 B** / 2684 linii |
+| `agent.py` (assets) | **180 598 B** (v2 optimizat) |
+| `agent-android-v2.py` | **180 598 B** / 2686 linii |
+| `agent-original-android.py` | **183 832 B** (referinta, MD5 `9b63f3be`) |
+| `agent-linux-v2.py` | **112 118 B** (optimizat Linux) |
+| `agent-original-linux.py` | **112 997 B** (referinta) |
 | Module Kotlin | **15** |
 | Assets Python | 9 `.py` + `Lib/` (188 intrari) |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
-| Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** (139 commituri, actualizat periodic) |
+| Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** (153 commituri, actualizat periodic) |
 
-> Documentul acesta e aliniat la codul de la commit `5f65990`. Daca HEAD difera,
-> verifica intai cu `git log -1` inainte sa ai incredere in cifrele de mai sus.
+> **DEFAULT la clone/build:** `assets/python/agent.py` = copia lui `agent-android-v2.py`
+> (optimizat, cost fix **6449 tok/req**, fereastra 1M exploatata integral).
+> Originalele rămân disponibile la radacina repo-ului (`agent-original-android.py`,
+> `agent-original-linux.py`). Vezi **Etapa 46** pentru lista completa a optimizarilor.
 >
 > ★ **Istoricul complet al dezvoltatarii** (toate commiturile, grupate pe zile si
 > pe categorii) este in **[`CHANGELOG.md`](CHANGELOG.md)** — actualizat periodic.
@@ -580,17 +586,26 @@ cd /home/gab/Desktop/android_agent/workspace/app
 ### UNDE E CODUL SURSA (pe laptop, pentru dezvoltare)
 ```
 /home/gab/Desktop/android_agent/
-  agent-original.py                              agentul pentru LINUX (desktop)
+  agent-original-android.py                      agentul ANDROID ORIGINAL (referinta, neatins)
+  agent-original-linux.py                        agentul LINUX ORIGINAL (referinta, neatins)
+  agent-android-v2.py                            agentul ANDROID OPTIMIZAT (v2) - ACESTA e default-ul
+  agent-linux-v2.py                              agentul LINUX OPTIMIZAT (v2)
   Documentatie_Agent_Android.md                  ACEST document
   memory.md                                      memoria agentului desktop
   workspace/app/net.sys32.agent/
-    app/src/main/assets/python/agent.py          agentul ANDROID (Python)
+    app/src/main/assets/python/agent.py          = continutul lui agent-android-v2.py (DEFAULT la clone/build)
     app/src/main/assets/python/adb_client.py     client ADB (super-puteri)
     app/src/main/assets/python/adb_setup.py      auto-setup
     app/src/main/assets/python/android_bridge.py bridge Python-side
     app/src/main/java/net/sys32/agent/*.kt       Kotlin (MainActivity, Bridge, Accessibility, Reflection)
   (workspace/build/Python-3.14.7/                sursele Python - STERSE, in .gitignore; vezi OP.6)
 ```
+
+> **Schema de nume:** `agent-<platform>-<varianta>.py` unde platforma = `android` | `linux`,
+> iar varianta = `original` (neatins) | `v2` (optimizat pentru context de 1M tokeni).
+> `assets/python/agent.py` este COPIA versiunii v2 - numele fix `agent.py` e cel pe care
+> il cauta codul Kotlin (`ProcessBuilder(py, "agent.py")`), deci default-ul se schimba
+> inlocuind acel fisier, fara nicio modificare de cod.
 
 ---
 
@@ -2454,3 +2469,59 @@ sa astepti. Nu dormi intre pasi: fiecare pas asteapta exact cat are nevoie tool-
 
 numpy 2.5.3 compilat nativ pe telefon (import OK, matmul/svd/fft/random functionale);
 wheel `numpy-2.5.3-cp314-cp314-android_24_arm64_v8a.whl` (7.3 MB).
+
+---
+
+## Etapa 46 - OPTIMIZARE DE TOKENI v2 (fereastra de 1M + tool `help`)
+
+**Descoperirea centrala (bug cu impact catastrofal):** `CHUNK=7000` limita output-ul unui tool call
+la ~1750 tokeni, adica **0.17% din fereastra de 1M**. Orice citire medie se taia in mijloc → pasi
+suplimentari de re-citire → fiecare pas retrimitea TOT istoricul. Limita "de siguranta" producea
+exact opusul: mai multi tokeni.
+
+**Dovada (fisier de 113 KB, ~28k tokeni, incape lejer in 1M):**
+| CHUNK | Pasi de citire | Tokeni input |
+|-------|---------------|--------------|
+| 7000 | 17 | ~292.400 |
+| 60000 | 2 | ~21.400 |
+| 200000 | 1 | ~3.200 |
+
+**Al doilea bug, si mai ascuns:** `py()` si `bash()` faceau `[:8000]` **INAINTE** de `_store()`.
+Logul de pe disc promitea "text complet" dar avea maxim 8000 chars, iar marker-ul "NOT LOST"
+**mintea** — exact ce `_store()` se lauda ca previne. Cu CHUNK=7000 vechi, taierea la 8000 era
+invizibila (se ascundea sub ea).
+
+**Al treilea:** tool-ul `bash` era **complet rupt pe Android** — `Popen(["bash",...])`, dar bash
+NU exista pe Android (doar toybox sh; verificat: nici in /system/bin, nici in prefixul tpm).
+Fiecare apel `bash` crapa cu `FileNotFoundError` neprins → omora task-ul.
+
+**Fixuri aplicate (in AMBELE variante, Android + Linux):**
+| # | Ce | Detaliu |
+|---|----|---------|
+| 1 | `CHUNK` 7000 -> **60000** | 1.4% din fereastra de 1M; o citire medie intra intr-un pas |
+| 2 | `TOOLMAX` -> **8000** | plafon pentru iesiri ne-deliberate |
+| 3 | `py()`/`bash()` | NU mai trunchiaza; bugetul se aplica o singura data, in `_store()` |
+| 4 | `read` ceiling | `min(bud,CHUNK)` (era hardcodat 7000, ignora constanta) |
+| 5 | `multi` caps | scalate la `_budget()` (erau 2000/entry si 7000 total) |
+| 6 | **SHELL fallback** | `_shell()`: bash daca exista, altfel `sh -c`; cache-uit |
+| 7 | `vision` thinking | ON (propriul docstring spunea "THINKING ENABLED", codul trimitea disabled) |
+| 8 | `ask` max_tokens | configurabil (`DS_MAXTOK`), era hardcodat 131072 |
+| 9 | router `route()` | adaugate cat/ls/pwd/md5sum/sha256sum/diff/stat/nl/tee/file/base64 in BASH_STREAM |
+| 10 | **tool `help`** | ghidul avansat de Android (reflection/objects/privileged) scos din promptul fix si livrat la cerere |
+| 11 | **bg logging** | logurile in `/data/local/tmp/bg_logs` (shell nu poate scrie in sandbox-ul app-ului) |
+
+**Cost fix masurat:**
+| Varianta | Inainte | Dupa |
+|----------|---------|------|
+| Android (`agent-android-v2.py`) | 8319 tok/req | **6449 tok/req** |
+| Linux (`agent-linux-v2.py`) | ~3382 tok/req | **2821 tok/req** |
+
+**Testat live pe dispozitiv (SM-A366B):** 44+28+16 teste PASS/0 FAIL; 100.000 linii procesate in
+166ms (602.749 linii/s); context real dupa 878 mesaje = **13.6% din fereastra** (vs teoretic mult
+mai mult cu vechiul CHUNK).
+
+**Schema de nume finala:**
+- `agent-original-android.py` / `agent-original-linux.py` — originalele, neatinse (referinta)
+- `agent-android-v2.py` / `agent-linux-v2.py` — optimizatele v2
+- `assets/python/agent.py` = **copia v2 Android** → default la orice clone/build
+

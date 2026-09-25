@@ -3,9 +3,32 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `462b763`.
+> Ultimul commit inclus: `6e8f5a3`.
 
-**Total: 140 commituri in 7 zile** (19 sept -> 25 sept 2026).
+**Total: 153 commituri in 7 zile** (19 sept -> 25 sept 2026).
+
+---
+
+## 2026-09-25 (sesiune optimizare tokeni)
+
+**Optimizare / buget de context** (5)
+- `e1824f6` test.py: exploit the 1M context window (CHUNK 7000 -> 60000)
+- `7f835f2` test.py: fix 3 hidden truncation bugs + vision thinking (deep audit)
+- `c6432b7` test-android.py: optimised variant of the Android agent.py (fix cost -964 tok/req)
+- `1540a81` test-android.py: add on-demand 'help' tool, cut fixed cost to 6449 tok/req
+- `8a61d9d` test-android.py: fix bg logging (shell cannot write in the app sandbox)
+
+**Tool-uri / agent** (4)
+- `31f4d59` Add test.py: token-optimized variant (fix cost -599 tok/req, no compact)
+- `da1a88a` test.py: fix bash tool (no bash on Android) + router gaps; 44 tests green
+- `0adc28b` agent-original.py (Linux): tag RULE: recunoscut in mem_lint (inclusiv filtrul strict de prefix), scoring, densitate, dedup + prompt
+- `e4fa5c4` agent.py: recunoaste tag-ul RULE: (regula de ordine/decizie) in mem_lint, scoring, densitate, dedup, anti-stergere + prompt
+
+**Structura / naming** (4)
+- `04c2094` Add agent-v2.py (Android, optimised) and agent-original-v2.py (Linux, optimised)
+- `b2d242c` Remove test.py and test-android.py (content now lives in the v2 files)
+- `6e792b6` Rename agents to a clear origin/v2 + platform scheme
+- `6e8f5a3` assets: make the optimised Android agent (v2) the default brain
 
 ---
 
