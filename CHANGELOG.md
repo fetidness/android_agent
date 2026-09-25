@@ -1,16 +1,18 @@
 # CHANGELOG - Agent Android (net.sys32.agent)
 
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
-> sesiune de dezvoltare majora). Format: zile descrescatoare, in fiecare zi commiturile
-> grupate pe categorii. Ultimul commit inclus: `5f65990`.
+> sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
+> descrescatoare, in fiecare zi commiturile grupate pe categorii.
+> Ultimul commit inclus: `462b763`.
 
-**Total: 139 commituri in 7 zile** (19 sept -> 25 sept 2026).
+**Total: 140 commituri in 7 zile** (19 sept -> 25 sept 2026).
 
 ---
 
 ## 2026-09-25
 
-**Documentatie** (1)
+**Documentatie** (2)
+- `462b763` docs: adaug CHANGELOG.md (139 commituri, 7 zile) + referinte in readme.md
 - `5f65990` docs(readme): update complet la realitatea din cod (138 commituri analizate)
 
 **Home / workspace / fisiere** (1)
@@ -30,9 +32,9 @@
 - `cf682eb` fix(adb): output gol intermitent - ordinea id-urilor la pachetele straine
 - `5a17704` docs(tool): TOOLGUIDE - capcana toybox grep (alternanta cu backslash-pipe e silentioasa in bash, GNU-only)
 - `3f7c7a9` fix(toolchain): nu mai polua LD_LIBRARY_PATH al sesiunii shell
-- `dfbb471` agent.py: ghid pentru tool-urile privilegiate noi (ui shot, notif, ime, capture, vpn, guard) ca modelul sa le foloseasca in loc de dumpsys/adbsh + ...
+- `dfbb471` agent.py: ghid pentru tool-urile privilegiate noi (ui shot, notif, ime, capture, vpn, guard) ca modelul sa le foloseasca in loc de dumpsys/adbsh + mar
 - `b8c0475` assets: bump marker la v102 (forteaza re-extragerea asseturilor Python dupa rebase - agent.py/adb_client.py la zi)
-- `446e5a1` fix agent: BG_LOG lipsa, bootstrap pe thread fara redirect_stdout, SIGALRM doar main-thread, compactare oprita; adb_client: RSAPUBLICKEY primul + p...
+- `446e5a1` fix agent: BG_LOG lipsa, bootstrap pe thread fara redirect_stdout, SIGALRM doar main-thread, compactare oprita; adb_client: RSAPUBLICKEY primul + port
 - `a7c1d7a` fix adb auth: trimite RSAPUBLICKEY inaintea SIGNATURE (deblocheaza adbsh uid 2000)
 
 **Sistem de memorie / /learn** (13)
@@ -60,13 +62,13 @@
 - `ed5e5e0` optimizari baterie + reparare toolchain + fix mesaj stale captura
 
 **UI / terminal** (4)
-- `76fbbba` FIX UI: elimin sageata scroll (btnDown), singleTask (notificarea nu mai deschide instanta noua), limita text TextView + lastLine optimizat (fara la...
+- `76fbbba` FIX UI: elimin sageata scroll (btnDown), singleTask (notificarea nu mai deschide instanta noua), limita text TextView + lastLine optimizat (fara lag l
 - `1c308d5` FIX URGENT: scot flagRequestTouchExplorationMode/canRequestTouchExplorationMode din configul a11y (bloca toata atingerea pe telefon) + marker v104
-- `c47e3b4` FIX 1-8 din raportul ACCES MAXIM: screenshot a11y, NotificationListener, IME, VpnService, MediaProjection, DeviceAdmin, GuardService/BootReceiver +...
+- `c47e3b4` FIX 1-8 din raportul ACCES MAXIM: screenshot a11y, NotificationListener, IME, VpnService, MediaProjection, DeviceAdmin, GuardService/BootReceiver + ac
 - `5e72df0` perf agent-original (linux): ctx_tokens cu cache pe semnatura continutului + ctx_warn un singur calcul (inainte 3 apeluri per warn)
 
 **Android: acces, permisiuni, servicii** (2)
-- `3ed32a0` diagnoza guard/ime imbunatatita: ime_state (active/installed_not_selected/not_installed) + *_state pentru servicii + ghid ca installed_not_selected...
+- `3ed32a0` diagnoza guard/ime imbunatatita: ime_state (active/installed_not_selected/not_installed) + *_state pentru servicii + ghid ca installed_not_selected e 
 - `99f2335` optimizari robustete+baterie: watchdog reparat (verificare pyProc+cooldown, nu pgrep), wake lock cu timeout 30min, ghid notif clarificat + marker v109
 
 **Tool-uri agent (python/bash/read/multi/bg/...)** (1)
@@ -79,18 +81,18 @@
 **Documentatie** (1)
 - `65aaead` docs: raport de sesiune 23 sept (git, test de forta, comparatie piata, audit securitate) - md + html
 
-**Tool-uri agent (python/bash/read/multi/bg/...)** (4)
+**Tool-uri agent (python/bash/read/multi/bg/...)** (2)
 - `f47b5e4` docs: corectez numarul de tool-uri (10 -> 11, adaug multi) + lista completa de comenzi slash
 - `293afc6` checkpoint: optimizari de cost + tool multi/read + fereastra 1M + compactare OFF
-- `e29d813` Tool nou 'bg': gestionar de procese in fundal (rezolva output amestecat)
-- `66e2c64` Fix context invalid: tool_calls orfane (HTTPError de la API)
 
 **Toolchain / compilare nativa** (2)
 - `c4dc56e` docs: client SSH functional pe Android + reteta reparatii toolchain
 - `14dcd97` toolchain: completez recomandarile B din raportul numpy (toate 18/18 acoperite)
 
-**Altele** (1)
+**Altele** (3)
 - `bdfd30c` optimizari chirurgicale agent-original.py (agentul Linux) - sincronizat cu Android
+- `e29d813` Tool nou 'bg': gestionar de procese in fundal (rezolva output amestecat)
+- `66e2c64` Fix context invalid: tool_calls orfane (HTTPError de la API)
 
 **Android: acces, permisiuni, servicii** (1)
 - `a0e4ab9` FIX CRITIC: agent.py fara guard __main__ (bloca orice re-lansare Python)
@@ -104,8 +106,8 @@
 - `f98dcdc` Adauga /run_su: rulare scripturi cu DREPTURI DE SHELL (uid=2000)
 
 **Sistem de memorie / /learn** (2)
-- `dc0494f` memory.md: lectii sesiune - regex python (nu bash) pentru citit fisiere mari, backup inainte de rescriere, verificare empirica a comenzilor documen...
-- `fe9bbed` Doc: Documentatie_Agent_Android.txt -> .md (75KB, completat) + sters draft Documentatie_Raport_llama.cpp.md; memory.md: lectii reset context si Adb...
+- `dc0494f` memory.md: lectii sesiune - regex python (nu bash) pentru citit fisiere mari, backup inainte de rescriere, verificare empirica a comenzilor documentat
+- `fe9bbed` Doc: Documentatie_Agent_Android.txt -> .md (75KB, completat) + sters draft Documentatie_Raport_llama.cpp.md; memory.md: lectii reset context si Adb si
 
 **UI / terminal** (3)
 - `eb1ef29` Docs: adaugat secțiunea OPERATIUNI (OP.1-OP.7) - build, install, debug, verificare
@@ -141,20 +143,21 @@
 
 ## 2026-09-20
 
-**Altele** (6)
+**Altele** (7)
 - `bb8ab8b` Revert "Revert: agent-original.py (desktop) NU se modifica la task-uri Android"
 - `a1c424c` Revert: agent-original.py (desktop) NU se modifica la task-uri Android
 - `43cfd26` Security: scos key.txt din git + ignora cheile API
 - `f2e3643` /run: output streaming in timp real (linie cu linie) + salvare automata pentru output lung.
 - `676adcf` Biblioteci de aur (Nivel 1) + fix stdlib pe Android.
 - `1a1df3b` Interzis tabelele pe telefon: prompt dur + conversie automata la afisare.
+- `8fb5493` Trunchiere: TOOLMAX 1800->6000 + tool nou 'read' (paginare) + mesaj cu comanda de continuare.
 
 **Sistem de memorie / /learn** (12)
 - `7ca6290` Android+desktop: auto-learning doar pe ULTIMUL task (nu toata sesiunea)
 - `98fab63` Fix memorie: limita 300 -> 500 + taiere la granita de propozitie
 - `3673838` Documentatie: rezultatul testului complet curat (WhatsApp task, memorie zero)
 - `3ee49ca` agent: pastreaza doar agent-original.py, cu auto-learn complet portat
-- `8bb3b6e` ask(): timeout configurabil (90s real, nu 600) + 3 incercari cu backoff; auto-learn: timeout scurt (45s) ca sa NU blocheze agentul. Dovedit: raspun...
+- `8bb3b6e` ask(): timeout configurabil (90s real, nu 600) + 3 incercari cu backoff; auto-learn: timeout scurt (45s) ca sa NU blocheze agentul. Dovedit: raspuns i
 - `7e95035` Documentatie: actualizata complet (etape 15-20, primitive, biblioteci, /run, auto-learn, limitari, lectii).
 - `7f223eb` Portat sistemul auto-learn imbunatatit in scriptul Linux (agent.py de pe desktop).
 - `fed5b19` memory: lectie noua (git diff gol pe repo cu doar staged -> foloseste git diff --cached)
@@ -163,9 +166,8 @@
 - `73d40ca` Auto-learn: FIX major - modelul nu vedea taskul + limite de lungime inconsistente.
 - `29da30f` Auto-learn: filtrat strict pe Android + ENFORCE (nu doar warning).
 
-**Tool-uri agent (python/bash/read/multi/bg/...)** (2)
+**Tool-uri agent (python/bash/read/multi/bg/...)** (1)
 - `d72468b` Android: read compact + find (ecranul devine lizibil, ~10x mai putin zgomot)
-- `8fb5493` Trunchiere: TOOLMAX 1800->6000 + tool nou 'read' (paginare) + mesaj cu comanda de continuare.
 
 **UI / terminal** (3)
 - `bea4937` Android: task-uri headless cu ecranul stins/blocat + wake UI la nevoie
@@ -195,16 +197,16 @@
 
 **Sistem de memorie / /learn** (5)
 - `7f69beb` Documentatie completa de dezvoltare (md) + actualizare memorie.
-- `634aed4` STRUCTURA NOUA: HOME=/sdcard/Download/Agent (memory.md+context.json), WORKSPACE=/sdcard/Download/Agent/workspace (tot ce genereaza agentul). AGENT_...
-- `c70e245` WORKSPACE VIZIBIL: folderul de lucru al agentului mutat in /sdcard/agent/ (accesibil din file manager, fara adb). AGENT_WORK setat din Kotlin; WORK...
+- `634aed4` STRUCTURA NOUA: HOME=/sdcard/Download/Agent (memory.md+context.json), WORKSPACE=/sdcard/Download/Agent/workspace (tot ce genereaza agentul). AGENT_HOM
+- `c70e245` WORKSPACE VIZIBIL: folderul de lucru al agentului mutat in /sdcard/agent/ (accesibil din file manager, fara adb). AGENT_WORK setat din Kotlin; WORK/ME
 - `88123bd` FIX memorie: scos lectiile de dezvoltator din memoria telefonului + pastrare la update
 - `0fc0ac5` memory: actualizare (memoria operatorului)
 
 **UI / terminal** (23)
-- `284a6f7` Iconita aplicatiei: prompt de terminal (sageata albastra '>' + linie alba '_') pe fundal inchis rotunjit. Generata din SVG (rsvg-convert) in toate ...
-- `65342d5` Comanda /where: arata unde traieste totul (home, workspace, memory, context, logs, archive) + nr fisiere. Daca ruleaza din sandbox (storage extern ...
+- `284a6f7` Iconita aplicatiei: prompt de terminal (sageata albastra '>' + linie alba '_') pe fundal inchis rotunjit. Generata din SVG (rsvg-convert) in toate den
+- `65342d5` Comanda /where: arata unde traieste totul (home, workspace, memory, context, logs, archive) + nr fisiere. Daca ruleaza din sandbox (storage extern nes
 - `73fc57e` FIX: recuperat MainActivity.kt (se golise prin open(w).write(open.read())) + banner aliniat la STANGA
-- `6d2cdfb` UI: banner centrat corect pe orice ecran - Kotlin masoara latimea reala (Paint) si o trimite la Python prin AGENT_COLS; _ctr foloseste CS(). assets...
+- `6d2cdfb` UI: banner centrat corect pe orice ecran - Kotlin masoara latimea reala (Paint) si o trimite la Python prin AGENT_COLS; _ctr foloseste CS(). assets v2
 - `97e161d` UI: cuvantul "AGENT" colorat ROSU (RED 38;5;203) in loc de mov
 - `cbc85df` UI: cuvantul "AGENT" colorat mov (MOV 38;5;139), sageata ">" ramane C
 - `408cbf3` UI: linie goala intre "AGENT >" si textul generat
@@ -226,7 +228,7 @@
 - `0c2cfc0` fix(android): bridge mai robust - portul nu se mai pierde/uitа
 
 **Home / workspace / fisiere** (1)
-- `589c398` FIX vizibilitate folder in file manager: My Files/MTP nu indexeaza un folder nou fara niciun fisier media, deci scriem .agent_folder.png (PNG 1x1) ...
+- `589c398` FIX vizibilitate folder in file manager: My Files/MTP nu indexeaza un folder nou fara niciun fisier media, deci scriem .agent_folder.png (PNG 1x1) la 
 
 **Tool-uri agent (python/bash/read/multi/bg/...)** (2)
 - `e111917` UI banner start: doar '⚡ AGENT DeepSeek' centrat cu rosu + 'Type /help for all commands'. Scos tools/cwd/lista lunga de comenzi.
@@ -238,10 +240,8 @@
 - `35e1a28` feat(android): ACCES COMPLET - toate permisiunile + toate serviciile de sistem
 - `0f94fb2` fix(android): toti obiectii reflection primesc id + actiuni native senzori/locatie
 
-**Documentatie** (1)
+**Altele** (3)
 - `159fcc1` memory: lecție nouă (PEP 668 / externally-managed-environment -> folosește venv sau pipx)
-
-**Altele** (2)
 - `029c4c1` fix(android): agentul nu mai moare dupa primul task (linia goala omora bucla)
 - `c6f75c8` Initial commit: Android AI agent app (net.sys32.agent)
 
