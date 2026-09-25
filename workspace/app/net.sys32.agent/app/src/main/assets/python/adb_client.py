@@ -83,22 +83,79 @@ A_VERSION = 0x01000001
 A_CNXN, A_AUTH, A_OPEN, A_OKAY, A_CLSE, A_WRTE = 0x4e584e43, 0x48545541, 0x4e45504f, 0x59414b4f, 0x45534c43, 0x45545257
 AUTH_TOKEN, AUTH_SIGNATURE, AUTH_RSAPUBLICKEY = 1, 2, 3
 
-# SIGALRM global: omoara procesul dupa N secunde (protectie anti-agatare).
-# Configurabil prin ADB_GLOBAL_TIMEOUT (0 = dezactivat). Default 600s (10 min),
-# nu 40s: bootstrap-ul toolchain-ului dureaza minute intregi.
-_GT = int(os.environ.get("ADB_GLOBAL_TIMEOUT", "600") or "600")
-def _alarm(s,f):
-    print("[GLOBAL TIMEOUT %ss]" % _GT, flush=True); os._exit(2)
-# ★ SIGALRM merge DOAR in thread-ul principal. Importul se face si din thread-uri
-# secundare (ex. bootstrap-ul toolchain-ului ruleaza pe un thread) -> signal.signal()
-# arunca "signal only works in main thread" si ORICE comanda adbsh cadea.
-# De aceea: instalăm handler-ul DOAR daca suntem pe thread-ul principal.
-try:
-    import threading as _thr
-    if _GT > 0 and _thr.current_thread() is _thr.main_thread():
-        signal.signal(signal.SIGALRM, _alarm); signal.alarm(_GT)
-except Exception:
-    pass  # thread secundar: fara alarm global (socket-ul are propriul timeout)
+# SIGALRM global (protectie anti-agatare) - DOAR LA CERERE, nu la import.
+#
+# ISTORIC: versiunea veche arma un signal.alarm(600) LA IMPORT. Efectul: ORICE proces
+# care importa adb_client murea dupa 10 min, chiar daca nu era blocat (ex. o sesiune
+# lunga de lucru normala). Operatorul primea "[GLOBAL TIMEOUT 600s]" si procesul se
+# oprea, desi nimic nu era agatat. Alarm-ul global e o plasa de siguranta pentru
+# operatii LUNGI si RISCANTE (build, bootstrap, pip install), nu o limita de viata
+# a procesului.
+#
+# DESIGN NOU (inteligent):
+#   - la import NU se armeaza nimic (un proces normal traieste cat are nevoie);
+#   - daca ADB_GLOBAL_TIMEOUT e setat EXPLICIT in mediu, se respecta (backward compat);
+#   - operatiile lungi isi armeaza singure limita via arm_global_timeout(sec), si o
+#     pot reimprospata cu touch_global_timeout() (fiecare progres = inca `sec` secunde)
+#     sau o pot scoate cu disarm_global_timeout().
+#
+# ★ SIGALRM merge DOAR in thread-ul principal: armarea dintr-un thread secundar
+# (ex. bootstrap-ul toolchain-ului ruleaza pe un thread) ar arunca
+# "signal only works in main thread" -> de aceea functiile de mai jos sunt no-op
+# sigure pe thread-uri secundare (socket-ul are oricum propriul timeout per comanda).
+import threading as _thr
+
+def _alarm(s, f):
+    print("[GLOBAL TIMEOUT %ss]" % _GT[0], flush=True)
+    os._exit(2)
+
+_GT = [0]          # valoarea curenta (0 = dezarmat); lista = mutabila in closure
+
+def _arm(sec):
+    """Armeaza (sau rearma) alarm-ul global la `sec` secunde. No-op pe thread secundar."""
+    if sec <= 0:
+        return False
+    if _thr.current_thread() is not _thr.main_thread():
+        return False          # SIGALRM nu functioneaza in afara thread-ului principal
+    try:
+        _GT[0] = int(sec)
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(int(sec))
+        return True
+    except Exception:
+        return False
+
+def arm_global_timeout(sec):
+    """Armeaza un SIGALRM global de `sec` secunde (protectie anti-agatare pentru
+    operatii LUNGI: build, bootstrap, pip install). Returneaza True daca s-a armat."""
+    return _arm(sec)
+
+def touch_global_timeout(sec=None):
+    """Reimprospateaza alarm-ul global (fiecare progres = inca `sec` secunde, implicit
+    valoarea curenta). De apelat in buclele lungi, ca sa NU expire cat progreseaza."""
+    s = sec if sec is not None else _GT[0]
+    if s and s > 0:
+        return _arm(s)
+    return False
+
+def disarm_global_timeout():
+    """Scoate alarm-ul global (procesul poate trai nelimitat de aici inainte)."""
+    try:
+        if _thr.current_thread() is _thr.main_thread():
+            signal.alarm(0)
+    except Exception:
+        pass
+    _GT[0] = 0
+
+# Backward compat: DOAR daca e setat explicit in mediu (nu mai exista default 600).
+_env_gt = os.environ.get("ADB_GLOBAL_TIMEOUT")
+if _env_gt is not None and _env_gt.strip() != "":
+    try:
+        _v = int(_env_gt)
+    except Exception:
+        _v = 0
+    if _v > 0:
+        _arm(_v)
 
 # ============================================================================
 # CONEXIUNE PARTEJATA (module-level singleton)

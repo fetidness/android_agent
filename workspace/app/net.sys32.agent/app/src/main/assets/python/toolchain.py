@@ -1320,6 +1320,14 @@ echo DIRS_OK
 def bootstrap_direct(packages=None, progress=None):
     """Bootstrap COMPLET: descarca .deb, extrage in staging (app),
     apoi copiaza in prefix (/data/local/tmp, prin adbsh)."""
+    # ★ GLOBAL TIMEOUT DOAR AICI (operatie lunga, riscanta): 30 min, reimprospatat in bucla.
+    # Nu mai exista un alarm global la import (vezi adb_client.py) - un proces normal
+    # traieste cat are nevoie, doar bootstrap-ul isi pune singur plasa de siguranta.
+    try:
+        import adb_client as _ACB
+        _ACB.arm_global_timeout(1800)
+    except Exception:
+        pass
     _prepare_dirs()
     STAGE = "/sdcard/Download/Agent/tc_stage"
     try:
@@ -1349,6 +1357,12 @@ def bootstrap_direct(packages=None, progress=None):
             if not fname: continue
             url = _REPO + "/" + fname
             if progress: progress(i+1, len(todo), name)
+            # ★ reimprospatam plasa de siguranta: cat timp progresam, NU expira
+            try:
+                import adb_client as _ACT
+                _ACT.touch_global_timeout()
+            except Exception:
+                pass
             data = _http_get(url, 300)
             if _extract_deb(data, STAGE):
                 ok += 1

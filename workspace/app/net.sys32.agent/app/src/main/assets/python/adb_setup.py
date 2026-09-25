@@ -79,33 +79,35 @@ def ensure_key():
     nl = (c.BN_num_bits(n)+7)//8; el = (c.BN_num_bits(e)+7)//8
     nb = ctypes.create_string_buffer(nl); c.BN_bn2bin(n, nb)
     eb = ctypes.create_string_buffer(el); c.BN_bn2bin(e, eb)
-    # ★ FORMATUL ANDROID_PUBKEY (AOSP), verificat pe cheia care MERGE (524 B):
-    #   [0:4]     u32 n0inv    (inversul lui -modulus^-1 mod 2^32 ... in practica 64)
-    #   [4:260]   u8  modulus[256]  (LITTLE-endian)
-    #   [260:516] u8  rr[256]       ((2^2048)^2 mod modulus, LITTLE-endian)
-    #   [516:520] u32 (parte din exponent, 4 B)
-    #   [520:524] u32 exponent = 65537 (LE)
+    # ★ FORMATUL ANDROID_PUBKEY (AOSP, system/core/libcrypto_utils/android_pubkey.h):
+    #   [0:4]     u32 BIG-endian = 256 (len_n)       <- lungimea modulus-ului
+    #   [4:260]   u8  modulus[256]  (BIG-endian)     <- modulus-ul, ordinea naturala
+    #   [260:264] u32 BIG-endian   n0inv = -n^-1 mod 2^32 (0 inseamna "recomanda")
+    #   [264:520] u8  rr[256]       (BIG-endian)     <- (2^2048)^2 mod n, pt Montgomery
+    #   [520:524] u32 BIG-endian   exponent = 65537
     # Total EXACT 524 bytes; adbd verifica b64_pton(...) == 524.
+    #
+    # ★ BUG REPARAT (2026-09-25): versiunea veche scria [n0inv LE][modulus LE][rr LE][exp][exp]
+    # - adica n0inv PRIMUL si TOTUL little-endian. Adbd respingea cheia (RSAPUBLICKEY ->
+    # timeout, fara dialog). Cauza: modulus-ul era byte-reversed fata de ce asteapta adbd
+    # (big-endian). Acum scriem EXACT formatul AOSP: len_n BE, modulus BE, n0inv BE, rr BE, exp BE.
     import ctypes as _ct
-    S("BN_bn2lebinpad", [_ct.c_void_p, _ct.c_char_p, _ct.c_int], _ct.c_int)
     S("BN_bn2binpad", [_ct.c_void_p, _ct.c_char_p, _ct.c_int], _ct.c_int)
     N = 2048 // 8      # 256 bytes
-    def _lebn(bn, size=N):
+    def _bebn(bn, size=N):
         buf = _ct.create_string_buffer(size)
-        if c.BN_bn2lebinpad(bn, buf, size) == size:
-            return buf.raw[:size]
-        b2 = _ct.create_string_buffer(size)
-        c.BN_bn2binpad(bn, b2, size)
-        return b2.raw[:size][::-1]
-    mod_le = _lebn(n)
-    m_int = int.from_bytes(mod_le, "little")
+        c.BN_bn2binpad(bn, buf, size)
+        return buf.raw[:size]
+    mod_be = _bebn(n)                    # 256 bytes BIG-endian (ordinea naturala)
+    m_int = int.from_bytes(mod_be, "big")
     m0 = m_int & 0xFFFFFFFF
     if m0 & 1 == 0: m0 |= 1
     n0inv = (2**32 - pow(m0, -1, 2**32)) % 2**32
     rr_int = pow(2, 2048 * 2, m_int)
-    rr_le = rr_int.to_bytes(N, "little")
-    exp_le = _lebn(e)                    # 256 bytes, 65537 la inceput
-    blob = (struct.pack("<I", n0inv) + mod_le + rr_le + exp_le[0:4] + exp_le[0:4])
+    rr_be = rr_int.to_bytes(N, "big")
+    blob = (struct.pack(">I", N) + mod_be + struct.pack(">I", n0inv)
+            + rr_be + struct.pack(">I", 65537))
+    assert len(blob) == 524, "android_pubkey blob trebuie 524 bytes, e %d" % len(blob)
     open(LPUBC,"w").write(base64.b64encode(blob).decode())
     # ★ salvez in /sdcard (persistent!)
     try:
