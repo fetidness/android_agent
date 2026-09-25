@@ -278,6 +278,7 @@ def _lesson_value(line):
     if _r.search(r"\b(ERROR|DENY|DENIED|Exception|errno|ENOENT|EACCES|Permission|SELinux|null|refuses?|not found)\b", line, _r.I): s += 2
     if len(line) < 60: s -= 3
     if line.upper().startswith(("OK:", "P:")) and "->" not in line: s -= 2
+    if line.upper().startswith(("RULE:", "RULE (")): s += 3   # regula de ordine/decizie = mereu valoroasa
     return s
 
 
@@ -303,7 +304,7 @@ def mem_lint(txt):
     for l in body:
         if len(l) > MAXLINE:
             out.append((len(l), l))
-    lessons = [l for l in body if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* "))]
+    lessons = [l for l in body if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (","- ","* "))]
     if len(lessons) > 16:
         out.append((0, "too many lesson lines (" + str(len(lessons)) + ") - possible padding"))
     if not heads:
@@ -315,14 +316,14 @@ def mem_lint(txt):
     for l in body:
         # ORICE linie de corp trebuie sa fie o lectie cu prefix valid.
         # Altfel text liber (observatii, paragrafe) intra in memorie fara nicio validare.
-        if not l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")):
-            out.append((0, "no valid prefix (TRAP:/OK:/DEAD:/P:/PREVENT:): " + l[:60]))
+        if not l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (","- ","* ")):
+            out.append((0, "no valid prefix (TRAP:/OK:/DEAD:/P:/PREVENT:/RULE:): " + l[:60]))
             continue
         for rx, why in FORBID:
             if _re.search(rx, l, _re.I):
                 out.append((0, "forbidden [" + why + "]: " + l[:60]))
         # filtru de VALOARE: o linie de lectie prea slaba (banala, fara consecinta) nu intra
-        if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:")) and _lesson_value(l) < 2:
+        if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (")) and _lesson_value(l) < 2:
             out.append((0, "low value [" + str(_lesson_value(l)) + "]: " + l[:60]))
     return out, lessons
 
@@ -843,10 +844,10 @@ def _show_step(code,cut,n):
 def mstats(s):
     """characters, ~tokens (chars/4), number of LESSON lines, characters per lesson - so you can see
     the memory density. A lesson line is any non-empty line that is not a section heading (## ...),
-    not a comment, and not a bare label: it counts lines starting with TRAP:/OK:/DEAD:/P:/PREVENT:- or '- '."""
+    not a comment, and not a bare label: it counts lines starting with TRAP:/OK:/DEAD:/P:/PREVENT:/RULE:- or '- '."""
     lines=[l.strip() for l in s.split("\n") if l.strip()]
     nb=len([l for l in lines if not l.startswith(("#","<!--")) and (
-        l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
+        l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 HINT_LINE="tip: /help shows every command"
 LEARN_TAG="[[MEMORY-UPDATE]]"
@@ -895,7 +896,7 @@ M=[{"role":"system","content":TOOLGUIDE+" You are a minimal autonomous agent. Us
   "TIMING: tools that shell out return in milliseconds here, so a step that takes seconds means it is WAITING (a timeout, a lock, a network call) - investigate the cause instead of waiting it out. Do not sleep between steps: each step already waits exactly as long as its tool needs. " +
 "BATCH SMALL STEPS (biggest cost saver): every request re-sends the WHOLE context, so each extra step costs the full history again. When you need 2-6 quick, INDEPENDENT things (a listing, a short cat, a status, a git branch, an env value), do NOT spend 6 steps: use the `multi` tool ONCE with the list of ops. Rule of thumb: if step B would not read anything step A printed, they belong in the SAME `multi` call. DO NOT batch when the next step depends on the previous output, when an entry is heavy/long or can hang, or when the operator asked to see each step individually - a failure must stay isolated and visible. Small steps are GOOD for reliability; the only waste is running them one request at a time. " +"CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. READING BIG FILES (do not get truncated): every tool output above ~7000 chars is CUT IN THE MIDDLE and the middle is NOT recoverable - the log on disk is cut by the same limit. So NEVER read a large file with `python: print(open(f).read())` or a `for` loop over its lines: you WILL lose the middle and waste steps re-reading. Use the `read` tool instead: it takes path/offset/limit/budget and returns at most `budget` chars (default 6000) with a footer giving the EXACT next offset. For a file you do not know yet, do it in TWO moves: (1) `read` with `grep` = a regex (e.g. '^#{2,3} ') to get the map with line numbers in ONE call, (2) `read` with offset/limit on just the section you need. When you must emit a long list yourself, chunk it: count the chars of what you print and stop below ~7000, then continue in the NEXT step. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. " +
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. " +
-  "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. " +
+  "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, `RULE (ordinea cailor): 1 -> 2 -> 3` = ordered decision rule (cheapest path first), sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. " +
   "FINAL MESSAGE: it is rendered as FULL rich Markdown in a 256-colour terminal, so use it heavily and correctly: headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, ==highlight==, > blockquote, --- rules, numbered and bulleted lists, task lists (- [x]), links [text](url), tables with | pipes |, and fenced code blocks with a language tag. Write the final answer in Romanian, complete and well structured."}]
 CTX=os.path.join(WORK,CTXNAME)   # the history lives in the working folder (temp), permanently
 LEGACY=os.path.join(os.path.dirname(os.path.abspath(__file__)),"context.json")  # the old location (next to the script)
@@ -1267,6 +1268,7 @@ def do_learn(trigger="/learn"):
       "  `TRAP: what I did -> exact error -> cause -> fix that worked` (exact command/flag/path/error string - this is the MOST valuable line type)\n"
       "  `OK: command/path/flag that verifiably works`   `DEAD: what does NOT work -> proof`   `P: absolute path -> artifact / how to run it`\n"
       "  `PREVENT: rule to apply next time so <trap> never happens again` (only when it is a real, reusable rule)\n"
+      "  `RULE (ordinea cailor): ...` - ordered decision rule (1 -> 2 -> 3), pick the CHEAPEST/FASTEST path FIRST; only for a real, reusable decision order\n"
       "  section heading (date only here, grouped by area: env / web / io / python / agent): ## "+datetime.date.today().isoformat()+" - <topic> (session: "+os.getcwd()+")"
       "\nDENSIFY: arrows instead of phrases, no articles/filler, same-subject facts merged into one bullet, `code` spans instead of descriptions, numbers/sizes instead of adjectives.\n"
       "NEVER write: dialogue summaries, what the operator said, which tools were called, task narration, plans/intentions, generic advice, code/output dumps, praise, self-critique, a paraphrase of an existing bullet, or anything derivable from what is already there."})
@@ -1461,7 +1463,7 @@ def _q_contradicts(new_line, mem_text):
     if not nt:
         return None
     for old in mem_text.split("\n"):
-        if not old.startswith(("TRAP:", "OK:", "DEAD:", "P:", "PREVENT:")):
+        if not old.startswith(("TRAP:", "OK:", "DEAD:", "P:", "PREVENT:", "RULE:", "RULE (")):
             continue
         # o lectie META (despre procesul de invatare) NU e un fapt despre telefon,
         # deci nu poate contrazice o lectie tehnica (simetrie cu _q_meta mai sus)
