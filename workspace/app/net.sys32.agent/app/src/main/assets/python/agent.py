@@ -1328,7 +1328,7 @@ def vision(path,prompt,max_tokens=None):
     msg=[{"role":"user","content":[{"type":"text","text":prompt or "Describe exactly what this image shows."},
           {"type":"image_url","image_url":{"url":"data:"+mime+";base64,"+b}}]}]
     body={"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":msg,"max_tokens":mt,
-          "thinking":{"type":os.environ.get("DS_VISION_THINKING","enabled")}}
+          "thinking":{"type":os.environ.get("DS_VISION_THINKING","disabled")}}
     r=urllib.request.Request("https://api.deepseek.com/chat/completions",data=json.dumps(body).encode(),
       headers={"Authorization":"Bearer "+K,"Content-Type":"application/json"})
     try:
@@ -2483,7 +2483,6 @@ if __name__ == "__main__":
             print(G+"     /reset              erase the conversation history"+N)
             print(G+"     /help, /?           this list"+N)
             print(G+"     /exit, /quit        leave (empty line too)"+N)
-            print(G+"   "+(HINT_LINE)+N)
             continue
         if q=="/ctx":
             _a=[f for f in (os.listdir(ARCH) if os.path.isdir(ARCH) else []) ]
