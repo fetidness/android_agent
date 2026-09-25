@@ -377,7 +377,8 @@ def _lesson_value(line):
     if _r.search(r"[a-z]+\.[A-Z]\w+", line): s += 2  # nume Api.metoda
     if _r.search(r"\b(ERROR|DENY|DENIED|Exception|errno|ENOENT|EACCES|Permission|SELinux|null|refuses?)\b", line, _r.I): s += 2
     if len(line) < 60: s -= 3                     # prea scurta = probabil banala
-    if line.upper().startswith(("OK:", "P:")) and "->" not in line: s -= 2   # observatie fara consecinta
+    if line.upper().startswith(("OK:", "P:")) and "->" not in line: s -= 2
+    if line.upper().startswith(("RULE:", "RULE (")): s += 3   # regula de ordine/decizie = mereu valoroasa
     return s
 
 
@@ -410,7 +411,7 @@ def mem_lint(txt):
     for l in body:
         if len(l) > MAXLINE:
             out.append((len(l), l))
-    lessons = [l for l in body if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* "))]
+    lessons = [l for l in body if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (","- ","* "))]
     if len(lessons) > 16:
         out.append((0, "too many lesson lines (" + str(len(lessons)) + ") - possible padding"))
     if not heads:
@@ -424,7 +425,7 @@ def mem_lint(txt):
             if _re.search(rx, l, _re.I):
                 out.append((0, "forbidden [" + why + "]: " + l[:60]))
         # filtru de VALOARE: o linie de lectie prea slaba (banala, fara consecinta) nu intra
-        if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:")) and _lesson_value(l) < 2:
+        if l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (")) and _lesson_value(l) < 2:
             out.append((0, "low value [" + str(_lesson_value(l)) + "]: " + l[:60]))
     return out, lessons
 
@@ -965,7 +966,7 @@ def mstats(s):
     not a comment, and not a bare label: it counts lines starting with TRAP:/OK:/DEAD:/P:/PREVENT:- or '- '."""
     lines=[l.strip() for l in s.split("\n") if l.strip()]
     nb=len([l for l in lines if not l.startswith(("#","<!--")) and (
-        l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
+        l.startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (","- ","* ")) or (":" in l[:12] and not l.startswith("##")))])
     return len(s),len(s)//4,nb,(len(s)//nb if nb else 0)
 LEARN_TAG="[[MEMORY-UPDATE]]"
 # ★ CHECKPOINT /LEARN (24 sept: implementat la cererea operatorului).
@@ -1128,7 +1129,7 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "it needs. "
   "CONTEXT ECONOMY: nothing is ever deleted - only heavy tool outputs and old steps are moved to disk when the window gets big. When you see a line like `[complete output, untouched: archive/ctx_....json #12 (4300 chars)]` or `[complete code, untouched: ...]`, the EXACT original text is on disk: read or grep it (raw tool outputs live in ./logs/*.log, full pre-compaction transcripts in ./archive/ctx_*.json) instead of guessing what the truncated middle contained. Do that whenever the exact bytes matter: error strings, stack traces, file contents, numbers. ""MEMORY RULE: the MEMORY block below is READ-ONLY for you - never write, append, modify or delete it on your own initiative, only when the operator explicitly asks. Use it to work faster, but only its owner updates it. "
   "IT IS A SNAPSHOT: memory.md was loaded into this system prompt ONCE, at session start; the file on disk may already be longer (the operator updates it, /learn appends to it). Lessons taught after this start are NOT here - if memory says nothing about X, that does not mean X was never learned. "
-  "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
+  "IT IS TELEGRAPHIC: one lesson per line - `TRAP: what failed -> exact error -> cause -> fix`, `OK: what verifiably works`, `DEAD: what does not work -> proof`, `P: absolute path -> artifact, `RULE (ordinea cailor): 1 -> 2 -> 3` = ordered decision rule (cheapest path first) / how to run`, sections `## date - topic`. Read it as dense facts, not prose; missing words are not missing meaning. "
   "FINAL MESSAGE: rendered as Markdown in a 256-colour terminal. You MAY use headings (# ## ###), **bold**, *italic*, `inline code`, ~~strikethrough~~, > blockquote, --- rules, numbered/bulleted lists and fenced code blocks. BUT on this small phone screen NEVER use tables (no | pipes | rows, no |---| separators) and never ASCII boxes - present ALL structured data as plain lists, one item or `key: value` per line. Write the final answer in the SAME LANGUAGE the operator used in their last message, complete and well structured - if they wrote in English, reply in English; if in Romanian, reply in Romanian."}]
 # ★ FIX (24 sept: zgomot MediaProvider). context.json traia in DOUA locuri: copia privata
 # (scrisa la fiecare pas) + o oglinda pe sdcard (FUSE) la fiecare 8 salvari. Fiecare scriere
@@ -2179,7 +2180,7 @@ def do_learn(trigger="/learn"):
       "FORMAT - one lesson = ONE line, <=300 chars, telegraphic, no sentences:\n"
       "  `TRAP: what I did -> exact error -> cause -> fix that worked` (exact command/flag/path/error string - this is the MOST valuable line type)\n"
       "  `OK: command/path/flag that verifiably works`   `DEAD: what does NOT work -> proof`   `P: absolute path -> artifact / how to run it`\n"
-      "  `PREVENT: rule to apply next time so <trap> never happens again` (only when it is a real, reusable rule)\n"
+      "  `PREVENT: rule to apply next time so <trap> never happens again` (only when it is a real, reusable rule)\n  `RULE (ordinea cailor): ...` - ordered decision rule (1 -> 2 -> 3), pick the cheapest/fastest path FIRST (only for a real, reusable decision order)\n"
       "  section heading (date only here, grouped by area: env / web / io / python / agent): ## "+datetime.date.today().isoformat()+" - <topic> (session: "+os.getcwd()+")"
       "\nDENSIFY: arrows instead of phrases, no articles/filler, same-subject facts merged into one bullet, `code` spans instead of descriptions, numbers/sizes instead of adjectives.\n"
       "NEVER write: dialogue summaries, what the operator said, which tools were called, task narration, plans/intentions, generic advice, code/output dumps, praise, self-critique, a paraphrase of an existing bullet, or anything derivable from what is already there."})
@@ -2241,7 +2242,7 @@ def do_learn(trigger="/learn"):
             elif _txt.startswith("forbidden"):
                 _bad.add(_txt.split("]: ", 1)[-1].strip())
         _kept = [l for l in now.split("\n")
-                 if not (l.strip().startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:")) and l.strip() in _bad)]
+                 if not (l.strip().startswith(("TRAP:","OK:","DEAD:","P:","PREVENT:","RULE:","RULE (")) and l.strip() in _bad)]
         _dropped = len(now.split("\n")) - len(_kept)
         if _dropped > 0:
             now = "\n".join(_kept)
@@ -2388,7 +2389,7 @@ def _q_contradicts(new_line, mem_text):
     if not nt:
         return None
     for old in mem_text.split("\n"):
-        if not old.startswith(("TRAP:", "OK:", "DEAD:", "P:", "PREVENT:")):
+        if not old.startswith(("TRAP:", "OK:", "DEAD:", "P:", "PREVENT:", "RULE:", "RULE (")):
             continue
         # o lectie META (despre procesul de invatare) NU e un fapt despre telefon,
         # deci nu poate contrazice o lectie tehnica (simetrie cu _q_meta mai sus)
