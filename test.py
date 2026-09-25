@@ -1058,7 +1058,10 @@ PY_STRUCT = (r"\bjson\b", r"\bimport\s+json", r"json\.loads", r"json\.load\b", r
 BASH_STREAM = (r"\bgrep\b", r"\bawk\b", r"\bsed\b", r"\bsort\b", r"\buniq\b", r"\bwc\b",
                r"\bcut\b", r"\btail\b", r"\bhead\b", r"\bxargs\b", r"\bfind\b", r"\bdu\b",
                r"\bdf\b", r"\brsync\b", r"\bzgrep\b", r"\btr\b", r"\bpaste\b", r"\bcomm\b",
-               r"\bjoin\b", r"\bflock\b", r"\bcomm\b", r"\bparallel\b", r"-P\s*\d", r"\|\s*\w+")
+               r"\bjoin\b", r"\bflock\b", r"\bcomm\b", r"\bparallel\b", r"-P\s*\d", r"\|\s*\w+",
+               r"\bcat\b", r"\bls\b", r"\bpwd\b", r"\bdiff\b", r"\btee\b", r"\bnl\b",
+               r"\bstat\b", r"\bfile\b", r"\bmd5sum\b", r"\bsha256sum\b", r"\brealpath\b",
+               r"\bdirname\b", r"\bbasename\b", r"\bwhich\b", r"\btype\b", r"\bbase64\b")
 # BASH_SLOW: tools that look like stream tools but are pathologically slow on a TOYBOX target; the
 # router overflows them to python ONLY when the command is clearly running against toybox semantics.
 BASH_SLOW = (r"\bawk\b", r"\bsed\b", r"\bsort\b", r"\buniq\b", r"\bbase64\b", r"\bjoin\b")
@@ -1090,11 +1093,27 @@ def route(cmd="", code=""):
     # 5) implicit: python (logic-safe)
     return "python", "default: python (safe for logic; explicit `bash` for pure streams)"
 
+_SH=[None]   # cache pentru shell-ul gasit (bash daca exista, altfel sh)
+def _shell():
+    """Shell-ul disponibil PE ACEST dispozitiv. bash NU exista pe Android (doar toybox sh), deci
+    incercam bash si cadem pe sh; comanda se ruleaza cu -c (sh nu are -lc pe toybox). Rezultatul
+    e cache-uit, ca sa nu platim un 'which' la fiecare pas."""
+    if _SH[0] is None:
+        for cand in ("bash","sh"):
+            w=shutil.which(cand)
+            if w: _SH[0]=(w,"-lc" if cand=="bash" else "-c"); break
+        else: _SH[0]=("/system/bin/sh","-c")
+    return _SH[0]
+
 def bash(cmd, cwd):
-    """Ruleaza o comanda shell (bash -lc) in propriul grup de procese; Ctrl+C omoara doar acest
-    tool. Intoarce stdout+stderr combinat, trunchiat la 8000 de caractere (ca la python)."""
+    """Ruleaza o comanda shell in propriul grup de procese; Ctrl+C omoara doar acest tool.
+    Intoarce stdout+stderr combinat, COMPLET (bugetul se aplica mai sus, in _store)."""
+    sh,flag=_shell()
     o=tempfile.TemporaryFile(dir=WORK)
-    p=subprocess.Popen(["bash","-lc",cmd],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    try:
+        p=subprocess.Popen([sh,flag,cmd],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    except FileNotFoundError as e:
+        return "[bash] no shell available ("+str(e)+") - use the `python` tool instead"
     try:
         p.wait(timeout=600)
     except KeyboardInterrupt:
