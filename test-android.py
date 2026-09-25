@@ -1030,7 +1030,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"COMPILE TOOLCHAIN: native build stack ON the phone (clang 21, make, cmake, ninja/samu, python, pip, git, rust, libc++, openssl) WITHOUT PC or Termux. Actions: status (what is installed + whether the APP can really use it, not just the shell); doctor (per-uid health check: can SHELL build, can APP read/execute the prefix - use when something looks installed but fails); bootstrap (install everything via the Termux repo, ~500MB, once); pip_install (PyPI incl. C/C++ extensions, compiled natively); compile (C/C++ -> shared library); env (PATH, CC, CXX, CFLAGS, LDFLAGS); preflight (RUN BEFORE any big build: 10s test of C, C++, math, SSL, make, cmake); profile (ready-made cmake/cflags/ldflags); fix (re-apply repairs after a Termux reinstall); env-file (persistent env). Any compiler-requiring pip package (numpy, scipy-level, llama.cpp) can be built here.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | bootstrap | pip_install | compile | env | tpm","enum":["status","doctor","bootstrap","pip_install","compile","env","tpm","preflight","profile","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pandas, pillow). For tpm: termux package (e.g. nano)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 300 for compile, max 3600)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
-   {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}}]
+   {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"help","description":"Return the FULL guide for an advanced Android topic, on demand - the detailed reflection/objects reference is kept OUT of the fixed prompt to save tokens and delivered here instead. Topics: \"reflection\" (eval ops: services/info/call/new/get/set/objs, targets svc:/class:/obj:/ctx/app, how to pass object refs), \"objects\" (proxy vs subclass for callbacks, await/events, getSystemService, Executor), \"privileged\" (capture/vpn/guard detail), \"all\" (everything). Call it the moment the native shortcuts are not enough.","parameters":{"type":"object","properties":{"topic":{"type":"string","description":"reflection | objects | privileged | all"}},"required":["topic"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (measured on THIS device, toybox on aarch64 - do not guess, the numbers below are real): you have 3 engines. "
   "1) `python`: THE DEFAULT AND THE FASTEST ENGINE HERE for any computation. Full stdlib PLUS pre-installed: requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve, python-dateutil, six, pyyaml, toml, packaging, typing-extensions. NO pip, no numpy/pandas/cryptography. Python WINS BIG on this toybox build at: sorting (sorted/set: 36-95x faster than `sort`), aggregation and counting (Counter/dict: 3-4x faster than `awk`), text transform (str.upper/replace: 23-27x faster than `base64`/`sed`), all structured parsing (json.loads/yaml/toml), logic, and HTTP (requests.Session: 2.4x faster than repeated curl via connection keep-alive). Default to python for anything that is not a pure stream. "
@@ -1055,24 +1055,31 @@ FMT=("OUTPUT FORMAT - ABSOLUTE RULES for this small phone screen: "
   "If you catch yourself typing `|`, STOP and rewrite as a list instead. A list is ALWAYS preferred over a table here.")
 
 # --- GHID ACCES ANDROID COMPLET (reflection) ---
+
+# --- HELP: ghidul AVANSAT de Android, scos din promptul fix (se cere cu tool-ul `help`) ---
+HELP_TEXT={
+ "reflection": ("Android SDK through reflection - no root needed. Call ANY public class, method or field. "
+  "HOW: android(tool=\"eval\", params={\"expr\":{...}}) where expr is one of: "
+  "{\"op\":\"services\"} lists ALL system services; "
+  "{\"op\":\"info\",\"target\":\"class:android.hardware.SensorManager\",\"filter\":\"Sensor\"} lists methods+fields; "
+  "{\"op\":\"call\",\"target\":\"svc:sensor\",\"method\":\"getSensorList\",\"args\":[-1]} calls on a system service; "
+  "{\"op\":\"call\",\"target\":\"class:android.os.Environment\",\"static\":true,\"method\":\"getExternalStorageDirectory\"}; "
+  "{\"op\":\"new\",\"target\":\"class:android.media.MediaRecorder\"}; "
+  "{\"op\":\"get\",\"target\":\"svc:wifi\",\"field\":\"mService\"} or {\"op\":\"set\",...}; {\"op\":\"free\",\"id\":\"o0\"}. "
+  "TARGETS: svc:NAME, class:FQCN, obj:ID, ctx (app context), app, str:X, int:N, bool:true, null. "
+  "LIST KEPT OBJECTS with the OP {\"op\":\"objs\"} (NOT a tool) - it returns id+class of every held object. "),
+ "objects": ("CRITICAL - OBJECTS:\n"
+  " * Every call/get/new now AUTO-RETURNS an id; the object stays alive under obj:<id>. REUSE it, do not recreate the same thing in a loop.\n"
+  " * If a call returns only {class,str} with no id, the object was a primitive/array/collection.\n"
+  " * PROXY (INTERFACES): {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"} -> obj:<id>, pass as [\"ref\",\"obj:<id>\"]; calls recorded. Read with {\"op\":\"await\",\"id\":\"<id>\",\"timeout_ms\":10000} (next callback) or {\"op\":\"events\",\"id\":\"<id>\"}; {\"op\":\"sinks\"} lists proxies. For an ABSTRACT CLASS (ScanCallback, BroadcastReceiver) use {\"op\":\"subclass\",\"parent\":\"<FQCN>\"} -> same await/events. So any Android callback is implementable.\n"
+  " * PASSING OBJECTS: use [\"ref\",<value>] where <value> = \"ctx\"|\"app\"|\"obj:<id>\"|\"svc:<name>\". A bare string is a LITERAL and is NOT resolved - always wrap: {\"args\":[[\"ref\",\"ctx\"],0]} . Works for op=new too.\n"
+  " * getSystemService lives on Context: use target ctx, e.g. {\"op\":\"call\",\"target\":\"ctx\",\"method\":\"getSystemService\",\"args\":[\"sensor\"]}. "
+  "An Executor comes from ctx.getMainExecutor() (no-arg). Many classes (LocationManager, Executors, HandlerExecutor...) have NO public no-arg constructor - obtain them from a service/factory.\n"),
+ "privileged": ("android tool=capture action=status => MediaProjection screen-capture state; action=grab [path=/path.png] saves the LATEST frame as PNG (no ~1/sec limit, unlike a11y shot); action=start (asks the one-time screen-capture consent on the phone), action=stop RELEASES the capture session.  android tool=vpn action=status => VpnService state; action=establish [name=agent0] creates the TUN (needs one-time user consent), action=close tears it down.  android tool=guard action=status => which privileged services are alive (foreground, a11y, notif_listener, ime); action=start restarts the guard; action=schedule re-arms the keep-alive alarm. NEVER force-stop/pm clear/pm disable net.sys32.agent - it kills accessibility permanently. Each service has a *_state: ime_state=installed_not_selected = installed but not the ACTIVE keyboard (NORMAL, not a fault; enable only if the task must read/write fields: adbsh ime set net.sys32.agent/.AgentIme); ime_state=not_installed = truly missing; notif_state=disabled_needs_allow_listener = run adbsh cmd notification allow_listener. "),
+}
+
 ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at the first source. Squeeze EVERYTHING reachable - use the native shortcuts AND reflection AND shell, cross-check them, and report everything you found (including what is NOT available and why). It is fine to take many steps. Explore every relevant nook: services, build props, sensors (action=all), sysfs, settings, managers. ANDROID ACCESS: on this device you have the `android` tool with FULL generic access to the whole "
- "Android SDK through reflection - no root needed. Call ANY public class, method or field. "
- "HOW: android(tool=\"eval\", params={\"expr\":{...}}) where expr is one of: "
- "{\"op\":\"services\"} lists ALL system services; "
- "{\"op\":\"info\",\"target\":\"class:android.hardware.SensorManager\",\"filter\":\"Sensor\"} lists methods+fields; "
- "{\"op\":\"call\",\"target\":\"svc:sensor\",\"method\":\"getSensorList\",\"args\":[-1]} calls on a system service; "
- "{\"op\":\"call\",\"target\":\"class:android.os.Environment\",\"static\":true,\"method\":\"getExternalStorageDirectory\"}; "
- "{\"op\":\"new\",\"target\":\"class:android.media.MediaRecorder\"}; "
- "{\"op\":\"get\",\"target\":\"svc:wifi\",\"field\":\"mService\"} or {\"op\":\"set\",...}; {\"op\":\"free\",\"id\":\"o0\"}. "
- "TARGETS: svc:NAME, class:FQCN, obj:ID, ctx (app context), app, str:X, int:N, bool:true, null. "
- "LIST KEPT OBJECTS with the OP {\"op\":\"objs\"} (NOT a tool) - it returns id+class of every held object. "
- "CRITICAL - OBJECTS:\n"
- " * Every call/get/new now AUTO-RETURNS an id; the object stays alive under obj:<id>. REUSE it, do not recreate the same thing in a loop.\n"
- " * If a call returns only {class,str} with no id, the object was a primitive/array/collection.\n"
- " * PROXY (INTERFACES): {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"} -> obj:<id>, pass as [\"ref\",\"obj:<id>\"]; calls recorded. Read with {\"op\":\"await\",\"id\":\"<id>\",\"timeout_ms\":10000} (next callback) or {\"op\":\"events\",\"id\":\"<id>\"}; {\"op\":\"sinks\"} lists proxies. For an ABSTRACT CLASS (ScanCallback, BroadcastReceiver) use {\"op\":\"subclass\",\"parent\":\"<FQCN>\"} -> same await/events. So any Android callback is implementable.\n"
- " * PASSING OBJECTS: use [\"ref\",<value>] where <value> = \"ctx\"|\"app\"|\"obj:<id>\"|\"svc:<name>\". A bare string is a LITERAL and is NOT resolved - always wrap: {\"args\":[[\"ref\",\"ctx\"],0]} . Works for op=new too.\n"
- " * getSystemService lives on Context: use target ctx, e.g. {\"op\":\"call\",\"target\":\"ctx\",\"method\":\"getSystemService\",\"args\":[\"sensor\"]}. "
- "An Executor comes from ctx.getMainExecutor() (no-arg). Many classes (LocationManager, Executors, HandlerExecutor...) have NO public no-arg constructor - obtain them from a service/factory.\n"
+ "REFLECTION + OBJECTS (how: eval ops services/info/call/new/get/set/objs; TARGETS svc:/class:/obj:/ctx/app; [\"ref\",...] for args; proxy vs subclass + await/events; getSystemService; Executor): call help(topic=\"reflection\") or help(topic=\"objects\") for the FULL guide when the native shortcuts are not enough. "
  "NATIVE SHORTCUTS that DO real hardware reading (use these FIRST for sensors/location, they handle callbacks in Kotlin): "
  "sensors action=list | action=read (name,seconds) | action=stream (name or names[],seconds,max) for continuous multi-sample data; "
  "location action=last (cache) | action=fresh (REQUEST A BRAND-NEW GPS FIX: real requestLocationUpdates + waits for onLocationChanged; provider=gps default, seconds=30) | action=current (getCurrentLocation, may return a cached fused fix instantly) | action=providers; "
@@ -1082,30 +1089,12 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "android tool=ui action=read|find|click|set_text|swipe|global as before. "\
  "android tool=notif (EXACT name notif, NOT notify/notifications) action=list [limit=N] => READ ALL ACTIVE NOTIFICATIONS of ALL apps (pkg/title/text/ongoing) via NotificationListenerService - THIS is how you read other apps notifications, NOT dumpsys; action=cancel (key=<key> cancels one, or package=<pkg> cancels all of a package); action=snooze key=<key> ms=<ms>. If it says listener NOT enabled, fix with adbsh: cmd notification allow_listener net.sys32.agent/.AgentNotificationListener "\
  "android tool=ime action=read => READ the text of the CURRENTLY FOCUSED TEXT FIELD in ANY app (pkg + before/after/selected/full) via our InputMethodService; action=type text=<s> [delete=N] injects text globally; action=key code=<N> sends a key; action=keys [limit=N] shows recent input events. The IME must be the active keyboard (adbsh: ime set net.sys32.agent/.AgentIme); a normal app CANNOT do this. "\
-  "android tool=capture action=status => MediaProjection screen-capture state; action=grab [path=/path.png] saves the LATEST frame as PNG (no ~1/sec limit, unlike a11y shot); action=start (asks the one-time screen-capture consent on the phone), action=stop RELEASES the capture session. "
+ "android tool=capture/vpn/guard (screen-capture, VpnService, service guard): call help(topic=\"privileged\") for the full guide. "
   "BATTERY RULE: MediaProjection keeps a 1080x2340@60fps VirtualDisplay alive in SurfaceFlinger and burns CPU even unread - the most expensive service. Not started automatically; use it ONLY for a screenshot: capture action=start -> grab -> action=stop (auto-stops after 3 min idle). To READ the screen prefer `android tool=ui action=read` (a11y costs nothing idle). `ui wake`/`ui sleep` toggle the screen - always `ui sleep` after a UI task. "\
- "android tool=vpn action=status => VpnService state; action=establish [name=agent0] creates the TUN (needs one-time user consent), action=close tears it down. "\
- "android tool=guard action=status => which privileged services are alive (foreground, a11y, notif_listener, ime); action=start restarts the guard; action=schedule re-arms the keep-alive alarm. NEVER force-stop/pm clear/pm disable net.sys32.agent - it kills accessibility permanently. Each service has a *_state: ime_state=installed_not_selected = installed but not the ACTIVE keyboard (NORMAL, not a fault; enable only if the task must read/write fields: adbsh ime set net.sys32.agent/.AgentIme); ime_state=not_installed = truly missing; notif_state=disabled_needs_allow_listener = run adbsh cmd notification allow_listener. "
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " COMPILE STACK: this phone is a SELF-SUFFICIENT BUILD MACHINE. The 'toolchain' tool installs (once, via the Termux repo) a full native compiler stack: clang 21, make, cmake, ninja/samu, git, python+pip, rust, libc++, openssl, zlib. Use toolchain action=status to see what is present; action=bootstrap to install the whole stack (~500MB, one time, no PC, no Termux app needed); action=pip_install package=<name> to pip-install ANY PyPI package INCLUDING ones with C/C++/Fortran extensions (they get compiled natively here); action=compile source=<file.c> out=<file.so> to build C/C++ into a shared library; action=env to print PATH/CC/CXX/CFLAGS/LDFLAGS; action=tpm package=<name> to install any Termux binary (nano, htop, jq...). RULE: when a task needs a library that is not installed, do NOT give up - install it: pip_install for Python packages (compiles extensions), tpm for CLI tools, compile for your own C/C++ code. Prefer the already-installed pure-Python tools first; reach for the toolchain when something must be compiled or installed. "
- "LONG-RUNNING WORK (CRITICAL): NEVER launch a build/download/server with raw `nohup ... &` or "
- "`cmd &` through adbsh/bash - you WILL lose track of it, then read a STALE log and get confused "
- "by mixed output (this really happened: an old build kept writing to the same log while a new "
- "one started). ALWAYS use the `bg` tool: bg(action=start, cmd=..., name=...) to launch, "
- "bg(action=status) to see what is ACTUALLY running (it checks /proc, not guesses) with duration "
- "and log size, bg(action=log, job=<id>) to read THAT job's log only, bg(action=kill|clean) to "
- "stop/clean. Rule of thumb: any command that can take more than ~30 seconds goes through `bg`. "
- "Before starting a NEW run of the same thing, check bg(action=status) and kill leftovers. "
- "Never assume a log file is current - always read it through bg(action=log) which tells you "
- "which job it belongs to and when it started. "
- "RUNNING SCRIPTS FOR THE OPERATOR: when a build was done and the operator needs to RUN something "
- "(a compiled binary, llama.cpp, a GGUF model, a chat script, anything under /data/local/tmp), "
- "tell them to use /run_su <script> [args] - it runs with SHELL rights (uid=2000), so it can see "
- "/data/local/tmp, the native toolchain and compiled binaries. /run only has the APP's rights "
- "(uid=app) and CANNOT access /data/local/tmp. Always write the launcher as a .sh script in the "
- "workspace (exporting PATH/LD_LIBRARY_PATH) so /run_su can execute it.")
+ " MISSION RULES: (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, tpm for CLI binaries, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1840,6 +1829,22 @@ def run_multi_tool(ops):
     _show_step("multi "+str(len(ops))+" ops", o, n)
     return o
 
+def run_help_tool(a):
+    """Return the FULL guide for an advanced Android topic ON DEMAND. Why: the detailed
+    reflection/objects/privileged reference is ~2300 chars (~580 tok) and would be re-sent
+    on EVERY request if kept in the fixed prompt. Here it costs only when actually needed."""
+    t=(a.get("topic") or "all").strip().lower()
+    if t=="all":
+        o="\n\n".join("[help] "+k.upper()+"\n"+v for k,v in HELP_TEXT.items())
+    elif t in HELP_TEXT:
+        o="[help: "+t+"]\n"+HELP_TEXT[t]
+    else:
+        o="[help] unknown topic "+repr(t)+". Available: "+", ".join(HELP_TEXT)+", all"
+    n=TASK["steps"]+1; TN[0]+=1
+    TASK.update(steps=n,chars=TASK["chars"]+len(o))
+    _show_step("help "+t, o, n)
+    return o
+
 def call_tool(c):
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
     endpoint (thinking ON). Both increment the SAME step counter and print the SAME column
@@ -1874,6 +1879,8 @@ def call_tool(c):
         return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
     if fn=="toolchain":
         return run_toolchain_tool(a)
+    if fn=="help":
+        return run_help_tool(a)
     return run_tool(a.get("code",""))
 
 def run_toolchain_tool(a):
