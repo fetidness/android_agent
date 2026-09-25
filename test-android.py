@@ -273,7 +273,7 @@ _AGH=os.environ.get("AGENT_HOME","").strip()
 WORK=(os.path.join(_AGH,"workspace") if _AGH else os.path.join(HOME_DIR,"workspace"))
 # registrul job-urilor de fundal (persistent, langa context.json/memory.md)
 BG_REG=os.path.join(HOME_DIR,"bg_jobs.json")   # lista job-urilor cunoscute (id, pid, log, stare)
-BG_LOG=os.path.join(HOME_DIR,"logs")           # cate un <job_id>.log per job de fundal
+BG_LOG="/data/local/tmp/bg_logs"                # fundal: shell (uid 2000) NU poate scrie in sandbox-ul app-ului -> scriem unde poate shell, citim prin adbsh
 os.makedirs(WORK,exist_ok=True)
 # Folderul de lucru poate fi mutat intr-un loc VIZIBIL (ex. /sdcard/agent), ca operatorul
 CTXNAME="context.json"       # conversation history: lives permanently in HOME_DIR (next to memory.md)
