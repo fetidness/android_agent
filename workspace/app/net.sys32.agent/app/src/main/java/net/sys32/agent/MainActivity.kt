@@ -690,7 +690,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v117")
+        val stamp = File(filesDir, ".assets_v147")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -712,9 +712,76 @@ class MainActivity : AppCompatActivity() {
             }
         }
         copyDir("python", dest)
+        // ★ tmp pentru pip/setuptools (scriu fisiere temporare de build acolo)
+        try { File(filesDir, "tmp").mkdirs() } catch (_: Exception) {}
         // punem la loc memoria salvata (daca exista); altfel ramane cea din APK
         if (memSaved != null) memFile.writeText(memSaved)
+        // ★ toolchain nativ (clang, lld, sysroot): AAPT NU pastreaza bitul +x,
+        // deci il extragem separat si il marcam executabil.
+        try { extractToolchain() } catch (_: Exception) {}
         stamp.writeText("ok")
+    }
+
+    /** ★ Repara sysconfig: cross-build-ul a inscriptionat caile de LAPTOP (CC, LDSHARED,
+     *  CFLAGS). Le inlocuim cu clang-ul + sysroot-ul din APK, altfel pip/pip_install esueaza. */
+    private fun fixSysconfig(scripts: File) {
+        val tc = File(filesDir, "toolchain").absolutePath
+        val cc = "$tc/bin/clang-21"
+        val targets = listOf(
+            File(scripts, "Lib/_sysconfigdata__android_aarch64-linux-android.py"),
+            File(scripts, "Lib/_sysconfigdata__linux_aarch64-linux-android.py")
+        )
+        for (f in targets) {
+            if (!f.exists()) continue
+            var s = f.readText()
+            s = Regex("""['"]CC['"]\s*:\s*['"][^'"]*['"]""").replace(s, "'CC': '$cc'")
+            s = Regex("""['"]LDSHARED['"]\s*:\s*['"][^'"]*['"]""").replace(s, "'LDSHARED': '$cc -shared'")
+            s = Regex("""['"]AR['"]\s*:\s*['"][^'"]*['"]""").replace(s, "'AR': '$tc/bin/llvm-ar'")
+            s = Regex("""['"]RANLIB['"]\s*:\s*['"][^'"]*['"]""").replace(s, "'RANLIB': '$tc/bin/llvm-ranlib'")
+            s = Regex("""['"]STRIP['"]\s*:\s*['"][^'"]*['"]""").replace(s, "'STRIP': '$tc/bin/llvm-strip'")
+            s = Regex("""-I/home/gab[^'"]*""").replace(s, "-I$tc/sysroot/usr/include")
+            s = Regex("""-L/home/gab[^'"]*""").replace(s, "-L$tc/sysroot/usr/lib/aarch64-linux-android/35")
+            s = Regex("""['"]SHELL['"]\s*:\s*['"][^'"]*['"]""").replace(s, "'SHELL': '/system/bin/sh'")
+            f.writeText(s)
+        }
+    }
+
+    /** ★ Extrage toolchain-ul nativ (clang-21, lld, binutils, sysroot) si il face executabil.
+     *  AAPT pierde bitul de executie la ambalare → chmod 755 obligatoriu pe bin/. */
+    private fun extractToolchain() {
+        val dest = File(filesDir, "toolchain")
+        dest.deleteRecursively()
+        fun copyDir(path: String, out: File) {
+            val list = assets.list(path) ?: return
+            if (list.isEmpty()) {
+                out.parentFile?.mkdirs()
+                assets.open(path).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+            } else {
+                out.mkdirs()
+                for (child in list) copyDir(if (path.isEmpty()) child else "$path/$child", File(out, child))
+            }
+        }
+        copyDir("toolchain", dest)
+        // AAPT2 pierde bitul +x: il repunem pe toate binarele SI pe scripturile de config
+        // (xml2-config/xslt-config sunt shell scripts pe care lxml le executa la detectie).
+        for (sub in listOf("bin", "deps/bin")) {
+            val d = File(dest, sub)
+            if (d.exists()) d.listFiles()?.forEach {
+                try { it.setExecutable(true, false); it.setReadable(true, false) } catch (_: Exception) {}
+            }
+        }
+        // ★ AAPT2 NU pastreaza symlink-urile -> le recreem (clang caută numele exacte:
+        //   clang, clang++, ld.lld). Fara ele, linkarea esueaza cu "unable to execute command".
+        val binDir = File(dest, "bin")
+        val links = mapOf("clang" to "clang-21", "clang++" to "clang-21",
+                          "ld.lld" to "lld", "ld64.lld" to "lld", "clang-cpp" to "clang-21")
+        for ((name, target) in links) {
+            try {
+                val lnk = File(binDir, name)
+                if (!lnk.exists()) lnk.createNewFile()
+                java.lang.Runtime.getRuntime().exec(arrayOf("ln", "-sf", target, lnk.absolutePath)).waitFor()
+            } catch (_: Exception) {}
+        }
     }
 
     /** ★ Poarta: porneste agentul doar daca exista cheia; altfel o cere (onboarding).
@@ -772,6 +839,20 @@ class MainActivity : AppCompatActivity() {
                     val srcLib = File(scripts, "Lib")
                     if (srcLib.exists()) srcLib.copyRecursively(stdlib, overwrite = true)
                 }
+                // ★ pip + setuptools + wheel: livrate ca ZIP (AAPT2 ignora folderele cu '_',
+                // ex. pip/_internal) si puse in LIBDIR, de unde Python le incarca automat.
+                try {
+                    val zipSrc = File(scripts, "pysitepkg.zip")
+                    val zipDst = File(pyHome, "lib/pysitepkg.zip")
+                    if (zipSrc.exists()) { zipDst.parentFile?.mkdirs(); zipSrc.copyTo(zipDst, overwrite = true) }
+                    // ★ subpachetele cu '_' (ex. compression/_common) sunt ELIMINATE de AAPT2 din
+                    // assets -> le livram ca ZIP separat si il punem in PYTHONPATH.
+                    val exSrc = File(scripts, "stdlib_extra.zip")
+                    val exDst = File(pyHome, "lib/stdlib_extra.zip")
+                    if (exSrc.exists()) { exDst.parentFile?.mkdirs(); exSrc.copyTo(exDst, overwrite = true) }
+                } catch (_: Exception) {}
+                // ★ sysconfig: inlocuieste caile de laptop (folosite la cross-build) cu cele de pe device
+                try { fixSysconfig(scripts) } catch (_: Exception) {}
                 val dynDst = File(stdlib, "lib-dynload")
                 if (!dynDst.exists() || dynDst.list()?.isEmpty() != false) {
                     dynDst.mkdirs()
@@ -812,6 +893,15 @@ class MainActivity : AppCompatActivity() {
                 pb.environment()["HOME"] = home.absolutePath
                 pb.environment()["PATH"] = "/system/bin:/vendor/bin"
                 pb.environment()["PYTHONUNBUFFERED"] = "1"
+                pb.environment()["PYTHONPATH"] = File(pyHome, "lib/pysitepkg.zip").absolutePath + ":" + File(pyHome, "lib/stdlib_extra.zip").absolutePath
+                // ★ TMPDIR: tempfile.gettempdir() il foloseste ca sa scrie ca-bundle.pem
+                // (CA store pentru HTTPS). Fara el, SSL eșuează si API-ul nu raspunde.
+                val tmpDir = File(filesDir, "tmp").apply { mkdirs() }
+                pb.environment()["TMPDIR"] = tmpDir.absolutePath
+                // ★ nativeLibraryDir: SINGURUL loc de unde untrusted_app poate EXECUTA
+                // (SELinux interzice exec din filesDir). Acolo stau clang/lld/pkg-config
+                // redenumite lib*_exec.so (APK le extrage automat).
+                pb.environment()["TC_NATIVE"] = applicationInfo.nativeLibraryDir
                 // ★ cheia API: o pasa explicit agentului (agent.py o citeste din env SAU key.txt)
                 if (!keyIn.isNullOrBlank()) pb.environment()["DEEPSEEK_API_KEY"] = keyIn
                 pb.environment()["TERM"] = "xterm-256color"

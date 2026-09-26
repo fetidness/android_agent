@@ -4,32 +4,66 @@
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
 
-### Starea repo-ului (25 sept 2026) — VERIFICAT
+### Starea repo-ului (26 sept 2026) — ARHITECTURA "ZERO TERMUX"
 
 | Ce | Valoare reala |
 |----|---------------|
-| Ultimul commit | `6e8f5a3` (din **153** in total) |
-| Autori | gab (111), fetidness (42) |
-| Perioada | 19 sept -> 25 sept 2026 |
-| Marker assets activ | **`.assets_v115`** |
-| APK debug | 29 753 129 B (**28.4 MB**) |
-| `agent.py` (assets) | **180 598 B** (v2 optimizat) |
-| `agent-android-v2.py` | **180 598 B** / 2686 linii |
-| `agent-original-android.py` | **183 832 B** (referinta, MD5 `9b63f3be`) |
-| `agent-linux-v2.py` | **112 118 B** (optimizat Linux) |
-| `agent-original-linux.py` | **112 997 B** (referinta) |
+| Marker assets activ | **`.assets_v147`** |
+| APK debug | **186 MB** (include toolchain nativ + binare executabile) |
+| `agent.py` (assets) | **185 548 B** |
+| `toolchain.py` (assets) | **71 753 B** |
 | Module Kotlin | **15** |
-| Assets Python | 9 `.py` + `Lib/` (188 intrari) |
+| Assets Python | agent.py + toolchain.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri |
+| Toolchain nativ | `assets/toolchain/` (240 MB) + 7 binare in `jniLibs/` |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
-| Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** (153 commituri, actualizat periodic) |
+| Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
 
-> **DEFAULT la clone/build:** `assets/python/agent.py` = copia lui `agent-android-v2.py`
-> (optimizat, cost fix **6449 tok/req**, fereastra 1M exploatata integral).
-> Originalele rămân disponibile la radacina repo-ului (`agent-original-android.py`,
-> `agent-original-linux.py`). Vezi **Etapa 46** pentru lista completa a optimizarilor.
->
-> ★ **Istoricul complet al dezvoltatarii** (toate commiturile, grupate pe zile si
-> pe categorii) este in **[`CHANGELOG.md`](CHANGELOG.md)** — actualizat periodic.
+#### ★ CE S-A SCHIMBAT ESENTIAL (26 sept 2026)
+
+**Arhitectura „zero Termux": APK-ul vina cu toolchain de compilare COMPLET.**
+
+| Componenta | Unde | Rol |
+|---|---|---|
+| `libclang_exec.so` | `jniLibs/arm64-v8a/` | clang 21.1.8 (compilat de la 0, ARM64) |
+| `liblld_exec.so` | `jniLibs/` | linker lld 21.1.8 |
+| `libpkgconf_exec.so` | `jniLibs/` | pkg-config 2.3.0 (compilat de la 0) |
+| `libllvm*_exec.so` | `jniLibs/` | ar, ranlib, strip, nm |
+| `assets/toolchain/` | assets | sysroot + headers + libxml2/libxslt + pyinc |
+
+**Agentul compileaza NATIV pe telefon, fara PC, fara Termux, fara bootstrap:**
+```python
+toolchain(action="pip_install", package="lxml")   # ✅ TESTAT: exit 0, 88s
+```
+Rezultat: wheel `lxml-6.1.3-cp314-cp314-android_24_arm64_v8a.whl`, XPath functional.
+
+#### 🔴 CAPCANE CRITICE (SELinux / Android 16)
+
+1. **`untrusted_app` NU poate executa din `filesDir`** (SELinux). Singurul loc
+   executabil = **`nativeLibraryDir`** (`/data/app/.../lib/arm64`). De aceea
+   clang/lld/pkg-config sunt ambalate ca `lib*_exec.so` in `jniLibs`.
+2. **`lld` decide modul din `argv[0]`**: cu basename `liblld_exec.so` zice
+   *"lld is a generic driver"*. Fix: symlink `ld.lld` + `--ld-path`.
+3. **AAPT2 elimina folderele care incep cu `_`** (`pip/_internal`,
+   `compression/_common`). Fix: livrate ca ZIP-uri (`pysitepkg.zip`,
+   `stdlib_extra.zip`) in PYTHONPATH.
+4. **`TMPDIR` trebuie sa EXISTE**: Python scrie acolo `ca-bundle.pem` (CA store
+   pentru HTTPS). Fara el: `CERTIFICATE_VERIFY_FAILED` -> API-ul nu raspunde.
+5. **`-m pip` ignora PYTHONPATH** cand PYTHONHOME e setat. Fix: `sys.path` injectat
+   prin `-c`.
+
+#### Procedura de pornire (dupa restart telefon)
+
+```bash
+# 1. adb TCP (o data per restart):
+/home/gab/android/platform-tools/adb tcpip 5555
+/home/gab/android/platform-tools/adb forward tcp:5555 tcp:5555
+
+# 2. build + install:
+cd /home/gab/Desktop/android_agent/workspace/app && ./build_app.sh
+
+# 3. cheia DeepSeek (nu e in git):
+adb shell run-as net.sys32.agent sh -c 'mkdir -p /data/data/net.sys32.agent/files/python; echo -n "sk-..." > /data/data/net.sys32.agent/files/python/key.txt'
+```
 
 ### Ce esti
 Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon

@@ -9,6 +9,39 @@
 
 ---
 
+## 2026-09-26 (sesiune ARHITECTURA "ZERO TERMUX" + optimizari P1-P10)
+
+**Toolchain nativ compilat de la 0 (fara Termux)**
+- clang 21.1.8 + lld, cross-compilat pentru Android ARM64 (~1h15m, 4138/4209 targeturi)
+- strip agresiv: 3537 MB -> 191 MB (llvm-strip din NDK)
+- pkgconf 2.3.0 compilat de la 0 pentru ARM64 (lxml il cere pentru detectie)
+- libxml2 2.15.4 + libxslt 1.1.45 compilate de la 0 (-fPIC obligatoriu)
+- pyconfig.h generat cross (cere Python 3.14 host construit pe laptop)
+
+**Fix-uri CRITICE de arhitectura (13 la numar)**
+- P1: bug procese agent.py duplicate -> lock file pe DISC + /proc/<pid> + killOrphanAgents
+- P2: x86_64 eliminat (abiFilters + assets) -> -20 MB
+- P3/P4/P10: colectori de stare (MAX_BACKUPS/MAX_JOBS/MAX_LOGS) la pornire
+- pip: `-m pip` ignora PYTHONPATH -> injectare sys.path prin `-c`
+- pyhome: F lua AGENT_HOME (sdcard) in loc de filesDir -> pip_install esua
+- `_sh()` rula ca uid=2000 (nu vede filesDir) -> ruleaza local (app)
+- env_vars() rescris complet (fara referinte Termux/wrap)
+- TMPDIR: lipsea -> ca-bundle.pem nu se crea -> SSL esua -> API nu raspundea
+- pkg-config: lipsea din toolchain -> lxml nu detecta libxml2
+- XML2_CONFIG deprecat in lxml 6.x -> WITH_* + PKG_CONFIG
+- LD_LIBRARY_PATH/PYTHONHOME lipseau din env -> CANNOT LINK / encodings
+- `_env()` hardcoda cai neexecutabile -> unificat cu env_vars()
+
+**SELinux Android 16 (capcane descoperite live)**
+- untrusted_app NU poate executa din filesDir -> binarele in nativeLibraryDir (lib*_exec.so)
+- lld decide modul din argv[0] -> symlink `ld.lld` + `--ld-path`
+- AAPT2 elimina folderele cu `_` (pip/_internal, compression/_common) -> ZIP-uri in PYTHONPATH
+
+**Test E2E final (de la 0, fara PC)**
+- `toolchain pip_install lxml` -> exit 0, 88s, wheel android_24_arm64_v8a
+- XPath pe device -> `Salut E2E` scris in /sdcard/Download/ok.txt ✅
+
+
 ## 2026-09-25 (sesiune optimizare tokeni)
 
 **Optimizare / buget de context** (5)

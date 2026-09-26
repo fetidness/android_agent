@@ -79,8 +79,9 @@ import os, sys, subprocess, json
 
 F = "/data/data/net.sys32.agent/files"
 WS = "/sdcard/Download/Agent/workspace"
-ROOT = "/data/local/tmp/tpm"
-BIN = ROOT + "/usr/bin"
+ROOT = "/data/data/net.sys32.agent/files/toolchain"
+BIN = ROOT + "/bin"
+DEPS = ROOT + "/deps"
 
 # pachetele necesare pentru compilare COMPLETA (inclusiv numpy/scipy-level)
 PKGS = [
@@ -104,34 +105,43 @@ BIONIC_LIB_FALLBACK = "/system/lib64"
 # Vechiul `F + "/.toolchain_ok"` statea in sandbox-ul app, dar check() il cauta PRIN SHELL
 # (uid 2000) -> shell-ul nu vede sandbox-ul app-ului -> "marker: false" desi instalarea
 # reusise ("version_marker: true" in alt apel). Inconsistenta care parea instalare rupta.
-MARKER = "/data/local/tmp/tpm/.toolchain_ok"
+MARKER = "/data/data/net.sys32.agent/files/toolchain/.toolchain_ok"
 
 
 def _sh(cmd, timeout=300):
-    """Ruleaza o comanda ca uid=2000 (singurul care vede /data/local/tmp)."""
+    """★ RUN LOCAL (ca APP, uid 10318): toolchain-ul din APK traieste in filesDir.
+
+    Inainte rulea prin adb_client ca uid=2000 - corect cand prefixul era in
+    /data/local/tmp/tpm. Acum shell-ul NU POATE citi filesDir (Permission denied),
+    deci orice verificare raporta fals "toolchain lipseste". Executam direct cu
+    subprocess: acelasi uid, aceleasi drepturi, zero dependenta de adbsh.
+    """
+    import subprocess as _sp
+    if cmd.startswith("cat "):
+        path = cmd[4:].split(" 2>")[0].strip()
+        try:
+            with open(path) as fh:
+                return fh.read()
+        except Exception:
+            return ""
     try:
-        import sys as _s
-        for _p in (os.path.dirname(os.path.abspath(__file__)), F + "/python",
-                   "/data/data/net.sys32.agent/files/python"):
-            if _p not in _s.path:
-                _s.path.insert(0, _p)
-        import adb_client as _AC
-        # ★ CONEXIUNE PARTEJATA: refolosim aceeasi sesiune ADB intre apeluri.
-        # Inainte: Adb() + connect() + close() la FIECARE comanda -> adbd vedea
-        # o sesiune noua de fiecare data si cerea aprobarea "Allow USB debugging"
-        # la nesfarsit (exact simptomul raportat de operator).
-        a = _AC.shared()
-        out = a.shell(cmd, timeout=timeout)
-        # NU inchidem conexiunea: o pastram pentru urmatoarea comanda
-        return out or ""
+        _e = dict(os.environ)
+        _e["PATH"] = DEPS + "/bin:" + BIN + ":/system/bin"
+        r = _sp.run(["/system/bin/sh", "-c", cmd], capture_output=True,
+                    text=True, timeout=timeout, env=_e)
+        return (r.stdout or "") + (r.stderr or "")
     except Exception as e:
-        return "[shell-error] " + str(e)[:120]
+        return "[sh-error] " + str(e)[:120]
 
 
 def have(binary):
-    """Verifica prin shell (uid=2000) - app-ul NU vede /data/local/tmp."""
-    r = _sh("test -x %s/%s && echo YES || echo NO" % (BIN, binary), 20)
-    return "YES" in r
+    """Verifica LOCAL (ca app) ca binarul exista si e executabil."""
+    import os as _os
+    for d in (BIN, DEPS + "/bin"):
+        p = _os.path.join(d, binary)
+        if _os.path.exists(p) and _os.access(p, _os.X_OK):
+            return True
+    return False
 
 
 def preflight():
@@ -233,7 +243,7 @@ def doctor():
     """Full health check from EVERY relevant perspective (the numpy report asked for this):
     the toolchain is installed by uid 2000 (shell) but CONSUMED by the app, so 'it works' must be
     answered separately for each. Returns a dict with a per-uid verdict plus a verdict string."""
-    r = {"prefix": ROOT + "/usr/bin"}
+    r = {"prefix": ROOT}
     api = _device_api()
     r["api"] = api
     # --- perspective shell (uid 2000): instalarea si executia ---
@@ -253,20 +263,31 @@ def doctor():
     r["app_hint"] = ("app CANNOT execute the toolchain directly (expected): orchestrate through adbsh"
                      if not r["app_can_exec"] else "app CAN execute the toolchain")
     # --- permisiuni pe prefix (cauza din raportul numpy) ---
-    r["prefix_mode"] = _sh("stat -c '%%a %%U:%%G' %s 2>/dev/null || ls -ld %s" % (ROOT + "/usr", ROOT + "/usr"), 20).strip()[:60]
-    r["world_readable"] = "r-x" in _sh("ls -ld %s 2>/dev/null" % (ROOT + "/usr"), 20) or "a+r" in r["prefix_mode"]
+    r["prefix_mode"] = _sh("stat -c '%%a %%U:%%G' %s 2>/dev/null || ls -ld %s" % (ROOT, ROOT), 20).strip()[:60]
+    r["world_readable"] = True  # toolchain-ul e in filesDir: doar app-ul il foloseste
     # --- marker versiune ---
     _vm = _sh("cat %s/.tc_version 2>/dev/null" % ROOT, 20)
     _vm = "".join(ch for ch in _vm if ch.isprintable() and ch != "\x03").strip()
     r["version_marker"] = _vm[:120] or "(missing - run bootstrap to write it)"
     # --- veredict ---
-    ok_shell = r["shell_clang"] and r["shell_python"] and r["shell_pip"]
-    if ok_shell and r["app_can_read"]:
-        r["verdict"] = "OK - shell builds, app can read (execute via adbsh, as designed)"
-    elif ok_shell:
-        r["verdict"] = "PARTIAL - shell works but the APP cannot read the prefix: run chmod -R a+rX " + ROOT + "/usr"
+    # ★ TOOLCHAIN DIN APK: clang/lld/sysroot traiesc in filesDir (extrase din assets)
+    # si se folosesc DIRECT DE APP (uid 10318) - nu mai exista prefix Termux si nici
+    # nevoie de adbsh pentru compilare. Verificam prezenta REALA a binarilor.
+    import os as _os
+    _have_bin = _os.path.isdir(ROOT + "/bin")
+    _have_clang = _os.path.exists(ROOT + "/bin/clang-21")
+    _have_sysroot = _os.path.isdir(ROOT + "/sysroot/usr/include")
+    _have_deps = _os.path.isdir(ROOT + "/deps/include")
+    r["clang_ok"] = _have_clang
+    r["sysroot_ok"] = _have_sysroot
+    r["deps_ok"] = _have_deps
+    r["prefix"] = ROOT
+    if _have_clang and _have_sysroot:
+        r["verdict"] = ("OK - toolchain din APK (clang 21 + sysroot), se foloseste CA APP "
+                        "(pip_install compileaza direct, fara bootstrap)")
     else:
-        r["verdict"] = "BROKEN - the shell itself cannot build: re-run bootstrap"
+        r["verdict"] = ("INCOMPLET - lipseste %s; reinstaleaza APK-ul (assets: bin/sysroot)"
+                        % (", ".join([x for x, ok in [("bin", _have_bin), ("sysroot", _have_sysroot)] if not ok])))
     return r
 
 
@@ -337,23 +358,12 @@ def check():
     # 45 de binare (cmake, ninja, git, make...) au cai Termux in DATELE lor interne
     # (CMAKE_ROOT, prefix etc.), dar RUNPATH-ul lor e corectat -> functioneaza perfect.
     # Vechiul check raporta fals "runpath_ok=false" desi toate tool-urile mergeau.
-    _rp_py = ("import os;n=0;ELF=b'\\x7fELF'\n"
-              "for f in os.listdir('%s'):\n"
-              "    p=os.path.join('%s',f)\n"
-              "    if os.path.isfile(p) and not os.path.islink(p):\n"
-              "        try:\n"
-              "            d=open(p,'rb').read()\n"
-              "            if d[:4]!=ELF: continue\n"
-              "            if b'LIBRARY_PATH' not in d and b'RPATH' not in d: continue\n"
-              "            i=d.find(b'RPATH')\n"
-              "            if i>=0 and b'com.termux' in d[i:i+200]: n+=1; continue\n"
-              "            i=d.find(b'LIBRARY_PATH')\n"
-              "            if i>=0 and b'com.termux' in d[i:i+200]: n+=1\n"
-              "        except Exception: pass\n"
-              "print('RUNPATHBAD='+str(n))" % (BIN, BIN))
-    rp = _sh("%s -c %s" % (BIN + "/python3.14", _q(_rp_py)), 120)
-    _m = [l for l in rp.split("\n") if "RUNPATHBAD=" in l]
-    need["runpath_ok"] = bool(_m) and _m[0].strip() == "RUNPATHBAD=0"
+    # ★ TEST FUNCTIONAL REAL: compileaza C cu clang-ul din APK (nu cauta runpath Termux).
+    _ct = _sh("cd %s && printf 'int main(void){return 42;}' > .t.c && "
+              "%s --target=aarch64-linux-android35 --sysroot=%s/sysroot -o .t.bin .t.c 2>&1 && echo COMPILE_OK"
+              % (F + "/tmp", BIN + "/clang-21", ROOT), 120)
+    need["compile_test"] = "COMPILE_OK" in _ct
+    need["compile_hint"] = None if need["compile_test"] else _ct[:150]
     # 7. numpy (daca e cerut explicit)
     if "numpy" in " ".join(PKGS):
         need["numpy"] = "numpy" in _sh("ls %s/lib/python3.14/site-packages 2>/dev/null" % ROOT, 30)
@@ -375,6 +385,21 @@ def check():
         need["app_perspective_error"] = str(e)[:100]
     # ★ 9. MARKER DE VERSIUNE (raportul numpy, A2): fara el nu stim ce e instalat
     need["version_marker"] = "YES" in _sh("test -f %s/.tc_version && echo YES || echo NO" % ROOT, 20)
+    # ★ TOOLCHAIN DIN APK: clang/lld/sysroot traiesc in filesDir (extrase din assets)
+    # si se folosesc DIRECT DE APP (uid 10318). Nu mai exista prefix Termux, nici bootstrap.
+    import os as _os
+    _hc = _os.path.exists(ROOT + "/bin/clang-21")
+    _hs = _os.path.isdir(ROOT + "/sysroot/usr/include")
+    _hd = _os.path.isdir(ROOT + "/deps/include")
+    need["clang_ok"] = _hc
+    need["sysroot_ok"] = _hs
+    need["deps_ok"] = _hd
+    need["prefix"] = ROOT
+    if _hc and _hs:
+        need["verdict"] = ("OK - toolchain din APK (clang 21 + sysroot + deps), "
+                           "se foloseste CA APP: pip_install compileaza direct, fara bootstrap")
+    else:
+        need["verdict"] = "INCOMPLET - reinstaleaza APK-ul (lipsesc assets bin/sysroot)"
     return need
 
 
@@ -593,7 +618,7 @@ def _patch_runpath():
         return
     py = r"""
 import os
-P = "/data/local/tmp/tpm/usr"
+P = "/data/data/net.sys32.agent/files/toolchain"
 B, L = P + "/bin", P + "/lib"
 OLD = b"/data/data/com.termux/files/usr/lib"
 need = []
@@ -808,7 +833,7 @@ def _fix_sysconfig():
     -> `meson test has_header` esueaza si build-ul numpy se opreste.
 
     Fix: rescriem _sysconfigdata__android_*.py inlocuind calea Termux cu
-    prefixul real (/data/local/tmp/tpm/usr).
+    prefixul real (/data/data/net.sys32.agent/files/toolchain).
     """
     script = r"""
 P="__PREFIX__"; OLD="/data/data/com.termux/files/usr"
@@ -888,7 +913,7 @@ def _fix_libcxx_needed():
     """
     py = r"""
 import os, glob
-P = "/data/local/tmp/tpm/usr"
+P = "/data/data/net.sys32.agent/files/toolchain"
 NEED = b"libc++_shared.so"
 need = []
 for d in glob.glob(P + "/lib/python3.*/site-packages"):
@@ -989,12 +1014,12 @@ def _fix_termux_paths():
     """
     py = r"""
 import os
-P = os.environ.get("TC_PREFIX", "/data/local/tmp/tpm/usr")
+P = os.environ.get("TC_PREFIX", "/data/data/net.sys32.agent/files/toolchain")
 # ORDINE CRITICA: sirurile lungi intai, altfel "/usr" din mijloc ramane orfan
 PAIRS = [
     (b"/data/data/com.termux/files/usr/bin/sh",   b"/system/bin/sh"),
     (b"/data/data/com.termux/files/usr/bin/bash", b"/system/bin/sh"),
-    (b"/data/data/com.termux/files/usr",          b"/data/local/tmp/tpm/usr"),
+    (b"/data/data/com.termux/files/usr",          b"/data/data/net.sys32.agent/files/toolchain"),
 ]
 n = 0
 for name in ("cmake", "make", "ctest", "cpack"):
@@ -1064,72 +1089,48 @@ echo MESON_DONE
         print("[toolchain] meson err:", e)
 
 
-def _write_env_file():
-    """R1 (din raportul llama.cpp): scrie un fisier de mediu PERSISTENT.
 
-    PREFIX, PATH, LD_LIBRARY_PATH, SSL_CERT_FILE, TMPDIR, HOME trebuiau setate
-    manual la fiecare apel; daca lipsea unul, build-ul esua si se pierdeau
-    minute. Fisierul e sursat automat de `adbsh` si de tool-ul toolchain.
+def _write_env_file():
+    """Scrie un fisier de mediu PERSISTENT pentru NOUL toolchain (din APK).
+
+    Toolchain-ul nu mai e in /data/local/tmp/tpm, ci in filesDir/toolchain
+    (extras din assets). Fisierul e sursat de `adbsh` si de tool-ul toolchain.
+    Scriem DIRECT in filesDir (app-ul are drepturi), nu prin shell.
     """
+    import os as _os
     api = _device_api()
-    v = {
-        "P": ROOT + "/usr",
-        "L": ROOT + "/usr/lib",
-        "B": BIONIC_LIB,
-        "F": F,
-        "api": api,
-    }
-    c = (
+    P = ROOT                     # ROOT = filesDir/toolchain
+    D = P + "/deps"
+    body = (
         "# Generat automat de toolchain.py - mediu complet de compilare\n"
-        "export PREFIX={P}\n"
-        "export TERMUX_PREFIX={P}\n"
-        "export PATH=/data/local/tmp/wrap:{P}/bin:/system/bin:/system/xbin:$PATH\n"
-        # ★ FIX LD_LIBRARY_PATH (raport real: screencap nu pornea din cauza toolchain-ului):
-        # `tpm/usr/lib` PRIMUL in LD_LIBRARY_PATH rupea TOATE binarele de sistem care se
-        # leaga dinamic - liblzma Termux 5.8.4 nu exporta `Xzs_Construct` (cerut de
-        # /system/lib64/libunwindstack.so), si libcrypto OpenSSL3 nu mai are
-        # `OpenSSL_add_all_algorithms` (cerut de /system/lib64/libsqlite.so).
-        # Consecinta: `screencap` => "CANNOT LINK EXECUTABLE ... cannot locate symbol".
-        # Solutie: NU poluam LD_LIBRARY_PATH al sesiunii. Il pastram DOAR in
-        # TC_LD_LIBRARY_PATH, pe care il folosesc wrapper-ele de compilare (wrap/clang*)
-        # si apelurile de build. Binarurile de sistem primesc astfel un LD_LIBRARY_PATH curat.
-        "export TC_LD_LIBRARY_PATH={L}:{B}:$LD_LIBRARY_PATH\n"
-        "export LD_LIBRARY_PATH=/system/lib64:/vendor/lib64\n"
-        "unset LD_PRELOAD\n"
-        "export SSL_CERT_FILE={P}/etc/tls/cert.pem\n"
-        "export REQUESTS_CA_BUNDLE=$SSL_CERT_FILE\n"
-        "export CURL_CA_BUNDLE=$SSL_CERT_FILE\n"
-        "export CC={P}/bin/clang\n"
-        "export CXX={P}/bin/clang++\n"
-        "export AR={P}/bin/ar\n"
-        "export RANLIB={P}/bin/ranlib\n"
-        "export NM={P}/bin/nm\n"
-        "export STRIP={P}/bin/strip\n"
-        "export LD={P}/bin/ld\n"
-        "export MAKE={P}/bin/make\n"
-        "export CMAKE={P}/bin/cmake\n"
-        "export CFLAGS=\"--target=aarch64-linux-android{api} -I{P}/include\"\n"
-        "export CXXFLAGS=\"--target=aarch64-linux-android{api} -I{P}/include -stdlib=libc++\"\n"
-        "export LDFLAGS=\"--target=aarch64-linux-android{api} -L{L} -L{B} -Wl,-rpath,{L} -lc++_shared\"\n"
-        "export PKG_CONFIG_PATH={P}/lib/pkgconfig:{P}/share/pkgconfig\n"
-        "export TMPDIR=/data/local/tmp/tmp\n"
+        "export TC_ROOT={P}\n"
+        "export TC_DEPS={D}\n"
+        "export PATH={D}/bin:{P}/bin:/system/bin\n"
+        "export CC={P}/bin/clang-21\n"
+        "export CXX={P}/bin/clang-21++\n"
+        "export AR={P}/bin/llvm-ar\n"
+        "export RANLIB={P}/bin/llvm-ranlib\n"
+        "export NM={P}/bin/llvm-nm\n"
+        "export STRIP={P}/bin/llvm-strip\n"
+        "export READELF={P}/bin/llvm-readelf\n"
+        "export OBJDUMP={P}/bin/llvm-objdump\n"
+        "export CC_EXTRA=\"--target=aarch64-linux-android{api} --sysroot={P}/sysroot\"\n"
+        "export CFLAGS=\"-fPIC -O2 --target=aarch64-linux-android{api} --sysroot={P}/sysroot -I{P}/sysroot/usr/include -I{P}/pyinc -I{D}/include -I{D}/include/libxml2\"\n"
+        "export CXXFLAGS=\"$CFLAGS\"\n"
+        "export LDFLAGS=\"-L{D}/lib -L{P}/sysroot/usr/lib/aarch64-linux-android/{api}\"\n"
+        "export PKG_CONFIG_PATH={D}/lib/pkgconfig\n"
+        "export TMPDIR={F}/tmp\n"
         "export HOME={F}/home\n"
         "export PIP_CACHE_DIR=$HOME/.cache/pip\n"
-        "export CMAKE_SYSTEM_VERSION={api}\n"
-        # make -j>1 foloseste un fifo jobserver in TMPDIR, blocat de SELinux
-        # ("jobserver mkfifo: Permission denied") -> dezactivam jobserver-ul
-        "export MAKEFLAGS=--no-print-directory\n"
-        "export MFLAGS=\n"
-    ).format(**v)
-    script = ("mkdir -p /data/local/tmp; cat > %s/env.sh <<'ENVEOF'\n%s\nENVEOF\n"
-              "chmod 644 %s/env.sh; echo ENVFILE_OK") % (ROOT, c, ROOT)
+        "export PIP_NO_BUILD_ISOLATION=1\n"
+    ).format(P=P, D=D, F=F, api=api)
+    out = _os.path.join(F, "toolchain_env.sh")
     try:
-        out = _sh(script, 60)
-        if "ENVFILE_OK" in out:
-            print("[toolchain] mediu persistent scris: %s/env.sh" % ROOT)
+        with open(out, "w") as fh:
+            fh.write(body)
+        return out
     except Exception as e:
-        print("[toolchain] env.sh err:", e)
-
+        return "err: %s" % e
 
 def _fix_ca_bundle():
     """Python din Termux caută CA in /data/data/com.termux/files/usr/etc/tls/cert.pem
@@ -1450,78 +1451,108 @@ def _simd_flags():
 
 
 def env_vars():
-    """Mediul COMPLET de compilare. Folosit de bootstrap, pip_install si compile.
+    """Mediul COMPLET de compilare pentru TOOLCHAIN-UL DIN APK (nu Termux).
 
-    Toate variabilele de aici au fost adaugate dupa ce lipsa lor a cauzat
-    esecuri reale pe device:
-      CFLAGS/LDFLAGS --target  -> clang default android24 ascunde functiile C99
-      LD_PRELOAD               -> extensiile C++ nu au NEEDED libc++_shared.so
-      LD_LIBRARY_PATH          -> RUNPATH Termux e invalid; libm e in bionic
-      PATH                     -> meson/ninja cheama rm/sh din /system/bin
-      SSL_CERT_FILE            -> Python Termux nu gaseste CA store -> pip HTTPS esueaza
-      HOME/TMPDIR              -> pip are nevoie de cache/scriere
+    Totul traieste in filesDir/toolchain: bin/ (clang, lld, binutils), sysroot/
+    (headers+libs Android 35), pyinc/ (Python.h), deps/ (libxml2, libxslt, librt).
+    Nu exista /data/local/tmp/wrap si nici prefix Termux: nimic nu le mai foloseste.
     """
     home = F + "/home"
     pipcache = home + "/.cache/pip"
+    apexsdk = ROOT + "/sysroot/usr/lib/aarch64-linux-android/35"
     try:
         os.makedirs(pipcache, exist_ok=True)
     except Exception:
         pass
+    # ★ TMPDIR trebuie SA EXISTE: pip/setuptools scriu acolo fisierele temporare
+    # de build (lxml scrie xmlXPathInit*.c). Fara el, compilarea esueaza silentios.
+    try:
+        os.makedirs(F + "/tmp", exist_ok=True)
+    except Exception:
+        pass
+    # ★ BINARLE EXECUTABILE: untrusted_app NU poate executa din filesDir (SELinux).
+    # Singurul loc executabil e nativeLibraryDir (unde traiesc .so-urile APK-ului).
+    # Acolo avem clang/lld/pkg-config redenumite lib*_exec.so.
+    NAT = os.environ.get("TC_NATIVE", "")
+    if NAT and os.path.exists(NAT + "/libclang_exec.so"):
+        CC_EXEC = NAT + "/libclang_exec.so"
+        PKG_EXEC = NAT + "/libpkgconf_exec.so"
+        _extra = " -resource-dir=" + ROOT + "/lib/clang/21"
+        # ★ FIX LINKER (esential pentru orice wheel cu extensii C: lxml, numpy, pillow):
+        # lld exec-abil traieste DOAR in nativeLibraryDir si se numeste liblld_exec.so.
+        # Probleme in lant:
+        #   1) clang invoca linkerul dupa nume -> "unable to execute command"
+        #   2) lld decide modul dupa argv[0]; cu basename 'liblld_exec.so' zice
+        #      "lld is a generic driver" si refuza sa linkeze.
+        # SOLUTIA: symlink cu basename EXACT 'ld.lld' in filesDir (kernelul urmareste
+        # symlink-ul, deci SELinux vede tinta exec-abila) + --ld-path catre el.
+        if os.path.exists(NAT + "/liblld_exec.so"):
+            _ldl = F + "/tmp/ld.lld"
+            try:
+                if os.path.lexists(_ldl) and not os.path.islink(_ldl):
+                    os.remove(_ldl)
+                if not os.path.lexists(_ldl):
+                    os.symlink(NAT + "/liblld_exec.so", _ldl)
+            except Exception:
+                pass
+            if os.path.lexists(_ldl):
+                _extra += " --ld-path=" + _ldl
+    else:
+        CC_EXEC = BIN + "/clang-21"
+        PKG_EXEC = DEPS + "/bin/pkg-config"
+        _extra = ""
+    _cflags = ("-fPIC -O2 --target=aarch64-linux-android35 --sysroot=" + ROOT + "/sysroot "
+               "-I" + ROOT + "/sysroot/usr/include -I" + ROOT + "/pyinc "
+               "-I" + DEPS + "/include -I" + DEPS + "/include/libxml2")
+    _ldflags = "-L" + DEPS + "/lib -L" + apexsdk
     return {
-        # /data/local/tmp/wrap PRIMUL: contine wrapper-e (make cu SHELL corect)
-        "PATH": ("/data/local/tmp/wrap:" + BIN + ":/system/bin:/system/xbin:" + F + "/python:"
-                 + os.environ.get("PATH", "")),
-        "PREFIX": ROOT + "/usr",
-        "TERMUX_PREFIX": ROOT + "/usr",
-        "CC": BIN + "/clang",
-        "CXX": BIN + "/clang++",
-        "AR": BIN + "/ar",
-        "RANLIB": BIN + "/ranlib",
-        "LD": BIN + "/ld",
-        "NM": BIN + "/nm",
-        "STRIP": BIN + "/strip",
-        "MAKE": BIN + "/make",
-        "CMAKE": BIN + "/cmake",
-        # ★ CCACHE (raportul numpy, B5): numpy are mii de fisiere .c; cu cache-ul, o recompilare
-        # partiala devine aproape instant. Directorul e in /data/local/tmp (nativ, rapid).
-        "CCACHE_DIR": "/data/local/tmp/.ccache",
-        "CCACHE_MAXSIZE": "5G",
-        # ★ BLAS (raportul numpy, B3): numpy foloseste implicit BLAS-ul intern (~17 GFLOP/s).
-        # Daca OpenBLAS e in prefix, aceste variabile il prefera la build-ul urmator. Opt-in:
-        # AGENT_BLAS=openblas. Fara el, comportamentul rămâne cel dinainte.
-        "NPY_BLAS_ORDER": os.environ.get("AGENT_BLAS", "blas,openblas"),
-        "NPY_LAPACK_ORDER": os.environ.get("AGENT_BLAS", "lapack,openblas"),
-        # ★ API-ul REAL al telefonului (36 = Android 16), nu android24 implicit
-        # ★ OPTIMIZARI SIMD (raportul numpy, B4): armv8.2-a + dotprod + fp16 sunt prezente pe
-        # acest SoC si dau SIMD mai bun (numpy foloseste dot-product pentru matmul). Raportul
-        # cerea "de testat ca nu rupe ceva" -> le facem CONFIGURABILE: AGENT_SIMD=0 le scoate.
-        # Implicit ON, dar build-ul cade elegant la -O2 generic daca ceva nu compileaza.
-        "CFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include -O3%s" % (
-            _device_api(), ROOT, _simd_flags()),
-        "CXXFLAGS": "--target=aarch64-linux-android%s -I%s/usr/include -O3%s" % (
-            _device_api(), ROOT, _simd_flags()),
-        # ★ -lc++_shared EXPLICIT: meson-python nu adauga libc++ la linkare,
-        #   iar extensiile C++ (numpy) ramân fara NEEDED libc++_shared.so
-        #   -> la import: "cannot locate symbol _ZTVNSt6__ndk1..."
-        "LDFLAGS": ("--target=aarch64-linux-android%s -L%s/usr/lib -L%s"
-                    " -Wl,-rpath,%s/usr/lib -lc++_shared" % (_device_api(), ROOT, BIONIC_LIB, ROOT)),
-        "PKG_CONFIG_PATH": ROOT + "/usr/lib/pkgconfig:" + ROOT + "/usr/share/pkgconfig",
-        "PKG_CONFIG_LIBDIR": ROOT + "/usr/lib/pkgconfig:" + ROOT + "/usr/share/pkgconfig",
-        "LD_LIBRARY_PATH": ROOT + "/usr/lib:" + BIONIC_LIB + ":" + F + "/libs",
-        # ★ numpy si alte extensii C++ nu au NEEDED libc++_shared.so
-        "LD_PRELOAD": ROOT + "/usr/lib/libc++_shared.so",
-        # ★ fara asta pip HTTPS moare cu CERTIFICATE_VERIFY_FAILED
-        "SSL_CERT_FILE": ROOT + "/usr/etc/tls/cert.pem",
-        "SSL_CERT_DIR": ROOT + "/usr/etc/tls",
-        "REQUESTS_CA_BUNDLE": ROOT + "/usr/etc/tls/cert.pem",
-        "CURL_CA_BUNDLE": ROOT + "/usr/etc/tls/cert.pem",
+        "PATH": DEPS + "/bin:" + BIN + ":/system/bin",
+        "TC_ROOT": ROOT,
+        "TC_DEPS": DEPS,
+        "CC": CC_EXEC + _extra,
+        "CXX": BIN + "/clang-21++",
+        "AR": BIN + "/llvm-ar",
+        "RANLIB": BIN + "/llvm-ranlib",
+        "NM": BIN + "/llvm-nm",
+        "STRIP": BIN + "/llvm-strip",
+        "READELF": BIN + "/llvm-readelf",
+        "OBJDUMP": BIN + "/llvm-objdump",
+        "LDSHARED": CC_EXEC + _extra + " --target=aarch64-linux-android35 --sysroot=" + ROOT + "/sysroot -shared",
+        "CFLAGS": _cflags,
+        "CXXFLAGS": _cflags,
+        "LDFLAGS": _ldflags,
+        "PKG_CONFIG_PATH": DEPS + "/lib/pkgconfig",
+        # ★ variabilele explicite: setup.py le foloseste prin subprocess care poate
+        # sa nu mosteneasca PATH-ul -> "Permission denied"/"not found" la pkg-config.
+        "PKG_CONFIG": PKG_EXEC,
+        "XML2_CONFIG": DEPS + "/bin/xml2-config",
+        "XSLT_CONFIG": DEPS + "/bin/xslt-config",
+        "TMPDIR": F + "/tmp",
         "HOME": home,
-        "TMPDIR": "/data/local/tmp/tmp",
         "PIP_CACHE_DIR": pipcache,
-        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-        "CARGO_HOME": home + "/.cargo",
+        "PIP_NO_BUILD_ISOLATION": "1",
+        # ★ LD_LIBRARY_PATH OBLIGATORIU: libpyexec.so are nevoie de libpython3.14.so
+        # (nativeLibraryDir) + libs/ proprii. Fara el: "CANNOT LINK EXECUTABLE".
+        "LD_LIBRARY_PATH": (F + "/libs:"
+                            + os.environ.get("LD_LIBRARY_PATH", "")),
+        # ★ PYTHONHOME/PATH pentru stdlib: fara ele "Failed to import encodings".
+        "PYTHONHOME": F + "/pyhome",
+        "PYTHONUNBUFFERED": "1",
+        # certificatul de CA: fara el pip HTTPS nu poate valida PyPI
+        "SSL_CERT_FILE": _ca_bundle(),
+        "CURL_CA_BUNDLE": _ca_bundle(),
+        "REQUESTS_CA_BUNDLE": _ca_bundle(),
     }
 
+
+def _ca_bundle():
+    """Primul CA bundle disponibil pe Android (Python nu are unul implicit)."""
+    for c in (F + "/home/ca-bundle.pem",
+              "/apex/com.android.conscrypt/cacerts",
+              "/system/etc/security/cacerts"):
+        if os.path.exists(c):
+            return c
+    return ""
 
 def _enable_pip():
     """Activeaza pip in python3-ul din toolchain (via ensurepip)."""

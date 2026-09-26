@@ -70,3 +70,7 @@ auto_learn.log
 
 # ---- memorie agent (locala, nu se urca in git) ----
 memory.md
+
+# ---- toolchain nativ (257 MB, regenerabil cu build_toolchain.sh) ----
+workspace/app/net.sys32.agent/app/src/main/assets/toolchain/
+workspace/app/net.sys32.agent/app/src/main/jniLibs/arm64-v8a/lib*_exec.so
