@@ -1556,6 +1556,36 @@ def _bg_save(d):
         pass
 
 
+MAX_JOBS = 20          # ★ P4: cate joburi terminate pastram
+MAX_JOB_AGE = 24*3600  # ★ P4: cat timp pastram un job terminat (secunde)
+
+
+def _bg_autoclean(reg):
+    """★ P4: colector de stare acumulata. Sterge joburile terminate mai vechi de
+    MAX_JOB_AGE si, daca tot sunt > MAX_JOBS, pe cele mai vechi. Fara efecte pe
+    joburile inca in lucru. Salveaza registrul doar daca a modificat ceva."""
+    now = time.time()
+    gone = []
+    for k, j in list(reg.items()):
+        if j.get("status") not in ("done", "killed"):
+            continue
+        age = now - j.get("ts", now)
+        if age > MAX_JOB_AGE:
+            gone.append(k)
+    rest = [(k, j) for k, j in reg.items() if k not in gone
+            and j.get("status") in ("done", "killed")]
+    rest.sort(key=lambda kv: kv[1].get("ts", 0))
+    while len(rest) > MAX_JOBS:
+        gone.append(rest.pop(0)[0])
+    for k in gone:
+        try: run_adbsh_tool("rm -f %s" % reg[k]["log"], 30)
+        except Exception: pass
+        reg.pop(k, None)
+    if gone:
+        _bg_save(reg)
+    return gone
+
+
 def bg_tool(a):
     """Gestionar de procese in fundal. Actiuni:
        start <cmd> [name]  - lanseaza in fundal cu log unic + registru
@@ -1567,6 +1597,11 @@ def bg_tool(a):
     """
     act = (a.get("action") or "status").strip()
     reg = _bg_load()
+    # ★ P4: auto-curatare (stare care se acumula fara colector) - ruleaza la fiecare apel
+    try:
+        _bg_autoclean(reg)
+    except Exception:
+        pass
 
     if act == "start":
         cmd = (a.get("cmd") or "").strip()
@@ -2442,6 +2477,11 @@ def quarantine(reason, lines):
 
 
 if __name__ == "__main__":
+    # ★ P3/P10: colectori de stare acumulata (backup-uri + loguri), la fiecare pornire
+    try: _cleanup_backups()
+    except Exception: pass
+    try: _cleanup_logs()
+    except Exception: pass
     if WATCH.get("on"):
         _watch_start()
     # cheia poate fi scrisa de UI in key.txt DUPA pornirea procesului: reincarcam.
@@ -2694,3 +2734,46 @@ if __name__ == "__main__":
             pass
 
     _fix_compression_common()
+
+MAX_BACKUPS = 3        # ★ P3: cate backup-uri .bak* pastram per fisier sursa
+
+
+def _cleanup_backups(d=None):
+    """★ P3: colector de backup-uri acumulate. Pastreaza ultimele MAX_BACKUPS
+    per fisier sursa (dupa mtime) si sterge restul. Ruleaza la start, in try."""
+    import glob as _g
+    d = d or os.path.dirname(os.path.abspath(__file__))
+    groups = {}
+    for f in _g.glob(os.path.join(d, "*.bak*")):
+        base = os.path.basename(f)
+        src = base.split(".bak")[0]
+        groups.setdefault(src, []).append(f)
+    removed = 0
+    for src, files in groups.items():
+        files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        for old in files[MAX_BACKUPS:]:
+            try:
+                os.remove(old); removed += 1
+            except Exception:
+                pass
+    return removed
+
+MAX_LOGS = 5           # ★ P10: cate loguri pastram in workspace/logs
+
+
+def _cleanup_logs(d=None):
+    """★ P10: rotatie loguri (pastreaza ultimele MAX_LOGS dupa mtime)."""
+    import glob as _g
+    d = d or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+    try:
+        files = [f for f in _g.glob(os.path.join(d, "*")) if os.path.isfile(f)]
+    except Exception:
+        return 0
+    files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+    removed = 0
+    for old in files[MAX_LOGS:]:
+        try:
+            os.remove(old); removed += 1
+        except Exception:
+            pass
+    return removed

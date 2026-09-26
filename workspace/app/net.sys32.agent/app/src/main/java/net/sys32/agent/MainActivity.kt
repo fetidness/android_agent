@@ -492,13 +492,52 @@ class MainActivity : AppCompatActivity() {
      *  Altfel agentul rămâne mort pana la restart manual (bug descoperit in teste). */
     private var watchdogOn = false
     @Volatile private var lastPythonStart = 0L
-    /** Verifica daca procesul Python e viu, folosind DOAR referinta proprie (pyProc).
-     *  Nu folosim pgrep: un app nu poate lista procese ale altor uid-uri, deci
-     *  pgrep intorcea mereu gol -> watchdog bucla / nu repornea corect. */
-    private fun pythonRunning(): Boolean {
-        val pr = pyProc ?: return false
-        return try { pr.isAlive } catch (_: Exception) { false }
+
+    /** ★ P1: LOCK FILE pe DISC (supravietuieste recrearii activity, spre deosebire de pyProc). */
+    private fun pidLock(): File = File(filesDir, "agent.pid")
+
+    /** PID-ul unui Process (UNIXProcess: camp privat "pid", sau metoda pid()). */
+    private fun pidOf(p: Process): Long {
+        try {
+            val f = p.javaClass.getDeclaredField("pid"); f.isAccessible = true
+            return f.getLong(p)
+        } catch (_: Throwable) {}
+        try {
+            val mth = p.javaClass.getDeclaredMethod("pid"); mth.isAccessible = true
+            return (mth.invoke(p) as Int).toLong()
+        } catch (_: Throwable) {}
+        return -1L
     }
+
+    /** PID-ul real al procesului Python: din ProcessHandle daca il avem, altfel din lock file. */
+    private fun pyLivePid(): Long {
+        val pr = pyProc
+        if (pr != null) {
+            try { if (pr.isAlive) return pidOf(pr) } catch (_: Exception) {}
+        }
+        return pidLock().let { if (it.exists()) it.readText().trim().toLongOrNull() ?: -1L else -1L }
+    }
+
+    /** ★ P1: verificare REALA, uid-independenta: /proc/<pid> exista? */
+    private fun pidAlive(pid: Long): Boolean = pid > 0 && File("/proc/$pid").exists()
+
+    /** Omara procese agent.py orfane (identificate prin cmdline), in afara de PID-ul dat. */
+    private fun killOrphanAgents(keep: Long) {
+        try {
+            for (d in File("/proc").listFiles() ?: return) {
+                val pid = d.name.toLongOrNull() ?: continue
+                if (pid == keep) continue
+                val cl = try { File(d, "cmdline").readBytes() } catch (_: Exception) { continue }
+                val s = String(cl, Charsets.ISO_8859_1)
+                if (s.contains("libpyexec.so") && s.contains("agent.py")) {
+                    try { android.os.Process.sendSignal(pid.toInt(), android.os.Process.SIGNAL_KILL) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** ★ P1: watchdog pe /proc/<pid> (nu pe pyProc.isAlive, care devine null la recrearea activity). */
+    private fun pythonRunning(): Boolean = pidAlive(pyLivePid())
     private fun startWatchdog() {
         if (watchdogOn) return
         watchdogOn = true
@@ -651,7 +690,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v115")
+        val stamp = File(filesDir, ".assets_v117")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -711,14 +750,18 @@ class MainActivity : AppCompatActivity() {
     private fun startPythonProcess(keyIn: String?) {
         Thread {
             try {
-                // GARDA ANTI-DUPLICARE: daca un proces Python ruleaza deja, il oprim
-                // inainte sa pornim altul (altfel rămân procese agent.py orfane).
+                // ★ P1 GARDA ANTI-DUPLICARE (stare pe DISC, nu in memorie):
+                // 1) citim PID-ul vechi din lock file si, daca /proc/<pid> exista, il omoram;
+                // 2) orice alt proces agent.py orfan (cmdline: libpyexec.so + agent.py) e omorat.
                 try {
-                    val old = pyProc
-                    if (old != null && old.isAlive) { old.destroy(); old.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) }
+                    val oldPid = pidLock().let { if (it.exists()) it.readText().trim().toLongOrNull() ?: -1L else -1L }
+                    if (pidAlive(oldPid)) {
+                        try { android.os.Process.sendSignal(oldPid.toInt(), android.os.Process.SIGNAL_KILL) } catch (_: Exception) {}
+                    }
+                    val cur = pyProc
+                    if (cur != null && cur.isAlive) { cur.destroy(); cur.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) }
+                    killOrphanAgents(-1L)
                 } catch (_: Exception) {}
-                // NU folosim pkill -f (ar putea omori procesul NOU). Ne bazam pe
-                // garda pyProc + watchdog (care verifica /proc).
                 val home = File(filesDir, "home").apply { mkdirs() }
                 val py = File(applicationInfo.nativeLibraryDir, "libpyexec.so")
                 val scripts = File(filesDir, "python")
@@ -787,6 +830,7 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
 
                 val p = pb.start()
                 pyProc = p
+                try { pidLock().writeText(pidOf(p).toString()) } catch (_: Exception) {}   // ★ P1: lock pe disc
                 lastPythonStart = System.currentTimeMillis()
                 pyIn = OutputStreamWriter(p.outputStream)
 
