@@ -2214,7 +2214,11 @@ def run_toolchain_tool(a):
                         os.environ[_k] = _v
                 try:
                     _rc, _out = _pip_run(["--no-build-isolation"])
-                    _missm = "ModuleNotFoundError" in _out and _rc != 0
+                    # ★ backend indisponibil (dep lipsa SAU backend necunoscut in mediu izolat)
+                    # -> reincercam CU izolare, ca pip sa-si aduca singur backend-ul.
+                    _missm = _rc != 0 and any(
+                        s in _out for s in ("ModuleNotFoundError", "BackendUnavailable",
+                                            "Cannot import", "backend is not available"))
                     if _missm and "--no-build-isolation" not in pkg:
                         _bp0 = _out
                         _t1 = time.time()
