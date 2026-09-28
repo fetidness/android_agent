@@ -34,7 +34,7 @@ stub -> SIGSEGV in constructorii `libpython3.14.so`.
 - auto-retry cu build isolation la `ModuleNotFoundError` (backend cu dependinta lipsa)
 - `pathspec` 1.1.1 adaugat in `pysitepkg.zip` (dependinta de scikit-build-core)
 
-**VERIFICAT pe device (instalare curata `.assets_v180`):**
+**VERIFICAT pe device (instalare curata `.assets_v181`):**
 - `pip install regex` -> exit 0, 23s; `import regex` + match OK (wheel `cp314-android_24_arm64_v8a`)
 - `pip install zstandard` -> exit 0 (C + scikit-build-core) | `msgpack` -> exit 0 (C++)
 - `markupsafe` -> exit 0; logcat dupa teste: ZERO "Fatal signal 11"
@@ -393,3 +393,7 @@ pe LAPACK - functioneaza. APK: 273 MB, marker `.assets_v160`.
 - `c6f75c8` Initial commit: Android AI agent app (net.sys32.agent)
 
 ---
+
+**Sesiunea 2 - verificare finala pe `.assets_v181`:** `lxml 6.1.3` compilat pe device in 96s
+(XPath functional, libxml2 2.15.4), `cbor2 6.1.4` -> exit 0. Commituri: `8279966`, `f97b6db`,
+`bd8d72b`, `91a9fdc`, `1cf1f4f`.

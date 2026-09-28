@@ -1,7 +1,7 @@
 # STATUS OPTIMIZARI - AGENT ANDROID (net.sys32.agent)
 
 Data: 2026-09-28 | Device: Samsung SM-A366B, Android 16 (SDK 36), aarch64, 8 core, 7.3 GB RAM
-Python: 3.14.7 | clang/LLVM: 21.1.8 | APK: `.assets_v180`
+Python: 3.14.7 | clang/LLVM: 21.1.8 | APK: `.assets_v181`
 
 Sesiune: executarea planului din `optimizari_finale.md` (PAS 0 - PAS 5) + repararea blocajului
 critic `pip install`. Regula: fiecare afirmatie de aici a fost TESTATA pe device, nu presupusa.
@@ -195,7 +195,7 @@ critic `pip install`. Regula: fiecare afirmatie de aici a fost TESTATA pe device
         Fix: auto-retry - dupa `ModuleNotFoundError` la --no-build-isolation, reincearca
              CU build isolation (pip isi descarca singur backend-ul)
 
-### 2.6 VERIFICAT pe device (SM-A366B, instalare curata `.assets_v180`)
+### 2.6 VERIFICAT pe device (SM-A366B, instalare curata `.assets_v181`)
 
     pip install regex       -> exit 0, 23s  (wheel cp314-android_24_arm64_v8a, 289 KB)
     import regex            -> match(r"(\d+)-(\d+)","12-34") = 12 / 34 (v2026.9.10)
@@ -285,7 +285,7 @@ critic `pip install`. Regula: fiecare afirmatie de aici a fost TESTATA pe device
       assets/python/agent.py         _clean_ld, env aplicat la pip, auto-retry isolation
       assets/python/pysitepkg.zip    + pathspec 1.1.1
       assets/python/Lib/site-packages/  + pathspec, pathspec-1.1.1.dist-info
-      MainActivity.kt                marker .assets_v180
+      MainActivity.kt                marker .assets_v181
 
 ═══════════════════════════════════════════════════════════════════════
 ## 6. URMATORUL PAS CONCRET

@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v180`** |
+| Marker assets activ | **`.assets_v181`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -596,7 +596,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v180`**) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v181`**) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -2726,7 +2726,7 @@ Procesul AGENT nu avea nicio problema (linkerul bionic isi citeste `LD_LIBRARY_P
 | I | env-ul complet aplicat in `os.environ` pe durata pip (altfel copilul nu gaseste `ld.lld` din `files/tmp`) | agent.py |
 | J | auto-retry cu build isolation la `ModuleNotFoundError` (backend cu dep lipsa) | agent.py |
 
-### VERIFICAT (instalare curata `.assets_v180`)
+### VERIFICAT (instalare curata `.assets_v181`)
 
 ```
 pip install regex       -> exit 0, 23s   (wheel cp314-android_24_arm64_v8a)
@@ -2740,4 +2740,4 @@ logcat dupa teste       -> ZERO "Fatal signal 11"
 Instalarea merge in `pyhome/lib/python3.14/site-packages`, e vizibila in `sys.path` si
 **supravietuieste** update-ului de APK prin `files/site_packages_keep` (verificat).
 
-**APK: 282 MB** | marker `.assets_v180`
+**APK: 282 MB** | marker `.assets_v181`
