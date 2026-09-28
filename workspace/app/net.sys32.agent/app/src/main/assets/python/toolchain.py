@@ -955,6 +955,28 @@ def _ensure_launchers():
                 made.append(name)
             except Exception:
                 pass
+    # ★ clang/clang++ (task greenlet, 28 sept): in filesDir untrusted_app NU poate
+    # executa -> symlink in files/tmp catre libclang_exec.so, cu REPARARE cand tinta
+    # e moarta (hash nou in /data/app la fiecare reinstalare). Numele 'clang++'
+    # decide modul C++ al driver-ului; fara el orice sursa C++ cadea cu
+    # "[Errno 13] Permission denied .../toolchain/bin/clang++".
+    if nat and os.path.exists(nat + "/libclang_exec.so"):
+        for name in ("clang", "clang++"):
+            p = F + "/tmp/" + name
+            try:
+                _st = False
+                if os.path.islink(p):
+                    try:
+                        _st = not os.path.exists(os.readlink(p))
+                    except Exception:
+                        _st = True
+                if os.path.lexists(p) and (not os.path.islink(p) or _st):
+                    os.remove(p)
+                if not os.path.lexists(p):
+                    os.symlink(nat + "/libclang_exec.so", p)
+                made.append(name)
+            except Exception:
+                pass
     # ★ FLANG (Fortran): NU se cheama binarul direct - driver-ul cade pe
     # "gcc frontend command failed" si nu stie sa linkeze runtime-ul Fortran.
     # Wrapper shell: (1) -fc1 la compilare (frontend Fortran real),
@@ -1215,9 +1237,31 @@ def env_vars():
                 _SHIM[_n] = BIN + "/llvm-" + _n
         # ★ P5: clang-21++ NU exista in bin/ (doar clang++ -> clang-21) -> cale moarta
         # pentru orice sursa C++ (numpy C++ parts, cryptography, pybind11).
+        # ★ BUG REAL (28 sept, prins de TESTUL REAL din UI, task greenlet):
+        # `CXX = toolchain/bin/clang++` NU e executabil pentru app (SELinux
+        # untrusted_app nu executa din filesDir) -> desi CC mergea, orice sursa C++
+        # cadea cu "[Errno 13] Permission denied .../toolchain/bin/clang++".
+        # Fix: ACELASI tratament ca la CC - symlink in files/tmp, cu reparare daca
+        # tinta e moarta (hash nou la reinstalarea APK).
         _CXX = BIN + "/clang++"
         if not os.path.exists(_CXX) and os.path.exists(BIN + "/clang-21"):
             _CXX = BIN + "/clang-21"
+        try:
+            _cx = F + "/tmp/clang++"
+            _stx = False
+            if os.path.islink(_cx):
+                try:
+                    _stx = not os.path.exists(os.readlink(_cx))
+                except Exception:
+                    _stx = True
+            if os.path.lexists(_cx) and (not os.path.islink(_cx) or _stx):
+                os.remove(_cx)
+            if not os.path.lexists(_cx):
+                os.symlink(NAT + "/libclang_exec.so", _cx)
+            if os.path.exists(_cx):
+                _CXX = _cx
+        except Exception:
+            pass
         # ★ P4b: readelf/objdump - nu exista shim ARM64; folosim llvm-nm ca substitut
         # de inspectie, iar daca apar shim-uri in libDir le folosim pe ele.
         _RD = NAT + "/libllvmreadelf_exec.so"
@@ -1264,7 +1308,9 @@ def env_vars():
         "TC_ROOT": ROOT,
         "TC_DEPS": DEPS,
         "CC": CC_EXEC + _extra,
-        "CXX": CXX_EXEC,
+        # ★ CXX cu ACELASI _extra ca CC (-resource-dir/-B): fara el clang++ nu-si
+        # gaseste headerele builtin (stddef.h) si nu vede sysroot-ul.
+        "CXX": CXX_EXEC + _extra,
         "AR": AR_EXEC,
         # ★ FLANG (raport nou, P1): compilator Fortran in nativeLibraryDir. Elimina
         # f2c + ~500 patch-uri F90 manuale pe LAPACK. FC/F77 = flang daca e prezent.

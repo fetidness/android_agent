@@ -40,6 +40,39 @@ stub -> SIGSEGV in constructorii `libpython3.14.so`.
 - `markupsafe` -> exit 0; logcat dupa teste: ZERO "Fatal signal 11"
 - site-packages-ul instalat de pip supravietuieste update-ului de APK (`site_packages_keep`)
 
+### ★ Sesiunea 2b - TEST REAL DIN UI pe INSTALARE CURATA + 2 bug-uri reparate
+
+**Testul de autonomie:** dezinstalare completa (date private + `/sdcard/Download/Agent`, inclusiv
+cheia ADB) -> reinstalare de la zero -> doar cheia DeepSeek lipita in onboarding -> 73 permisiuni
+acordate, accessibility ON, whitelist de baterie. Task dat DIN INTERFATA, fara indicatii de tool:
+*"Vreau sa folosesc pachetul Python kiwisolver in scripturile mele de pe telefon."*
+
+Rezultat: agentul a ales SINGUR `python` -> `toolchain status` -> `toolchain pip_install` ->
+`python` (test functional). Kiwisolver 1.5.1 compilat NATIV pe telefon in 41s.
+
+**Bug #1 - `CXX` ne-executabil** (greenlet): `[Errno 13] Permission denied .../toolchain/bin/clang++`.
+`CC` avea symlink executabil in `files/tmp`, dar `CXX` arata spre binarul din `filesDir`
+(untrusted_app NU executa de acolo) -> orice sursa C++ cadea.
+Fix: symlink `files/tmp/clang++` (cu reparare cand tinta e moarta) + `_extra` ca la CC;
+`clang`/`clang++` gestionate central in `_ensure_launchers()`.
+
+**Bug #2 - cerinte de build ascunse** (kiwisolver): `BackendUnavailable: Cannot import
+'setuptools.build_meta'`. Cu `--no-build-isolation` pip NU instaleaza cerintele din
+`pyproject.toml`; setuptools ridica "Missing setup required dependencies: cppy", dar pip
+raporteaza doar BackendUnavailable (cauza reala invizibila fara `-v`).
+Fix: prima incercare ruleaza cu `-v`; cerintele lipsa se extrag din output, se instaleaza, apoi
+se reia install-ul; daca tot esueaza -> retry cu build isolation. Rezultatul tool-ului include o
+linie `pasi:` (ex. `deps(cppy)=0; retry_dupa_deps=0`).
+
+**Verificat:** greenlet 3.5.6 (C++) exit 0 | kiwisolver 1.5.1 exit 0, 39s, `deps(cppy)=0` |
+fastnumbers 5.2.0 compilat real prin agent, din UI (exit 0, 39s, import functional).
+
+**Limite ramase (Tier 3, nu sunt autonomie completa):** Rust/maturin (cramjam, orjson,
+pydantic-core, polars), cmake >= 3.29 (duckdb, pyarrow, llvmlite, onnxruntime), perl (grpcio asm),
+LLVM dev (llvmlite/numba), torch (build >16 GB RAM), Fortran la RULARE (segfault).
+
+**Marker: `.assets_v182`**
+
 
 
 **Termux ELIMINAT COMPLET SI DEFINITIV**

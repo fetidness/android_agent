@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v181`** |
+| Marker assets activ | **`.assets_v182`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -596,7 +596,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v181`**) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v182`**) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -2741,3 +2741,37 @@ Instalarea merge in `pyhome/lib/python3.14/site-packages`, e vizibila in `sys.pa
 **supravietuieste** update-ului de APK prin `files/site_packages_keep` (verificat).
 
 **APK: 282 MB** | marker `.assets_v181`
+
+---
+
+## Etapa 49 - TEST REAL DIN UI + 2 BUG-URI REPARATE (28 sept, sesiunea 2b)
+
+**Testul decisiv de autonomie, pe INSTALARE CURATA:** aplicatia dezinstalata complet (date private
+sterse + `/sdcard/Download/Agent` sters, inclusiv cheia ADB), reinstalata de la zero, doar cheia
+DeepSeek lipita in onboarding (ecranul o scrie singur in `files/python/key.txt`). Auto-configurare
+la prima rulare: libs crypto/ssl/pairing + RSA 2048 + certificat X.509 + cheie persistenta pe
+sdcard -> "AGENT FULLY CONFIGURED AND OPERATIONAL". Apoi: 73 permisiuni `granted=true`,
+accessibility ON, whitelist de baterie (Doze).
+
+**Task dat DIN INTERFATA, fara sa-i spunem ce tool sa foloseasca:**
+> "Vreau sa folosesc pachetul Python kiwisolver in scripturile mele de pe telefon. Fa ce e
+> necesar ca sa functioneze si confirma-mi ca merge."
+
+**Rezultat (ales SINGUR de agent):** `python` (verificare) -> `toolchain status` (verdict OK) ->
+`toolchain pip_install` -> `python` (test functional). Kiwisolver 1.5.1 compilat NATIV pe telefon
+in 41s (wheel local `cp314-android_24_arm64_v8a`), verificat cu import real + rezolvare de sistem
+liniar, nu doar import.
+
+### Bug-urile gasite de testul din UI (ambele reparate)
+
+| # | Simptom | Cauza reala | Fix |
+|---|---------|-------------|-----|
+| 1 | `[Errno 13] Permission denied: .../toolchain/bin/clang++` (greenlet, prima compilare C++) | `CC` avea symlink executabil in `files/tmp`, dar `CXX` arata spre binarul din `filesDir`, pe care untrusted_app NU il poate executa -> orice sursa C++ cadea | symlink `files/tmp/clang++` (cu reparare cand tinta e moarta) + `_extra` (`-resource-dir`/`-B`) ca la CC; `clang`/`clang++` sunt acum gestionate central in `_ensure_launchers()` |
+| 2 | `BackendUnavailable: Cannot import 'setuptools.build_meta'` (kiwisolver) | cu `--no-build-isolation` pip NU instaleaza cerintele din `pyproject.toml`; setuptools ridica "Missing setup required dependencies: cppy", iar pip raporteaza doar BackendUnavailable (cauza reala ascunsa) | prima incercare ruleaza cu `-v`, se extrag cerintele lipsa din output, se instaleaza, apoi se reia install-ul; daca tot esueaza -> retry cu build isolation. Rezultatul tool-ului include acum o linie `pasi:` (ex. `deps(cppy)=0; retry_dupa_deps=0`) |
+
+**VERIFICAT pe device:** `greenlet 3.5.6` (C++) exit 0; `kiwisolver 1.5.1` exit 0, 39s cu
+`deps(cppy)=0; retry_dupa_deps=0`; `fastnumbers 5.2.0` compilat real prin agent, din UI (exit 0,
+39s, wheel `cp314-android_24_arm64_v8a`, import functional); pe instalarea curata `.assets_v182`
+agentul a ales si construit SINGUR kiwisolver.
+
+**APK: 282 MB** | marker `.assets_v182`

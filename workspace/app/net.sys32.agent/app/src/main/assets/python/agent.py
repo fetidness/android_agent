@@ -2183,11 +2183,11 @@ def run_toolchain_tool(a):
             # ★ AUTO-RETRY: prima incercare cu --no-build-isolation (rapid, deps preinstalate
             # in pysitepkg.zip); daca build-backend-ul cere un modul care lipseste
             # (ModuleNotFoundError), reincercam CU izolare (pip descarca backend-ul).
-            def _pip_run(extra):
+            def _pip_run(extra, targets=None):
                 _bp2 = io.StringIO()
                 _old_argv = sys.argv[:]
                 sys.argv = ["pip", "install", "--no-cache-dir",
-                            "--disable-pip-version-check"] + list(extra) + [pkg]
+                            "--disable-pip-version-check"] + list(extra) + (list(targets) if targets else [pkg])
                 _rc2 = 0
                 try:
                     with contextlib.redirect_stdout(_bp2), contextlib.redirect_stderr(_bp2):
@@ -2201,10 +2201,31 @@ def run_toolchain_tool(a):
                 finally:
                     sys.argv = _old_argv
                 return _rc2, _bp2.getvalue()
+
+            _steps = []
+
+            def _missing_deps(txt):
+                """Cerintele de BUILD lipsa, asa cum le raporteaza setuptools/pip.
+                ★ Caz real (kiwisolver, prins de testul din UI): cu --no-build-isolation pip
+                NU instaleaza cerintele din pyproject.toml -> setuptools.build_meta ridica
+                "Missing setup required dependencies: cppy" (raportat de pip ca
+                BackendUnavailable: Cannot import 'setuptools.build_meta')."""
+                _o = set()
+                for _m in re.finditer(r"Missing setup required dependencies:\s*([^\n.]+)", txt):
+                    for _d in re.split(r"[,\s]+", _m.group(1).strip()):
+                        _d = _d.strip(" .;'\"")
+                        if _d and _d[0].isalnum():
+                            _o.add(_d)
+                for _m in re.finditer(r"No module named ['\"]([A-Za-z0-9_.]+)['\"]", txt):
+                    _o.add(_m.group(1).split(".")[0])
+                for _x in ("setuptools", "wheel", "pip", "sys", "os"):
+                    _o.discard(_x)
+                return sorted(_o)
+
             try:
                 # ★ CRUCIAL: mediul COMPLET (PATH cu files/tmp PRIMUL, LD_LIBRARY_PATH fara
                 # stub-uri, CC/LDSHARED...) trebuie sa ajunga in os.environ, pentru ca pip
-                # lanseaza build-backend-ul ca SUBPROCES care mosteneste env-ul procesului.
+                # lanseaza build-backend-ul ca SUBPROCES care mosteneaza env-ul procesului.
                 # Fara asta: "clang: error: unable to execute command" (nu gaseste ld.lld,
                 # care sta in files/tmp) desi compilarea in sine merge.
                 _saved = {}
@@ -2213,16 +2234,34 @@ def run_toolchain_tool(a):
                         _saved[_k] = os.environ.get(_k)
                         os.environ[_k] = _v
                 try:
-                    _rc, _out = _pip_run(["--no-build-isolation"])
-                    # ★ backend indisponibil (dep lipsa SAU backend necunoscut in mediu izolat)
-                    # -> reincercam CU izolare, ca pip sa-si aduca singur backend-ul.
+                    # ★ -v pe PRIMA incercare: fara el, pip ascunde cauza reala
+                    # (ex. "Missing setup required dependencies: cppy") in spatele
+                    # "BackendUnavailable: Cannot import 'setuptools.build_meta'".
+                    _rc, _out = _pip_run(["--no-build-isolation", "-v"])
+                    # ★ PAS 1: cerinte de build lipsa -> le instalam (pip le aduce din PyPI)
+                    # si reluam install-ul cu --no-build-isolation.
+                    if _rc != 0:
+                        _deps = _missing_deps(_out)
+                        if _deps:
+                            _t1 = time.time()
+                            _rcd, _outd = _pip_run([], targets=_deps)
+                            _steps.append("deps(%s)=%s" % (" ".join(_deps), _rcd))
+                            _out += ("\n--- [build deps preinstalate: %s (exit %s, %.0fs)] ---\n"
+                                     % (" ".join(_deps), _rcd, time.time() - _t1)) + _outd[-1500:]
+                            if _rcd == 0:
+                                _rc, _out2 = _pip_run(["--no-build-isolation"])
+                                _steps.append("retry_dupa_deps=%s" % _rc)
+                                _out += "\n--- [retry dupa deps: %s] ---\n" % _rc + _out2
+                    # ★ PAS 2: backend tot indisponibil -> reincercam CU izolare (pip isi
+                    # aduce singur backend-ul + cerintele in mediu izolat).
                     _missm = _rc != 0 and any(
                         s in _out for s in ("ModuleNotFoundError", "BackendUnavailable",
                                             "Cannot import", "backend is not available"))
                     if _missm and "--no-build-isolation" not in pkg:
                         _bp0 = _out
                         _t1 = time.time()
-                        _rc, _out2 = _pip_run([])      # izolat: pip isi instaleaza backend-ul
+                        _rc, _out2 = _pip_run([])
+                        _steps.append("retry_izolat=%s" % _rc)
                         _out = (_bp0 + "\n--- [retry cu build isolation: %s] ---\n" % _rc) + _out2
                         _out += "(retry in %.0fs)" % (time.time() - _t1)
                 finally:
@@ -2233,8 +2272,11 @@ def run_toolchain_tool(a):
                             os.environ[_k] = _v
             except Exception as _ex:
                 return "pip_install error: %s" % str(_ex)[:300]
-            _tail = "\n".join([l for l in _out.splitlines() if l.strip()][-14:])
-            return "pip install %s (exit %s, %.0fs)\n%s" % (pkg, _rc, time.time()-_t0, _tail)
+            _tail = "\n".join([l for l in _out.splitlines() if l.strip()][-11:])
+            # ★ pasii incercati, PE SCURT, in prima linie (altfel tail-ul de 11 linii
+            # ascunde exact informatia de care e nevoie: ce s-a incercat si cu ce rezultat).
+            _sdep = (" pasi: " + "; ".join(_steps)) if _steps else ""
+            return "pip install %s (exit %s, %.0fs)%s\n%s" % (pkg, _rc, time.time()-_t0, _sdep, _tail)
         except Exception as _ex:
             return "pip_install error: %s" % str(_ex)[:300]
     if action == "pip_install_adbsh":

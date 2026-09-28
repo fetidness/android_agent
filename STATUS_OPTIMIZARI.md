@@ -1,7 +1,7 @@
 # STATUS OPTIMIZARI - AGENT ANDROID (net.sys32.agent)
 
 Data: 2026-09-28 | Device: Samsung SM-A366B, Android 16 (SDK 36), aarch64, 8 core, 7.3 GB RAM
-Python: 3.14.7 | clang/LLVM: 21.1.8 | APK: `.assets_v181`
+Python: 3.14.7 | clang/LLVM: 21.1.8 | APK: `.assets_v182`
 
 Sesiune: executarea planului din `optimizari_finale.md` (PAS 0 - PAS 5) + repararea blocajului
 critic `pip install`. Regula: fiecare afirmatie de aici a fost TESTATA pe device, nu presupusa.
@@ -288,7 +288,81 @@ critic `pip install`. Regula: fiecare afirmatie de aici a fost TESTATA pe device
       MainActivity.kt                marker .assets_v181
 
 ═══════════════════════════════════════════════════════════════════════
-## 6. URMATORUL PAS CONCRET
+## 6. SESIUNEA 2b - TEST DE AUTONOMIE PE INSTALARE CURATA (toate verificate pe device)
+
+### 6.1 Testul
+Aplicatia dezinstalata complet (date private + `/sdcard/Download/Agent`, inclusiv cheia ADB),
+reinstalata de la zero, doar cheia DeepSeek lipita in onboarding; 73 permisiuni acordate,
+accessibility ON, whitelist de baterie. Task dat DIN INTERFATA fara indicatii de tool:
+"Vreau sa folosesc pachetul Python kiwisolver in scripturile mele de pe telefon."
+
+Rezultat: agentul a ales SINGUR `python` (verificare lipsa) -> `toolchain status` (OK) ->
+`toolchain pip_install` -> `python` (test functional). Kiwisolver 1.5.1 compilat nativ in 41s.
+
+### 6.2 Bug-uri gasite de testul din UI (ambele reparate)
+
+    #1  CXX NE-EXECUTABIL (greenlet): "[Errno 13] Permission denied .../toolchain/bin/clang++"
+        CC avea symlink executabil in files/tmp, dar CXX arata spre binarul din filesDir
+        (untrusted_app NU executa din filesDir) -> ORICE sursa C++ cadea la build.
+        Fix: symlink files/tmp/clang++ (cu reparare cand tinta e moarta, hash nou la
+             reinstalare) + _extra (-resource-dir/-B) ca la CC; clang/clang++ mutate in
+             _ensure_launchers() (gestionate central).
+        Dovada: greenlet 3.5.6 (C++) -> wheel cp314-android_24_arm64_v8a, import OK.
+
+    #2  CERINTE DE BUILD ASCUNSE (kiwisolver): "BackendUnavailable: Cannot import
+        'setuptools.build_meta'"
+        Cu --no-build-isolation pip NU instaleaza cerintele din pyproject.toml; setuptools
+        ridica "Missing setup required dependencies: cppy", dar pip raporteaza doar
+        BackendUnavailable (cauza reala invizibila fara -v).
+        Fix: prima incercare ruleaza cu -v; se extrag cerintele lipsa, se instaleaza, apoi
+             se reia install-ul; daca tot esueaza -> retry cu build isolation.
+             Rezultatul tool-ului include o linie `pasi:` (ex. "deps(cppy)=0; retry_dupa_deps=0").
+        Dovada: kiwisolver 1.5.1 -> exit 0, 39s, "pasi: deps(cppy)=0; retry_dupa_deps=0".
+
+### 6.3 Limite reale ramase (Tier 3, NU sunt autonomie completa)
+
+    Rust / maturin   -> cramjam, orjson, pydantic-core, polars (rust-lang.org nu livreaza
+                        rustc pentru aarch64-linux-android)
+    cmake >= 3.29    -> duckdb, pyarrow, llvmlite, onnxruntime (cmake nu e in toolchain)
+    perl             -> grpcio (asm BoringSSL); ocolire: GRPC_BUILD_WITH_BORING_SSL_ASM=0
+    LLVM dev (lib)   -> llvmlite/numba (avem compilatorul, nu biblioteca)
+    torch            -> imposibil (build >16 GB RAM; telefonul are 7.3 GB)
+    Fortran la RULARE -> binarul standalone da segfault (compilarea merge; scipy partial)
+
+    CONCLUZIE: pentru pachete cu extensii C/C++ (setuptools/meson/scikit-build-core),
+    inclusiv cerinte de build lipsa -> autonoma pe instalare curata.
+
+═══════════════════════════════════════════════════════════════════════
+## 7. FISIERE MODIFICATE
+
+    Sesiunea 1:
+      assets/python/toolchain.py     PAS 0 (run-as, argv0, PATH, PYTHONPATH, atomic)
+      assets/python/agent.py         pip inline, py() fara -c, hook PAS 2 la startup
+      assets/python/pysitepkg.zip    + build-deps (cython/pybind11/scikit-build-core/meson/...)
+      assets/python/Lib/site-packages/  + Cython, pybind11, scikit_build_core, setuptools_scm
+      assets/toolchain/deps/lib|include/  + zstd, lzma, bz2, ffi, expat, crypto, ssl
+      assets/toolchain/lib/clang/21/lib/linux/  + libatomic.a, libomp.a, libunwind.a
+      jniLibs/arm64-v8a/libmake_exec.so   GNU make 4.4.1 ARM64 (nou)
+      MainActivity.kt                marker .assets_v179
+
+    Sesiunea 2:
+      assets/python/toolchain.py     _rt_ld_path, sanitize_ld_library_path, _stub_link_dirs,
+                                     _ensure_py_include, _ensure_py_lib_link,
+                                     _ensure_sysroot_api_dir, _patch_sysconfig_device
+      assets/python/agent.py         _clean_ld, env aplicat la pip, auto-retry isolation
+      assets/python/pysitepkg.zip    + pathspec 1.1.1
+      assets/python/Lib/site-packages/  + pathspec, pathspec-1.1.1.dist-info
+      MainActivity.kt                marker .assets_v180 / .assets_v181
+
+    Sesiunea 2b:
+      assets/python/toolchain.py     CXX executabil (symlink files/tmp/clang++ + _extra),
+                                     clang/clang++ gestionate in _ensure_launchers()
+      assets/python/agent.py         prefetch de cerinte de build (-v + parsare + retry),
+                                     linia `pasi:` in rezultatul tool-ului
+      MainActivity.kt                marker .assets_v182
+
+═══════════════════════════════════════════════════════════════════════
+## 8. URMATORUL PAS CONCRET
 
     1. cmake (sau generator de build.ninja) -> deblocheaza duckdb/pyarrow/llvmlite
     2. Tier 2: HDF5 (h5py) + freetype (matplotlib / Pillow cu formate complete)
