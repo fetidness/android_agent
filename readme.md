@@ -17,6 +17,7 @@
 | Toolchain nativ | `assets/toolchain/` (343 MB) + **16 binare** in `jniLibs/` |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
+| Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |
 
 #### ★ CE S-A SCHIMBAT ESENTIAL (28 sept 2026)
 
