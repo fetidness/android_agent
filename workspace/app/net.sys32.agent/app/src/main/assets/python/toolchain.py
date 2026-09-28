@@ -752,15 +752,44 @@ def _ensure_launchers():
     # (2) linkeaza libFortranRuntime/Decimal + builtins + libc++_shared.
     if nat and os.path.exists(nat + "/libflang_exec.so"):
         _sl = (ROOT + "/sysroot/usr/lib/aarch64-linux-android/35")
+        # Wrapper in 2 pasi: (1) -fc1 -triple pentru .o (driver-ul flang NU stie sa
+        # compileze Fortran singur: cade pe "gcc frontend command failed"),
+        # (2) link cu clang (care stie sysroot/LDFLAGS) + runtime-urile Fortran.
         _body = ('#!/system/bin/sh\n'
-                 'CS="%s"; SL="%s"\n'
-                 'case " $* " in *" -c "*|*" -S "*|*" -E "*)\n'
-                 '  exec "$CS/flang-bin" -fc1 "$@" -I"$CS/pyinc" ;;\n'
+                 'CS="%s"; R="%s"; SL="%s"\n'
+                 'case " $* " in\n'
+                 '  *" -c "*|*" -S "*|*" -E "*)\n'
+                 '    exec "$CS/flang-bin" -fc1 -triple aarch64-linux-android35 '
+                 '"$@" -I"$CS/pyinc" ;;\n'
                  'esac\n'
-                 'exec "$CS/flang-bin" "$@" --sysroot="%s/sysroot" -L"$SL" '
-                 '-lFortranRuntime -lFortranDecimal -lc++_shared -lm '
-                 '-L"%s/sysroot/usr/lib/aarch64-linux-android/35"\n'
-                 % (F + "/tmp", _sl, ROOT, ROOT))
+                 'OUT=""; OBJS=""; SRCS=""\n'
+                 'while [ $# -gt 0 ]; do\n'
+                 '  case "$1" in\n'
+                 '    -o) OUT="$2"; shift 2 ;;\n'
+                 '    *.f|*.f90|*.f95|*.for|*.F|*.F90) SRCS="$SRCS $1"; shift ;;\n'
+                 '    *) OBJS="$OBJS $1"; shift ;;\n'
+                 '  esac\n'
+                 'done\n'
+                 # ★ -fc1 IGNORA -o pe acest build: compilez in CWD cu -emit-obj
+                 # (numele implicit .o) si mut rezultatul. Altfel: 0 bytes, exit 0.
+                 'TMP="$CS/fobjs"; mkdir -p "$TMP"\n'
+                 'FORTO=""; n=0\n'
+                 'for s in $SRCS; do\n'
+                 '  n=$((n+1)); b=$(basename "$s"); base="${b%%%%.*}"\n'
+                 '  SD="$(cd "$(dirname "$s")" && pwd)"; b="$(basename "$s")"\n'
+                 '  ( cd "$SD" && "$CS/flang-bin" -fc1 -triple aarch64-linux-android35 '
+                 '-emit-obj "$b" ) || exit 1\n'
+                 '  o="$SD/$base.o"\n'
+                 '  [ -f "$o" ] || o="$SD/$base"\n'
+                 '  [ -f "$o" ] && cp "$o" "$TMP/$base.o" && o="$TMP/$base.o"\n'
+                 '  [ -f "$o" ] || { echo "flang: nu a produs .o pentru $s"; exit 1; }\n'
+                 '  FORTO="$FORTO $o"\n'
+                 'done\n'
+                 'exec "%s/libclang_exec.so" --target=aarch64-linux-android35 '
+                 '--sysroot="$R/sysroot" -B"$CS" -resource-dir="$R/lib/clang/21" '
+                 '$OBJS $FORTO -o "$OUT" -L"$SL" -L"$R/sysroot/usr/lib/aarch64-linux-android/35" '
+                 '-lFortranRuntime -lFortranDecimal -lc++_shared -lm\n'
+                 % (F + "/tmp", ROOT, _sl, nat))
         for name in ("flang", "flang-new", "flang-21"):
             p = F + "/tmp/" + name
             try:
