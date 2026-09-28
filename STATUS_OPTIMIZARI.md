@@ -132,7 +132,7 @@ critic `pip install`. Regula: fiecare afirmatie de aici a fost TESTATA pe device
 
     `toolchain.env_vars()["LD_LIBRARY_PATH"]` incepea cu **directorul de STUB-uri NDK**
     (`toolchain/sysroot/usr/lib/aarch64-linux-android/35`). Acolo `libc.so`/`libm.so`/
-    `libdl.so` sunt STUB-uri DE LINK (fara cod in .text). Procesul AGENT nu patea nimic
+    `libdl.so` sunt STUB-uri DE LINK (fara cod in .text). Procesul AGENT nu avea nicio problema
     (linkerul bionic isi citeste LD_LIBRARY_PATH la INIT, nu la dlopen), dar ORICE PROCES
     COPIL pornea cu libc STUB -> crash in constructorii libpython3.14.so:
 

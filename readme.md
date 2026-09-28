@@ -86,7 +86,7 @@ Rezultat: wheel `lxml-6.1.3-cp314-cp314-android_24_arm64_v8a.whl`, XPath functio
    `toolchain/sysroot/usr/lib/aarch64-linux-android/<api>` contine `libc.so`/`libm.so`/
    `libdl.so` STUB (fara cod). Daca e primul in `LD_LIBRARY_PATH`, **orice PROCES COPIL**
    porneste cu libc stub -> SIGSEGV in constructorii `libpython3.14.so`. Procesul agentului
-   NU patea nimic (bionic citeste `LD_LIBRARY_PATH` la INIT, nu la `dlopen`), deci simptomul
+   NU avea nicio problema (bionic citeste `LD_LIBRARY_PATH` la INIT, nu la `dlopen`), deci simptomul
    e inselator: `pip install` murea cu `exit code: -11` la "Preparing metadata". Fix:
    `toolchain._rt_ld_path()` / `agent._clean_ld()` (filtreaza orice cale cu `sysroot`).
 
@@ -2707,7 +2707,7 @@ DEBUG: #00 pc 0x4a83e0 libpython3.14.so
 DEBUG: #02 .../linker64 (__dl__ZN6soinfo17call_constructorsEv+668)
 ```
 
-Procesul AGENT nu patea nimic (linkerul bionic isi citeste `LD_LIBRARY_PATH` la **INIT**, nu la
+Procesul AGENT nu avea nicio problema (linkerul bionic isi citeste `LD_LIBRARY_PATH` la **INIT**, nu la
 `dlopen`) -> parintele mergea, **copiii mureau**. Bisect pe copii: cu stub-uri `rc=-11`, cu
 `nativeLibraryDir` sau `deps/lib` singur `rc=0`.
 
