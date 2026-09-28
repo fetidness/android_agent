@@ -8,10 +8,10 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v160`** |
-| APK debug | **273 MB** (toolchain nativ COMPLET + binare executabile) |
-| `agent.py` (assets) | **181 740 B** |
-| `toolchain.py` (assets) | **51 143 B** |
+| Marker assets activ | **`.assets_v180`** |
+| APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
+| `agent.py` (assets) | **187 915 B** |
+| `toolchain.py` (assets) | **62 737 B** |
 | Module Kotlin | **15** |
 | Assets Python | agent.py + toolchain.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri |
 | Toolchain nativ | `assets/toolchain/` (343 MB) + **16 binare** in `jniLibs/` |
@@ -82,6 +82,13 @@ Rezultat: wheel `lxml-6.1.3-cp314-cp314-android_24_arm64_v8a.whl`, XPath functio
    `_native_dir()` deduce libDir-ul din `sys.executable` daca `TC_NATIVE` lipseste.
 8. **Toate `.pc`-urile trebuie sa aiba prefixul DEVICE-ului**, nu al laptopului
    (`/home/gab/...` in `.pc` = link esuat pe telefon).
+9. **★ NICIODATA stub-uri de LINK in `LD_LIBRARY_PATH`** (28 sept): directorul
+   `toolchain/sysroot/usr/lib/aarch64-linux-android/<api>` contine `libc.so`/`libm.so`/
+   `libdl.so` STUB (fara cod). Daca e primul in `LD_LIBRARY_PATH`, **orice PROCES COPIL**
+   porneste cu libc stub -> SIGSEGV in constructorii `libpython3.14.so`. Procesul agentului
+   NU patea nimic (bionic citeste `LD_LIBRARY_PATH` la INIT, nu la `dlopen`), deci simptomul
+   e inselator: `pip install` murea cu `exit code: -11` la "Preparing metadata". Fix:
+   `toolchain._rt_ld_path()` / `agent._clean_ld()` (filtreaza orice cale cu `sysroot`).
 
 #### Procedura de pornire (dupa restart telefon)
 
@@ -589,7 +596,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v160`**) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v180`**) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -2678,3 +2685,59 @@ runtime-ului Fortran cere `libFortranMain`/unitati I/O). Compilarea — partea c
 rezolva cele ~500 patch-uri F90 pe LAPACK — functioneaza.
 
 **APK: 273 MB** | marker `.assets_v160` | commituri: `813ce09`, `2d9a0f9`, `376b73e`
+
+---
+
+## Etapa 48 - FIX `pip install` (blocajul SIGSEGV -11) + TOOLCHAIN COMPILABIL PE DEVICE (28 sept, sesiunea 2)
+
+**Blocajul:** ORICE `pip install` cu extensie C murea la "Preparing metadata (pyproject.toml):
+exit code: -11" (SIGSEGV). Raportul anterior il punea pe seama lui `libpyexec.so` ("nu se poate
+re-initializa ca subproces") - **ipoteza GRESITA**.
+
+### Cauza reala (dovada: tombstone + bisect pe device)
+
+`env_vars()["LD_LIBRARY_PATH"]` incepea cu **directorul de STUB-uri NDK**
+(`toolchain/sysroot/usr/lib/aarch64-linux-android/35`), unde `libc.so`/`libm.so`/`libdl.so` sunt
+stub-uri DE LINK (fara cod in `.text`).
+
+```
+F libc: Fatal signal 11 (SIGSEGV) in tid 8612 (libpyexec.so)
+DEBUG: Cmdline: .../libpyexec.so .../_in_process.py prepare_metadata_for_build_wheel
+DEBUG: #00 pc 0x4a83e0 libpython3.14.so
+DEBUG: #02 .../linker64 (__dl__ZN6soinfo17call_constructorsEv+668)
+```
+
+Procesul AGENT nu patea nimic (linkerul bionic isi citeste `LD_LIBRARY_PATH` la **INIT**, nu la
+`dlopen`) -> parintele mergea, **copiii mureau**. Bisect pe copii: cu stub-uri `rc=-11`, cu
+`nativeLibraryDir` sau `deps/lib` singur `rc=0`.
+
+### Fixuri (in ordinea in care au fost necesare; fiecare verificat pe device)
+
+| # | Fix | Unde |
+|---|-----|------|
+| A | `_rt_ld_path()` / `sanitize_ld_library_path()`: LD_LIBRARY_PATH de RULARE fara directoare `sysroot` | toolchain.py |
+| B | `_clean_ld()`: acelasi filtru pentru env-ul de pip + hook-ul de startup | agent.py |
+| C | `pathspec` 1.1.1 adaugat (dep de scikit-build-core, lipsea) | pysitepkg.zip |
+| D | `_ensure_py_include()`: `pyhome/include/python3.14 -> toolchain/pyinc` (INCLUDEPY era `/usr/local/include/...`) | toolchain.py |
+| E | `_ensure_py_lib_link()`: `pyhome/lib/libpython3.14.so` + LIBDIR rescris (`-lpython3.14` nu se gasea) | toolchain.py |
+| F | `_patch_sysconfig_device()`: CC/CXX/LDSHARED cu `-resource-dir` + `--target` + `--sysroot` (lipsea `stddef.h`) | toolchain.py |
+| G | `_ensure_sysroot_api_dir()`: symlink `<api>` -> `35` - fara el clang emite crt-urile ca NUME BARE si lld le cauta DOAR in CWD | toolchain.py |
+| H | `-L` puse direct in `LDSHARED` (setuptools NU foloseste LDFLAGS din sysconfig la link) | toolchain.py |
+| I | env-ul complet aplicat in `os.environ` pe durata pip (altfel copilul nu gaseste `ld.lld` din `files/tmp`) | agent.py |
+| J | auto-retry cu build isolation la `ModuleNotFoundError` (backend cu dep lipsa) | agent.py |
+
+### VERIFICAT (instalare curata `.assets_v180`)
+
+```
+pip install regex       -> exit 0, 23s   (wheel cp314-android_24_arm64_v8a)
+import regex            -> match(r"(\d+)-(\d+)","12-34") = 12 / 34 (v2026.9.10)
+pip install zstandard   -> exit 0        (C + scikit-build-core)
+pip install msgpack     -> exit 0, 15s   (C++)
+pip install markupsafe  -> exit 0, 15s
+logcat dupa teste       -> ZERO "Fatal signal 11"
+```
+
+Instalarea merge in `pyhome/lib/python3.14/site-packages`, e vizibila in `sys.path` si
+**supravietuieste** update-ului de APK prin `files/site_packages_keep` (verificat).
+
+**APK: 282 MB** | marker `.assets_v180`

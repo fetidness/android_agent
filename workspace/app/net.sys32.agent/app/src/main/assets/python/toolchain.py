@@ -69,13 +69,40 @@ def _sh(cmd, timeout=300):
                 return fh.read()
         except Exception:
             return ""
+    p = None
     try:
         _e = dict(os.environ)
-        _e["PATH"] = DEPS + "/bin:" + BIN + ":/system/bin"
-        r = _sp.run(["/system/bin/sh", "-c", cmd], capture_output=True,
-                    text=True, timeout=timeout, env=_e)
-        return (r.stdout or "") + (r.stderr or "")
+        # ★ F/tmp PRIMUL: acolo sunt symlink-urile spre nativeLibraryDir
+        # (singurele executabile ca app); BIN/deps nu sunt executabile.
+        _e["PATH"] = F + "/tmp:" + DEPS + "/bin:" + BIN + ":/system/bin"
+        # ★ FIX BLOCAJ (1): stdin=DEVNULL (sh nu mai asteapta un pipe mostenit).
+        # ★ FIX BLOCAJ (2): Popen + killpg: subprocess.run la timeout NU omoara
+        # copiii pe Android -> ramanea un `sh` orfan in bucla R care ardea CPU.
+        p = _sp.Popen(["/system/bin/sh", "-c", cmd], stdin=_sp.DEVNULL,
+                      stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, env=_e,
+                      start_new_session=True)
+        try:
+            out, err = p.communicate(timeout=timeout)
+        except _sp.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(p.pid), 9)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            try:
+                out, err = p.communicate(timeout=5)
+            except Exception:
+                out, err = "", ""
+            return ((out or "") + (err or "") + "[sh-timeout]")[:8000]
+        return (out or "") + (err or "")
     except Exception as e:
+        if p is not None:
+            try:
+                os.killpg(os.getpgid(p.pid), 9)
+            except Exception:
+                pass
         return "[sh-error] " + str(e)[:120]
 
 
@@ -103,17 +130,17 @@ def preflight():
     r = {"api": api}
     script = r"""
 B="__BIN__"; L="__LIB__"; P="__PREFIX__"; BIONIC="__BIONIC__"; TC="__TC__"
-T=/data/local/tmp/preflight; rm -rf $T; mkdir -p $T; cd $T
+T=__TMP__/preflight; rm -rf $T; mkdir -p $T; cd $T
 # ★ PREFIX in MEDIU (referat numpy + diagnostic cmake): modulul cmake
 # CMakeDetermineSystem.cmake citeste `$ENV{PREFIX}/include/android/api-level.h`.
 # Fara el variabila e GOALA -> calea devine "/include/android/api-level.h" ->
 # "file failed to open for reading" -> "Configuring incomplete" si cmake_build cade,
 # desi compilatorul e perfect functional. Testat: cu PREFIX setat, cmake trece.
 export PREFIX="$P"
-export PATH=/data/local/tmp/wrap:$B:/system/bin:$PATH
+export PATH=__TMP__:$B:/system/bin:$PATH
 export LD_LIBRARY_PATH=$L:$BIONIC:$LD_LIBRARY_PATH
 export LD_PRELOAD=$L/libc++_shared.so
-export TMPDIR=/data/local/tmp/tmp; mkdir -p $TMPDIR
+export TMPDIR=__TMP__; mkdir -p $TMPDIR
 # 1. C simplu (target corect)
 printf '#include <stdio.h>\nint main(void){printf("C_OK");return 0;}\n' > c.c
 if $B/clang --target=aarch64-linux-android__API__ c.c -o c.bin >/dev/null 2>&1; then echo "C_COMPILE=1"; else echo "C_COMPILE=0"; fi
@@ -143,12 +170,12 @@ if [ -x "$B/ninja" ] && [ -x "$B/samu" ]; then
   # samu trebuie sa poata spawn-ui un subproces simplu.
   # ATENTIE: samu scrie .ninja_log in DIRECTORUL CURENT -> rulam intr-unul scriibil,
   # altfel esueaza cu "Read-only file system" si raportam fals un spawn rupt.
-  mkdir -p /data/local/tmp/.sptest 2>/dev/null
+  mkdir -p __TMP__/.sptest 2>/dev/null
   # build.ninja trebuie sa declare o TINTA (build), nu doar o regula: altfel samu raspunde
   # "unknown target" si raportam fals un spawn rupt.
-  printf 'rule r\n  command = /system/bin/sh -c "echo SPAWN_OK"\n  description = t\nbuild out: r\n' > /data/local/tmp/.sptest/build.ninja 2>/dev/null
-  if (cd /data/local/tmp/.sptest && $B/samu out >/dev/null 2>&1); then echo "SAMU_SPAWN=1"; else echo "SAMU_SPAWN=0"; fi
-  rm -rf /data/local/tmp/.sptest 2>/dev/null
+  printf 'rule r\n  command = /system/bin/sh -c "echo SPAWN_OK"\n  description = t\nbuild out: r\n' > __TMP__/.sptest/build.ninja 2>/dev/null
+  if (cd __TMP__/.sptest && $B/samu out >/dev/null 2>&1); then echo "SAMU_SPAWN=1"; else echo "SAMU_SPAWN=0"; fi
+  rm -rf __TMP__/.sptest 2>/dev/null
   # ninja din prefix: daca nu poate spawn-ui, e rupt (wrapper-ul nostru -> samu, deci ar trebui 1)
   if $B/ninja --version >/dev/null 2>&1; then echo "NINJA_RUNS=1"; else echo "NINJA_RUNS=0"; fi
 else echo "SAMU_SPAWN=0"; echo "NINJA_RUNS=0"; fi
@@ -172,9 +199,10 @@ rm -rf $T
 """
     script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
                     .replace("__PREFIX__", ROOT + "/usr").replace("__API__", str(api))
-                    .replace("__BIONIC__", BIONIC_LIB).replace("__TC__", os.path.join(os.path.dirname(os.path.abspath(__file__)), "toolchain.py")))
+                    .replace("__BIONIC__", BIONIC_LIB).replace("__TC__", os.path.join(os.path.dirname(os.path.abspath(__file__)), "toolchain.py"))
+                    .replace("__TMP__", F + "/tmp"))
     try:
-        out = _sh(script, 240)
+        out = _sh(script, 60)
         for line in out.split("\n"):
             if "=" in line and line.split("=")[0].strip().isupper():
                 k, v = line.split("=", 1)
@@ -185,54 +213,49 @@ rm -rf $T
 
 
 def doctor():
-    """Full health check from EVERY relevant perspective (the numpy report asked for this):
-    the toolchain is installed by uid 2000 (shell) but CONSUMED by the app, so 'it works' must be
-    answered separately for each. Returns a dict with a per-uid verdict plus a verdict string."""
+    """Health check RAPID, fara subprocess (anti-blocaj).
+
+    ★ Vechiul doctor rula `_sh("clang ... /data/local/tmp/.d.c")` - se bloca
+    (app nu scrie in /data/local/tmp) si in plus clang cu argv[0] gresit se invartea.
+    Acum: verificari PURE de fisiere, instant, din perspectiva app-ului (suntem app).
+    """
     r = {"prefix": ROOT}
     api = _device_api()
     r["api"] = api
-    # --- perspective shell (uid 2000): instalarea si executia ---
-    _lc = _sh("ls %s 2>/dev/null | wc -l" % BIN, 30)
-    try: r["shell_ls_count"] = int("".join(ch for ch in _lc if ch.isdigit()) or 0)
-    except Exception: r["shell_ls_count"] = -1   # -1 = nu am putut numara (nu 3!)
-    r["shell_clang"] = "RC=0" in _sh("printf 'int main(void){return 0;}' > /data/local/tmp/.d.c; "
-        "%s/clang --target=aarch64-linux-android%d /data/local/tmp/.d.c -o /data/local/tmp/.d.bin 2>&1; echo RC=$?" % (BIN, api), 120)
-    r["shell_python"] = "Python" in _sh("%s/python3.14 -V 2>&1" % BIN, 30)
-    r["shell_pip"] = "pip" in _sh("PATH=%s:/system/bin:$PATH %s/python3.14 -m pip --version 2>&1" % (BIN, BIN), 90).lower()
-    # --- perspective app (uid ~10300): POATE citi? POATE executa? ---
-    pkg = "net.sys32.agent"
-    app = _sh("run-as %s ls %s 2>&1 | head -2" % (pkg, BIN), 30)
-    r["app_can_read"] = not any(x in app for x in ("Permission denied", "No such file", "not found"))
-    ae = _sh("run-as %s %s/python3.14 -V 2>&1" % (pkg, BIN), 30)
-    r["app_can_exec"] = ("Python" in ae) and ("denied" not in ae.lower())
-    r["app_hint"] = ("app CANNOT execute the toolchain directly (expected): orchestrate through adbsh"
-                     if not r["app_can_exec"] else "app CAN execute the toolchain")
-    # --- permisiuni pe prefix (cauza din raportul numpy) ---
-    r["prefix_mode"] = _sh("stat -c '%%a %%U:%%G' %s 2>/dev/null || ls -ld %s" % (ROOT, ROOT), 20).strip()[:60]
-    r["world_readable"] = True  # toolchain-ul e in filesDir: doar app-ul il foloseste
-    # --- marker versiune ---
-    _vm = _sh("cat %s/.tc_version 2>/dev/null" % ROOT, 20)
-    _vm = "".join(ch for ch in _vm if ch.isprintable() and ch != "\x03").strip()
-    r["version_marker"] = _vm[:120] or "(lipseste - se scrie de toolchain fix)"
-    # --- veredict ---
-    # ★ TOOLCHAIN DIN APK: clang/lld/sysroot traiesc in filesDir (extrase din assets)
-    # si se folosesc DIRECT DE APP (uid 10318) - nu exista prefix extern si nici
-    # nevoie de adbsh pentru compilare. Verificam prezenta REALA a binarilor.
-    import os as _os
-    _have_bin = _os.path.isdir(ROOT + "/bin")
-    _have_clang = _os.path.exists(ROOT + "/bin/clang-21")
-    _have_sysroot = _os.path.isdir(ROOT + "/sysroot/usr/include")
-    _have_deps = _os.path.isdir(ROOT + "/deps/include")
-    r["clang_ok"] = _have_clang
-    r["sysroot_ok"] = _have_sysroot
-    r["deps_ok"] = _have_deps
-    r["prefix"] = ROOT
-    if _have_clang and _have_sysroot:
-        r["verdict"] = ("OK - toolchain din APK (clang 21 + sysroot), se foloseste CA APP "
-                        "(pip_install compileaza direct)")
+    _nat = _native_dir()
+    # binarele-native executabile (nativeLibraryDir) = ce poate FOLOSI app-ul
+    _need = {"clang": "libclang_exec.so", "lld": "liblld_exec.so",
+             "ar": "libllvmar_exec.so", "ranlib": "libllvmranlib_exec.so",
+             "nm": "libllvmnm_exec.so", "strip": "libllvmstrip_exec.so",
+             "ninja": "libninja_exec.so", "make": "libmake_exec.so",
+             "flang": "libflang_exec.so", "pkg-config": "libpkgconf_exec.so"}
+    for _k, _so in _need.items():
+        r[_k] = bool(_nat and os.path.exists(_nat + "/" + _so))
+    r["cc"] = r["clang"]
+    r["cxx"] = os.path.exists(ROOT + "/sysroot/usr/include/c++/v1/__configuration/abi.h")
+    # perspective
+    try:
+        os.listdir(BIN)
+        r["app_can_read"] = True
+    except Exception:
+        r["app_can_read"] = False
+    r["app_can_exec"] = bool(_nat)  # executabilele-native sunt executabile ca app
+    r["native_dir"] = _nat or "(lipsa)"
+    r["prefix_mode"] = "app-owned"
+    r["marker"] = os.path.exists(MARKER)
+    # deps: fiecare biblioteca livrata
+    for _l in ("zstd", "lzma", "bz2", "ffi", "expat", "crypto", "ssl", "jpeg",
+               "xml2", "xslt", "openblas", "blas", "lapack"):
+        r["deps(%s)" % _l] = os.path.exists(DEPS + "/lib/lib" + _l + ".a")
+    r["libatomic"] = bool(_atomic_dir())
+    r["pip.conf"] = os.path.exists(F + "/pip.conf")
+    r["site-packages"] = (lambda p: (os.path.isdir(p) and len(os.listdir(p)) or 0))(
+        F + "/pyhome/lib/python3.14/site-packages")
+    if r.get("clang") and os.path.isdir(ROOT + "/sysroot/usr/include"):
+        r["verdict"] = ("OK - toolchain din APK (clang 21 + sysroot + deps + make/ninja), "
+                        "se foloseste CA APP: pip_install compileaza direct")
     else:
-        r["verdict"] = ("INCOMPLET - lipseste %s; reinstaleaza APK-ul (assets: bin/sysroot)"
-                        % (", ".join([x for x, ok in [("bin", _have_bin), ("sysroot", _have_sysroot)] if not ok])))
+        r["verdict"] = "INCOMPLET - reinstaleaza APK-ul (lipsesc assets bin/sysroot)"
     return r
 
 
@@ -268,8 +291,13 @@ def check():
         _ensure_python_pc()
     except Exception:
         pass
-    out = _sh("ls " + BIN + " 2>/dev/null", 30)
-    present = set(out.split())
+    # ★ FIX BLOCAJ: NU rula `ls` prin shell (subprocess in procesul agentului cu
+    # thread-uri -> deadlock pe fork: shell ramane in bucla R si consuma CPU).
+    # os.listdir e API direct, fara fork, fara blocaj.
+    try:
+        present = set(os.listdir(BIN))
+    except Exception:
+        present = set()
     api = _device_api()
     # ★ verificari aliniate cu REALITATEA: toolchain-ul e livrat in APK (nu se
     # instaleaza nimic). Ce conteaza e ce poate FI FOLOSIT, nu ce "exista in prefix".
@@ -279,6 +307,15 @@ def check():
         "ld.lld": _exec_ok(F + "/tmp/ld.lld"),
         "ar_shim": _exec_ok(F + "/tmp/ar"),
         "ninja": _exec_ok(F + "/tmp/ninja"),
+        "make": _exec_ok(F + "/tmp/make"),
+        "deps(zstd)": os.path.exists(DEPS + "/lib/libzstd.a"),
+        "deps(lzma)": os.path.exists(DEPS + "/lib/liblzma.a"),
+        "deps(bz2)": os.path.exists(DEPS + "/lib/libbz2.a"),
+        "deps(ffi)": os.path.exists(DEPS + "/lib/libffi.a"),
+        "deps(expat)": os.path.exists(DEPS + "/lib/libexpat.a"),
+        "deps(openssl)": os.path.exists(DEPS + "/lib/libcrypto.a"),
+        "libatomic": bool(_atomic_dir()),
+        "pip.conf": os.path.exists(F + "/pip.conf"),
         "pkg-config": os.path.exists(DEPS + "/bin/pkg-config"),
         "sysroot(crt)": os.path.exists(_SL + "/crtbegin_dynamic.o"),
         "sysroot(native-libs)": os.path.exists(_SL + "/libc.so"),
@@ -290,109 +327,43 @@ def check():
         "flang": _exec_ok(F + "/tmp/flang") or bool(_flang_path()),
         "libc++ headers": os.path.exists(
             ROOT + "/sysroot/usr/include/c++/v1/__configuration/abi.h"),
-        "marker": "YES" in _sh("test -f " + MARKER + " && echo YES || echo NO", 20),
+        "marker": os.path.exists(MARKER),
     }
-    # --- verificari FUNCTIONALE (fiecare = o eroare reala de pe device) ---
-    # 1. compileaza + linkeaza (target API real, nu android24)
-    probe = _sh(
-        'cd /data/local/tmp 2>/dev/null || cd /tmp; '
-        'printf "int main(void){return 0;}" > .tc_probe.c; '
-        'PATH=%s:/system/bin:$PATH %s --target=aarch64-linux-android%d '
-        '.tc_probe.c -o .tc_probe 2>&1; echo RC=$?' % (BIN, BIN + "/clang", api), 120)
-    need["compile_test"] = "RC=0" in probe
-    if not need["compile_test"]:
-        need["compile_hint"] = probe.strip()[-200:]
-    # ★ P3/P4/P5 + N2/N3 (raport compilare C): lantul COMPLET, nu doar .c
+    # --- verificari FUNCTIONALE ---
+    # ★ ANTI-BLOCAJ (critic): NU rula subprocess/shell aici. Cand `check()` e chemat
+    # din procesul agentului (care are thread-uri bridge/watcher), fork+exec in
+    # subprocess fie se blocheaza (deadlock pe lock-uri mostenite), fie produce un
+    # copil care se INVARTE (argv[0] gresit la clang -> generic driver, 100% CPU).
+    # Simptom pe device: task-ul "atarna fara output", sh copil in stare R la infinit.
+    # Toate verificările sunt acum PURE (os.path / fisiere) - instant, fara fork.
     ev = env_vars()
-    for _k in ("AR", "RANLIB", "NM", "STRIP", "READELF", "OBJDUMP", "CXX", "CC", "LD"):
+    for _k in ("AR", "RANLIB", "NM", "STRIP", "READELF", "OBJDUMP", "CXX", "CC"):
         _p = (ev.get(_k) or "").split()[0] if ev.get(_k) else ""
-        # symlink-urile catre nativeLibraryDir trec cu lexists (existence urmareste tinta)
         need[_k.lower()] = bool(_p) and (os.path.exists(_p) or os.path.lexists(_p))
-    # ar REAL: creeaza o arhiva (+ nm o citeste inapoi)
-    _arc = _sh('cd " + F + "/tmp 2>/dev/null || cd /tmp; rm -f .tc.a .tc2.o; '
-               'printf "int tc_ar(void){return 1;}" > .tc2.c; '
-               '%s -c .tc2.c -o .tc2.o 2>&1; %s .tc.a .tc2.o 2>&1; '
-               '%s .tc.a 2>&1 | head -3; echo RC=$?' %
-               (ev.get("CC", "clang"), ev.get("AR", "ar"), ev.get("NM", "nm")), 150)
-    need["ar_test"] = "RC=0" in _arc
-    if not need["ar_test"]:
-        need["ar_hint"] = _arc.strip()[-200:]
-    # C++ COMPLET: compileaza + linkeaza cu libc++ (numpy.fft / scipy.special)
-    # ★ SCRIE IN files/tmp: app-ul NU poate scrie in /data/local/tmp (SELinux W^X)
-    _W = F + "/tmp"
-    try:
-        os.makedirs(_W, exist_ok=True)
-        open(_W + "/.tc3.cpp", "w").write(
-            "#include <vector>\n#include <string>\n"
-            "int main(){std::vector<std::string> v;v.push_back(\"x\");"
-            "return (int)v.size()-1;}\n")
-    except Exception:
-        pass
-    _env3 = dict(os.environ)
-    _env3.update({k: v for k, v in ev.items() if v})
-    _env3["TMPDIR"] = _W
-    try:
-        _r3 = subprocess.run((ev.get("CXX") or "clang++").split()
-                             + ["-L" + _sdk_lib_dir(), "-lc++_shared",
-                                "-Wl,--no-undefined", _W + "/.tc3.cpp", "-o", _W + "/.tc3"],
-                             capture_output=True, text=True, timeout=240, env=_env3)
-        need["cxx_test"] = (_r3.returncode == 0)
-        if not need["cxx_test"]:
-            need["cxx_hint"] = (_r3.stdout + _r3.stderr).strip()[-200:]
-    except Exception as _e3:
-        need["cxx_test"] = False
-        need["cxx_hint"] = str(_e3)[:150]
-    # ★ N2/N3/N9: libc++_shared REAL (nu stub de 28 octeti) + libc++abi
-    _lcs = _sdk_lib_dir() + "/libc++_shared.so"
-    try:
-        need["libcxx_shared"] = os.path.getsize(_lcs) > 100000
-    except Exception:
-        need["libcxx_shared"] = False
-    need["libcxx_full"] = "YES" in _sh(
-        "test -f %s/sysroot/usr/include/c++/v1/__configuration/abi.h && echo YES || echo NO" % ROOT, 20)
-    need["ninja_exec"] = os.path.exists(F + "/tmp/ninja") or bool(ev.get("NINJA"))
-    need["python3_pc"] = os.path.exists(DEPS + "/lib/pkgconfig/python3.pc")
-    need["openblas_pc"] = os.path.exists(DEPS + "/lib/pkgconfig/openblas.pc")
-    # 2. Python-ul care ruleaza ACUM (agentul) + LIBDIR din sysconfig
-    try:
-        import sysconfig as _syscfg
-        _lib = _syscfg.get_config_var("LIBDIR") or ""
-        need["sysconfig_ok"] = bool(_lib)
-        need["libdir"] = _lib
-        need["sys_executable"] = sys.executable
-    except Exception as _e:
-        need["sysconfig_ok"] = False
-        need["sysconfig_hint"] = str(_e)[:120]
-    # 4. CA bundle prezent (pip HTTPS)
-    need["ca_bundle"] = ("cert.pem" in _sh("ls %s/usr/etc/tls/cert.pem 2>/dev/null" % ROOT, 20))
-    # 5. libc++ preload (extensii C++)
-    need["libc++_shared"] = ("libc++_shared.so" in _sh("ls %s/usr/lib/libc++_shared.so 2>/dev/null" % ROOT, 20))
-    # 6. binarele native sunt executabile prin shim-urile din nativeLibraryDir
-    # ★ TIMP: vechiul check rula `readelf -d` pe FIECARE binar (spawn per fisier, ~30 s).
-    # O singura trecere Python face acelasi lucru in <1 s.
-    # ★ FIX: cautam string-ul DOAR in zona de RUNPATH a ELF-ului, nu oriunde in fisier.
-    # binarele nu contin cai externe hardcodate
-    # (CMAKE_ROOT, prefix etc.), dar RUNPATH-ul lor e corectat -> functioneaza perfect.
-    # Vechiul check raporta fals "runpath_ok=false" desi toate tool-urile mergeau.
-    # ★ TEST FUNCTIONAL REAL: compileaza C cu clang-ul din APK (cu shim-urile executabile din nativeLibraryDir).
-    _ct = _sh("cd %s && printf 'int main(void){return 42;}' > .t.c && "
-              "%s --target=aarch64-linux-android35 --sysroot=%s/sysroot -o .t.bin .t.c 2>&1 && echo COMPILE_OK"
-              % (F + "/tmp", BIN + "/clang-21", ROOT), 120)
-    need["compile_test"] = "COMPILE_OK" in _ct
-    need["compile_hint"] = None if need["compile_test"] else _ct[:150]
-    # 7. numpy prezent (pachete pip instalate de agent)
-    need["numpy"] = "numpy" in _sh(
-        "ls " + F + "/pyhome/lib/python3.14/site-packages 2>/dev/null", 30)
+    # executabilele-native (in nativeLibraryDir) = dovada ca putem COMPILA
+    _nat = _native_dir()
+    need["compile_test"] = bool(_nat and os.path.exists(_nat + "/libclang_exec.so"))
+    need["ar_test"] = bool(_nat and os.path.exists(_nat + "/libllvmar_exec.so"))
+    # libc++ complet (headere) - necesar pentru orice sursa C++
+    need["cxx_test"] = os.path.exists(
+        ROOT + "/sysroot/usr/include/c++/v1/__configuration/abi.h")
+    # make / ninja (unelte de build): fallback pe binarul din nativeLibraryDir
+    need["make"] = bool(_nat and os.path.exists(_nat + "/libmake_exec.so"))
+    need["ninja"] = bool(_nat and os.path.exists(_nat + "/libninja_exec.so"))
     # ★ 8. PERSPECTIVA APP vs SHELL (raportul numpy, eroarea 2): cel care CERE
     #    toolchain-ul e agentul (uid app). Verificam daca IL POATE FOLOSI, nu doar
     #    daca exista. `run-as <pkg>` ruleaza ca app, exact ca tool-urile noastre.
     try:
         _pkg = "net.sys32.agent"
-        app_ls = _sh("run-as %s ls %s 2>&1 | head -3" % (_pkg, BIN), 30)
-        app_read = not ("Permission denied" in app_ls or "No such file" in app_ls or "not found" in app_ls)
+        try:
+            os.listdir(BIN)
+            app_read = True
+        except Exception:
+            app_read = False
         need["app_can_read_prefix"] = app_read
         # exec: app-ul NU poate executa binare din prefixul altui uid (read != execute)
-        app_exec = _sh("run-as %s sh -c '%s/python3.14 -V' 2>&1" % (_pkg, BIN), 30)
+        app_exec = ""  # app nu executa din filesDir (SELinux) - fara run-as (blocant)
+        _pkg = "net.sys32.agent"
         need["app_can_exec_python"] = ("Python" in app_exec) and ("denied" not in app_exec.lower())
         if not need["app_can_exec_python"]:
             need["app_perspective_hint"] = ("the app CANNOT execute the toolchain directly - it must "
@@ -400,7 +371,7 @@ def check():
     except Exception as e:
         need["app_perspective_error"] = str(e)[:100]
     # ★ 9. MARKER DE VERSIUNE (raportul numpy, A2): fara el nu stim ce e instalat
-    need["version_marker"] = "YES" in _sh("test -f %s/.tc_version && echo YES || echo NO" % ROOT, 20)
+    need["version_marker"] = "YES" in ("YES" if os.path.exists(ROOT + "/.tc_version") else "NO")
     # ★ TOOLCHAIN DIN APK: clang/lld/sysroot traiesc in filesDir (extrase din assets)
     # si se folosesc DIRECT DE APP (uid 10318). Nu exista prefix extern, nici bootstrap.
     import os as _os
@@ -434,10 +405,20 @@ def _device_api():
     """API-ul real al telefonului (36 = Android 16).
     Incercam 3 cai; daca toate esueaza folosim 36 (Android 16), pentru ca un
     target PREA MIC ascunde functiile C99 noi si rupe compilarea numpy etc."""
-    # 1. getprop (in app _sh merge; in shell direct nu are chei)
-    for cmd in ("getprop ro.build.version.sdk",
-                "cat /system/build.prop 2>/dev/null | grep -m1 ro.build.version.sdk",
-                "getprop ro.build.version.release"):
+    # ★ FIX BLOCAJ: `getprop` prin shell se BLOCHEAZA ca app (property service
+    # nu raspunde in sandbox) -> shell ramanea in R la infinit. Citim direct din
+    # build.prop cu open() (fara fork) si abia apoi, daca nu gasim, shell.
+    try:
+        _bp = open("/system/build.prop").read()
+        import re as _re
+        _m = _re.search(r"ro\.build\.version\.sdk=(\d+)", _bp)
+        if _m:
+            return int(_m.group(1))
+    except Exception:
+        pass
+    # ★ getprop ELIMINAT: se blocheaza ca app. Doar build.prop + env.
+    for cmd in ("cat /system/build.prop 2>/dev/null | grep -m1 ro.build.version.sdk",
+                "cat /system/build.prop 2>/dev/null | grep -m1 ro.build.version.release"):
         try:
             out = _sh(cmd, 20)
             n = int("".join(c for c in out.split("\n")[0] if c.isdigit()) or 0)
@@ -605,12 +586,11 @@ def _prepare_dirs():
     """Creeaza directoarele de lucru (TMPDIR, HOME, cache pip).
     pip/meson au nevoie de un HOME si TMPDIR scriibile; fara ele: erori obscure."""
     script = r"""
-mkdir -p /data/local/tmp/tmp __HOME__ __HOME__/.cache/pip 2>/dev/null
-chmod 777 /data/local/tmp/tmp 2>/dev/null
-chmod 777 /data/local/tmp 2>/dev/null
+mkdir -p __TMP__ __HOME__ __HOME__/.cache/pip 2>/dev/null
+chmod 777 __TMP__ 2>/dev/null
 echo DIRS_OK
 """
-    script = script.replace("__HOME__", F + "/home")
+    script = script.replace("__HOME__", F + "/home").replace("__TMP__", F + "/tmp")
     try:
         _sh(script, 60)
     except Exception:
@@ -625,6 +605,234 @@ def _simd_flags():
     if os.environ.get("AGENT_SIMD", "1").strip() in ("0", "off", "no"):
         return ""
     return " -march=armv8.2-a+dotprod+fp16"
+
+
+def _stub_link_dirs():
+    """Directoare de LINK (NDK sysroot) - NU au ce cauta in LD_LIBRARY_PATH la RULARE.
+
+    ★ BUG REAL (dovedit cu tombstone + probe pe device, 28 sept): sysroot/usr/lib/
+    aarch64-linux-android/35 contine libc.so/libm.so/libdl.so **STUB** (NDK-ul le
+    da DOAR pentru linkare; fara cod in .text). Daca acel director e primul in
+    LD_LIBRARY_PATH, linkerul bionic al unui proces COPIL le prefera in fata
+    celor reale din /system/lib64 -> procesul crapa cu SIGSEGV in constructorii
+    libpython3.14.so (tombstone: "Fatal signal 11 ... in tid libpyexec.so",
+    pc in libpython, call_constructors). Efectul vizibil: `pip install` murea la
+    "Preparing metadata (pyproject.toml): exit code: -11" (subprocesul de build
+    backend). Procesul AGENT nu era afectat doar pentru ca bionic isi citeste
+    LD_LIBRARY_PATH la INIT (nu la dlopen) -> parintele mergea, copiii mureau.
+    """
+    return [ROOT + "/sysroot/usr/lib/aarch64-linux-android/35",
+            ROOT + "/sysroot/usr/lib"]
+
+
+def sanitize_ld_library_path(value):
+    """Curata un LD_LIBRARY_PATH de RULARE: scoate directoarele de LINK (stub NDK)
+    si duplicatele. Pastreaza ordinea. Idempotenta."""
+    out = []
+    for p in str(value or "").split(":"):
+        p = p.strip()
+        if not p or p in out:
+            continue
+        if "sysroot" in p:          # stub-uri NDK: DOAR link-time (vezi _stub_link_dirs)
+            continue
+        out.append(p)
+    return ":".join(out)
+
+
+def _rt_ld_path():
+    """LD_LIBRARY_PATH corect la RULARE (fara stub-uri de link):
+    nativeLibraryDir (libpython3.14.so real + libc++_shared.so) : deps/lib
+    (libopenblas/libjpeg la runtime) : files/libs (crypto ADB) : restul mostenit."""
+    parts = []
+    for chunk in (_native_dir(), DEPS + "/lib", F + "/libs",
+                  sanitize_ld_library_path(os.environ.get("LD_LIBRARY_PATH", ""))):
+        for q in str(chunk or "").split(":"):
+            q = q.strip()
+            if q and q not in parts and "sysroot" not in q:
+                parts.append(q)
+    return ":".join(parts)
+
+
+def _ensure_py_include():
+    """Headerele Python pentru extensii C/C++ (setuptools/meson).
+
+    ★ BUG REAL (28 sept): sysconfig.INCLUDEPY = <prefix>/include/python3.14, dar pe
+    device headerele sunt in toolchain/pyinc -> orice build de extensie C murea cu
+    `fatal error: 'Python.h' file not found` (regex, zstandard, lxml...).
+    Fix: <pyhome>/include/python3.14 -> symlink catre toolchain/pyinc.
+    """
+    dst = F + "/pyhome/include"
+    link = dst + "/python3.14"
+    try:
+        os.makedirs(dst, exist_ok=True)
+        if os.path.isdir(link) and not os.path.islink(link):
+            if os.path.exists(link + "/Python.h"):
+                return link                      # copie reala deja prezenta
+        if os.path.islink(link) and not os.path.exists(link + "/Python.h"):
+            os.remove(link)                      # symlink mort (reinstalare APK)
+        if not os.path.lexists(link):
+            os.symlink(ROOT + "/pyinc", link)
+    except Exception:
+        pass
+    return link
+
+
+def _ensure_py_lib_link():
+    """`-lpython3.14` trebuie sa fie gasibil la LINK (altfel: "unable to find library
+    -lpython3.14" la ORICE extensie C - regex, zstandard...).
+
+    ★ BUG REAL (28 sept): sysconfig LIBDIR = '/usr/local/lib' (prefix de compilare,
+    care NU exista pe telefon) -> distutils adauga `-L/usr/local/lib -lpython3.14`
+    si linkarea esueaza. Fix: link stabil <pyhome>/lib/libpython3.14.so -> copia
+    reala din nativeLibraryDir, si LIBDIR rescris catre el.
+    """
+    d = F + "/pyhome/lib"
+    tgt = (_native_dir() or "") + "/libpython3.14.so"
+    link = d + "/libpython3.14.so"
+    try:
+        os.makedirs(d, exist_ok=True)
+        if os.path.islink(link) and not os.path.exists(link):
+            os.remove(link)
+        if not os.path.lexists(link) and os.path.exists(tgt):
+            os.symlink(tgt, link)
+    except Exception:
+        pass
+    return d
+
+
+def _ensure_sysroot_api_dir(api):
+    """clang cauta crt-urile in `<sysroot>/usr/lib/<triple>/<api>/` si, daca nu exista,
+    cade pe nume BARE (crtbegin_so.o) - pe care lld le cauta DOAR in CWD -> esec la link
+    ("cannot open crtbegin_so.o", desi -L e dat).
+
+    ★ BUG REAL (28 sept, dovedit cu clang -v pe device): avem doar directorul `35` in
+    sysroot, dar target-ul e `aarch64-linux-android36` -> clang nu gaseste dirul de API
+    si nu mai emite caile absolute. Fix: symlink `<api>` -> directorul existent (35).
+    """
+    base = ROOT + "/sysroot/usr/lib/aarch64-linux-android"
+    dst = base + "/" + str(api)
+    try:
+        if os.path.exists(dst + "/crtbegin_so.o"):
+            return dst
+        src = None
+        for n in sorted(os.listdir(base), reverse=True):
+            p = base + "/" + n
+            if n != str(api) and os.path.isdir(p) and os.path.exists(p + "/crtbegin_so.o"):
+                src = p
+                break
+        if src:
+            if os.path.lexists(dst):
+                os.remove(dst)
+            os.symlink(src, dst)
+    except Exception:
+        pass
+    return dst
+
+
+def _patch_sysconfig_device():
+    """Rescrie _sysconfigdata-ul Python pentru MEDIUL DE PE TELEFON.
+
+    ★ Cauze reale (28 sept, masurate):
+      * INCLUDEPY='/usr/local/include/python3.14' -> "Python.h file not found";
+      * LIBDIR='/usr/local/lib' -> "unable to find library -lpython3.14";
+      * CC/CXX/LDSHARED = <toolchain>/bin/clang-21 (fara --target/--sysroot) ->
+        target implicit android24 (simboluri C99 ascunse) si fara sysroot.
+    Idempotent: rescrie doar daca markerul (api + libDir) nu corespunde.
+    """
+    try:
+        api = _device_api()
+        nat = _native_dir() or ""
+        _ensure_sysroot_api_dir(api)      # ★ crt-uri gasite de clang (vezi functia)
+        mark = F + "/pyhome/.sysconfig_fixed"
+        stamp = "api=%s|nat=%s|v6" % (api, nat)
+        try:
+            if open(mark).read().strip() == stamp:
+                return True
+        except Exception:
+            pass
+        inc = F + "/pyhome/include/python3.14"
+        libd = _ensure_py_lib_link()
+        cc = F + "/tmp/clang"
+        cxx = F + "/tmp/clang++"
+        if not os.path.exists(cc):
+            cc = (nat or "") + "/libclang_exec.so"
+        if not os.path.exists(cxx):
+            cxx = cc
+        tgt = (" -resource-dir=%s/lib/clang/21"
+               " --target=aarch64-linux-android%d --sysroot=%s/sysroot" % (ROOT, api, ROOT))
+        cc_v = cc + tgt
+        # ★ -L direct in LDSHARED: setuptools NU foloseste LDFLAGS din sysconfig la link
+        # (comanda observata: "clang -shared <objs> -L<pyhome>/lib -lpython3.14 -o out"),
+        # deci dirurile de libs trebuie sa fie in comanda de link insasi.
+        _ldirs = (" -L%s/sysroot/usr/lib/aarch64-linux-android/%s -L%s/lib"
+                  " -L%s/lib/clang/21/lib/linux/aarch64" % (ROOT, api, DEPS, ROOT))
+        vals = {
+            "LIBDIR": libd,
+            "LIBPL": libd,
+            "INCLUDEPY": inc,
+            "CC": cc_v,
+            "CXX": cxx + tgt,
+            "LDSHARED": cc_v + " -shared" + _ldirs,
+            "BLDSHARED": cc_v + " -shared" + _ldirs,
+        }
+        import re as _re
+        import json as _json
+        base = F + "/pyhome/lib/python3.14"
+        for fn in os.listdir(base):
+            p = base + "/" + fn
+            if fn.startswith("_sysconfigdata") and fn.endswith(".py"):
+                src = open(p, encoding="utf-8", errors="replace").read()
+                for k, v in vals.items():
+                    src = _re.sub(r"('%s':\s*)'[^']*'" % k, lambda m, v=v: m.group(1) + repr(v), src)
+                # CFLAGS: adauga target+sysroot (o singura data)
+                if "--sysroot=" not in src.split("'CFLAGS'")[1][:400]:
+                    _cinc = (tgt + " -I" + DEPS + "/include -I" + DEPS + "/include/libxml2")
+                    for ck in ("CFLAGS", "PY_CFLAGS", "CONFIGURE_CFLAGS"):
+                        src = _re.sub(r"('%s':\s*)(['\"])(.*?)\2" % ck,
+                                      lambda m, t=_cinc: '%s%s%s%s%s' % (m.group(1), m.group(2), m.group(3) + t, m.group(2), ""),
+                                      src, count=1)
+                if "--sysroot=" not in src.split("'LDFLAGS'")[1][:600]:
+                    # ★ -L obligatorii la LINK (distutils foloseste LDFLAGS din sysconfig,
+                    # NU env LDFLAGS): crtbegin_so.o/crtend_so.o + stub-urile libc/libdl
+                    # sunt in sysroot/usr/lib/<triple>/<api>, iar builtins/unwind in
+                    # lib/clang/21/lib/linux/aarch64. Fara ele: "cannot open crtbegin_so.o"
+                    # / "unable to find library -lc".
+                    _ldx = (tgt + " -L" + ROOT + "/sysroot/usr/lib/aarch64-linux-android/" + str(api)
+                            + " -L" + DEPS + "/lib"
+                            + " -L" + ROOT + "/lib/clang/21/lib/linux/aarch64")
+                    src = _re.sub(r"('LDFLAGS':\s*)(['\"])(.*?)\2",
+                                  lambda m, t=_ldx: '%s%s%s%s%s' % (m.group(1), m.group(2), m.group(3) + t, m.group(2), ""),
+                                  src, count=1)
+                open(p, "w", encoding="utf-8").write(src)
+            elif fn.startswith("_sysconfig_vars") and fn.endswith(".json"):
+                try:
+                    d = _json.load(open(p))
+                    d.update(vals)
+                    _json.dump(d, open(p, "w"))
+                except Exception:
+                    pass
+        # cache-ul de bytecode al sysconfigdata-ului
+        import shutil as _sh2
+        for dp, dn, fns in os.walk(base):
+            if os.path.basename(dp) == "__pycache__":
+                _sh2.rmtree(dp, ignore_errors=True)
+        open(mark, "w").write(stamp)
+        # ★ reincarca sysconfig in PROCESUL CURENT (altfel agentul foloseste in continuare
+        # valorile vechi din cache; subprocesele citesc oricum fisierul nou).
+        try:
+            import sysconfig as _syscfg
+            import sys as _sysm
+            for _n in [n for n in _sysm.modules if n.startswith("_sysconfigdata")]:
+                _sysm.modules.pop(_n, None)
+            _cv = getattr(_syscfg, "_CONFIG_VARS", None)
+            if isinstance(_cv, dict):
+                _cv.clear()
+            _syscfg.get_config_vars()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 def _sdk_lib_dir():
@@ -728,8 +936,9 @@ def _ensure_launchers():
     if not os.path.exists(py):
         py = ""
     made = []
-    # ★ ninja / samu: binar executabil din nativeLibraryDir (build-uri meson)
-    for name, so in (("ninja", "libninja_exec.so"), ("samu", "libninja_exec.so")):
+    # ★ ninja / samu / make: binar executabil din nativeLibraryDir (build-uri meson/make)
+    for name, so in (("ninja", "libninja_exec.so"), ("samu", "libninja_exec.so"),
+                     ("make", "libmake_exec.so"), ("gmake", "libmake_exec.so")):
         if nat and os.path.exists(nat + "/" + so):
             p = F + "/tmp/" + name
             try:
@@ -846,6 +1055,45 @@ def _ensure_python_pc():
         pass
 
 
+def _atomic_dir():
+    """Directorul care contine libatomic.a (builtins clang), sau "" daca lipseste."""
+    for _p in (BIN + "/../lib/clang/21/lib/linux", DEPS + "/lib",
+               ROOT + "/sysroot/usr/lib/aarch64-linux-android/35"):
+        for _f in ("libatomic.a", "libatomic.so"):
+            if os.path.exists(_p + "/" + _f):
+                return _p
+    return ""
+
+
+def _have_libatomic():
+    """★ sect. 5: grpcio cere -latomic. libatomic.a e livrat ca builtin clang."""
+    return bool(_atomic_dir())
+
+
+def _ensure_pipconf():
+    """★ sect. 4: pip creeaza un mediu izolat la fiecare build si pierde PYTHONPATH
+    -> "Cannot import 'setuptools.build_meta'". FIX: pip.conf cu no-build-isolation."""
+    d = F + "/python/Lib/site-packages"
+    conf = F + "/pip.conf"
+    for _d in (F, d):
+        try:
+            os.makedirs(_d, exist_ok=True)
+        except Exception:
+            pass
+    body = ("[global]\n"
+            "no-build-isolation = true\n"
+            "\n[build]\n"
+            "no-build-isolation = true\n")
+    for _c in (F + "/pip.conf", F + "/python/Lib/site-packages/pip.conf",
+               F + "/pyhome/lib/python3.14/site-packages/pip.conf"):
+        try:
+            if (not os.path.exists(_c)) or open(_c).read() != body:
+                open(_c, "w").write(body)
+        except Exception:
+            pass
+    return conf
+
+
 def env_vars():
     """Mediul COMPLET de compilare pentru toolchain-ul livrat in APK.
 
@@ -857,6 +1105,9 @@ def env_vars():
     pipcache = home + "/.cache/pip"
     _ensure_launchers()
     _ensure_python_pc()
+    _ensure_pipconf()
+    _ensure_py_include()          # ★ Python.h pentru extensii C (INCLUDEPY)
+    _patch_sysconfig_device()     # ★ INCLUDEPY/LIBDIR/CC/LDSHARED corecte pe device
     _cxxinc = _ensure_libcxx()
     apexsdk = ROOT + "/sysroot/usr/lib/aarch64-linux-android/35"
     try:
@@ -874,7 +1125,35 @@ def env_vars():
     # Acolo avem clang/lld/pkg-config redenumite lib*_exec.so.
     NAT = _native_dir()
     if NAT and os.path.exists(NAT + "/libclang_exec.so"):
+        # ★ FIX argv[0]: clang decide driver-ul din basename. `libclang_exec.so`
+        # NU e recunoscut ca "clang" -> se comporta ca generic driver si se INVARTE
+        # (100% CPU, fara output). Symlink cu numele real in files/tmp (exec-abil).
         CC_EXEC = NAT + "/libclang_exec.so"
+        try:
+            _cl = F + "/tmp/clang"
+            _st = False
+            if os.path.islink(_cl):
+                try:
+                    _st = not os.path.exists(os.readlink(_cl))
+                except Exception:
+                    _st = True
+            if os.path.lexists(_cl) and (not os.path.islink(_cl) or _st):
+                os.remove(_cl)
+            if not os.path.lexists(_cl):
+                os.symlink(NAT + "/libclang_exec.so", _cl)
+            elif os.path.islink(_cl):
+                pass
+            # symlink-urile sunt executabile ca app (ca la ld.lld) -> folosim numele real
+            if os.path.exists(_cl):
+                CC_EXEC = _cl
+        except Exception:
+            pass
+        try:
+            _cx = F + "/tmp/clang++"
+            if not os.path.lexists(_cx):
+                os.symlink(NAT + "/libclang_exec.so", _cx)
+        except Exception:
+            pass
         PKG_EXEC = NAT + "/libpkgconf_exec.so"
         _extra = " -resource-dir=" + ROOT + "/lib/clang/21"
         # ★ FIX LINKER (esential pentru orice wheel cu extensii C: lxml, numpy, pillow):
@@ -974,8 +1253,12 @@ def env_vars():
     # (raport: "-ljpeg cu doar .a e ignorat silentios"). -lc++_shared pentru module C++.
     # ★ sysroot lib PRIMUL: acolo sunt crtbegin/crtend_android.o + libc.so/libdl.so
     # (stub-uri de link). Fara el: "cannot open crtend_android.o" / "unable to find -lc".
+    _atom = _atomic_dir()
     _ldflags = ("-L" + _sdk_lib + " -L" + DEPS + "/lib -L" + apexsdk
-                + " -Wl,--no-undefined")
+                + (" -L" + _atom if _atom else "")
+                + " -Wl,--no-undefined"
+                # ★ sect. 5: grpcio cere -latomic explicit (libatomic.a = builtin clang).
+                + (" -latomic" if _atom else ""))
     return {
         "PATH": _binpath,
         "TC_ROOT": ROOT,
@@ -1008,12 +1291,22 @@ def env_vars():
         "HOME": home,
         "PIP_CACHE_DIR": pipcache,
         "PIP_NO_BUILD_ISOLATION": "1",
+        # ★ sect. 8: OpenBLAS cu 8 fire e 14x MAI LENT la n mic (1.2 vs 16.5 GFLOPS).
+        "OPENBLAS_NUM_THREADS": "1",
         # ★ LD_LIBRARY_PATH OBLIGATORIU: libpyexec.so are nevoie de libpython3.14.so
         # (nativeLibraryDir) + libs/ proprii. Fara el: "CANNOT LINK EXECUTABLE".
-        "LD_LIBRARY_PATH": (_sdk_lib + ":" + DEPS + "/lib:" + F + "/libs:"
-                            + os.environ.get("LD_LIBRARY_PATH", "")),
+        # ★ FIX CRITIC: FARA directorul de stub-uri NDK (sysroot/usr/lib/...) - vezi
+        # `_rt_ld_path()`; altfel ORICE PROCES COPIL moare cu SIGSEGV in constructori
+        # (simptom: `pip install` -> exit -11 la "Preparing metadata").
+        "LD_LIBRARY_PATH": _rt_ld_path(),
         # ★ PYTHONHOME/PATH pentru stdlib: fara ele "Failed to import encodings".
         "PYTHONHOME": F + "/pyhome",
+        # ★ sect. 3E: stdlib_extra.zip PRIMUL (altfel zipfile._path lipseste
+        # -> "ModuleNotFoundError: No module named 'zipfile._path'" la pip).
+        "PYTHONPATH": (F + "/pyhome/lib/stdlib_extra.zip:"
+                       + F + "/pyhome/lib/python3.14:"
+                       + F + "/pyhome/lib/pysitepkg.zip:"
+                       + os.environ.get("PYTHONPATH", "")),
         "PYTHONUNBUFFERED": "1",
         # certificatul de CA: fara el pip HTTPS nu poate valida PyPI
         "SSL_CERT_FILE": _ca_bundle(),

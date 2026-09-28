@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+import dataclasses
+import enum
+import re
+import sys
+from pathlib import Path
+
+from .._logging import rich_print
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+__all__ = ["Token", "TokenType", "tokenize"]
+
+
+def __dir__() -> list[str]:
+    return __all__
+
+
+TOKEN_EXPRS = {
+    "BRACKET_COMMENT": r"\s*#\[(?P<bc1>=*)\[(?s:.)*?\](?P=bc1)\]",
+    "COMMENT": r"#.*$",
+    "QUOTED": r'"(?:\\(?s:.)|[^"\\])*?"',
+    "BRACKET_QUOTE": r"\[(?P<bq1>=*)\[(?s:.)*?\](?P=bq1)\]",
+    "OPEN_PAREN": r"\(",
+    "CLOSE_PAREN": r"\)",
+    "LEGACY": r'\b\w+=[^\s"()$\\]*(?:"[^"\\]*"[^\s"()$\\]*)*',
+    "UNQUOTED": r"(?:\\.|[^\s()#\"\\])+",
+}
+
+TOKEN_REGEX = re.compile(
+    "|".join(f"(?P<{n}>{v})" for n, v in TOKEN_EXPRS.items()), re.MULTILINE
+)
+
+# BRACKET_COMMENT/BRACKET_QUOTE nest a "bc1"/"bq1" group, which can outrank
+# their own group in `match.lastgroup` (Python picks the highest-numbered
+# matched group). Map every group name back to its owning token type.
+_OWNER_GROUP = {name: name for name in TOKEN_EXPRS}
+_OWNER_GROUP["bc1"] = "BRACKET_COMMENT"
+_OWNER_GROUP["bq1"] = "BRACKET_QUOTE"
+
+
+class TokenType(enum.Enum):
+    BRACKET_COMMENT = enum.auto()
+    COMMENT = enum.auto()
+    UNQUOTED = enum.auto()
+    QUOTED = enum.auto()
+    BRACKET_QUOTE = enum.auto()
+    LEGACY = enum.auto()
+    OPEN_PAREN = enum.auto()
+    CLOSE_PAREN = enum.auto()
+    WHITESPACE = enum.auto()
+
+
+@dataclasses.dataclass(frozen=True)
+class Token:
+    __slots__ = ("start", "stop", "type", "value")
+
+    type: TokenType
+    start: int
+    stop: int
+    value: str
+
+    def __str__(self) -> str:
+        return f"{self.type.name}({self.value!r})"
+
+
+def tokenize(contents: str) -> Generator[Token, None, None]:
+    last = 0
+    for match in TOKEN_REGEX.finditer(contents):
+        assert match.lastgroup is not None
+        typ = _OWNER_GROUP[match.lastgroup]
+        value = match.group(typ)
+        if match.start() != last:
+            yield Token(
+                TokenType.WHITESPACE,
+                last,
+                match.start(),
+                contents[last : match.start()],
+            )
+        last = match.end()
+        yield Token(TokenType[typ], match.start(), match.end(), value)
+
+
+if __name__ == "__main__":
+    with Path(sys.argv[1]).open(encoding="utf-8-sig") as f:
+        for token in tokenize(f.read()):
+            rich_print(
+                "{green}{token.type.name}{red}({default}{token.value}{red})",
+                token=token,
+            )

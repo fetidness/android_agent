@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64,datetime,json,os,random,re,shlex,shutil,signal,subprocess,sys,tempfile,threading,time,urllib.request
+import base64,contextlib,datetime,io,json,os,random,re,shlex,shutil,signal,subprocess,sys,tempfile,threading,time,urllib.request
 
 # --- ANDROID FIX: folosim certificatele CA ale sistemului Android pentru HTTPS ---
 if sys.platform=="android" or os.path.exists("/system/bin/linker64"):
@@ -1371,12 +1371,32 @@ def adbsu_capture(argv, timeout=3600):
     return out or "(no output)"
 
 
+def _clean_ld(value):
+    """LD_LIBRARY_PATH de RULARE: scoate directoarele de LINK (stub-urile NDK din
+    sysroot) si duplicatele.
+
+    ★ BUG REPARAT (28 sept, dovedit pe device): toolchain-ul isi punea
+    `toolchain/sysroot/usr/lib/aarch64-linux-android/35` PRIMUL in LD_LIBRARY_PATH.
+    Acolo libc.so/libm.so/libdl.so sunt STUB-uri de linkare (fara cod). Procesul
+    AGENT nu patea nimic (bionic citeste LD_LIBRARY_PATH la INIT, nu la dlopen),
+    dar ORICE PROCES COPIL pornea cu libc STUB -> SIGSEGV in constructorii
+    libpython3.14.so. Simptomul vizibil: `pip install` murea cu
+    "Preparing metadata (pyproject.toml): exit code: -11".
+    """
+    out=[]
+    for p in str(value or "").split(":"):
+        p=p.strip()
+        if p and p not in out and "sysroot" not in p:
+            out.append(p)
+    return ":".join(out)
+
+
 def py_capture(argv, timeout=600):
     """Ruleaza un script Python (argv=[script, args...]) si afiseaza output-ul LINIE cu LINIE,
     in timp real (streaming). Returneaza intregul output (pentru context), dar il si printeaza
     pe masura ce apare, ca sa vezi progresul unui script care dureaza."""
     buf=[]
-    p=subprocess.Popen([sys.executable]+list(argv),cwd=WORK,stdout=subprocess.PIPE,
+    p=subprocess.Popen([sys.executable]+list(argv),stdin=subprocess.DEVNULL,cwd=WORK,stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT,start_new_session=True,text=True,bufsize=1)
     t0=time.time()
     try:
@@ -1401,7 +1421,18 @@ def py(c,cwd):
     """Runs the code in its own process group. Ctrl+C kills ONLY this
     tool (SIGKILL on the group), then re-raises the signal to the task loop."""
     o=tempfile.TemporaryFile(dir=WORK)
-    p=subprocess.Popen([sys.executable,"-c",c],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    # ★ FIX CRASH -11: `libpyexec.so -c <cod>` RE-INCARCA agent.py (sys.executable
+    # e libpyexec.so, care la import ruleaza bucla principala) -> SIGSEGV instant.
+    # Solutie: scriu codul intr-un fisier si il rulez ca SCRIPT (fara -c).
+    try:
+        _rf=tempfile.NamedTemporaryFile(mode="w",suffix=".py",dir=F+"/tmp",delete=False)
+        _rf.write(c); _rf.close(); _rpath=_rf.name
+    except Exception:
+        _rpath=None
+    if _rpath:
+        p=subprocess.Popen([sys.executable,_rpath],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True,stdin=subprocess.DEVNULL)
+    else:
+        p=subprocess.Popen([sys.executable,"-c",c],cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True,stdin=subprocess.DEVNULL)
     try:
         p.wait(timeout=600)
     except KeyboardInterrupt:
@@ -1468,7 +1499,7 @@ def bash(cmd, cwd):
     """Ruleaza o comanda shell (bash -lc) in propriul grup de procese; Ctrl+C omoara doar acest
     tool. Intoarce stdout+stderr combinat, trunchiat la 8000 de caractere (ca la python)."""
     o=tempfile.TemporaryFile(dir=WORK)
-    p=subprocess.Popen(SHELL[0]+(cmd,),cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True)
+    p=subprocess.Popen(SHELL[0]+(cmd,),cwd=cwd,stdout=o,stderr=subprocess.STDOUT,start_new_session=True,stdin=subprocess.DEVNULL)
     try:
         p.wait(timeout=600)
     except KeyboardInterrupt:
@@ -1970,7 +2001,7 @@ def run_toolchain_tool(a):
         e["PYTHONHOME"] = F + "/pyhome"
         e["PYTHONPATH"] = (F + "/pyhome/lib/pysitepkg.zip:" + F +
                            "/pyhome/lib/stdlib_extra.zip:" + here)
-        e["LD_LIBRARY_PATH"] = (F + "/libs:" + os.environ.get("LD_LIBRARY_PATH", ""))
+        e["LD_LIBRARY_PATH"] = _clean_ld(e.get("LD_LIBRARY_PATH", ""))
         e["TMPDIR"] = F + "/tmp"
         try:
             os.makedirs(e["TMPDIR"], exist_ok=True)
@@ -2120,11 +2151,7 @@ def run_toolchain_tool(a):
 
     if action == "env":
         return _run([sys.executable, tc, "env"], 30)
-
-
-
-
-
+    if action == "pip_install":
         pkg = (a.get("package") or "").strip()
         if not pkg: return "lipseste 'package'"
         # ★ REWRITE (toolchain din APK): rulam pip CA APP (uid 10318), nu prin adbsh:
@@ -2147,11 +2174,63 @@ def run_toolchain_tool(a):
                      "from pip._internal.cli.main import main as _m;"
                      "sys.exit(_m(['install','--no-cache-dir','--disable-pip-version-check',%s%r]))"
                      % (_zp, _ze, _noiso and "'--no-build-isolation'," or "", pkg))
-            _cmd = [sys.executable, "-c", _code]
-            _pr = _sp.run(_cmd, cwd=here, env=_e, capture_output=True, text=True, timeout=2400)
-            _out = (_pr.stdout or "") + (_pr.stderr or "")
-            _tail = "\n".join([l for l in _out.splitlines() if l.strip()][-12:])
-            return "pip install %s (exit %d, %.0fs)\n%s" % (pkg, _pr.returncode, time.time()-_t0, _tail)
+            # ★ FIX CRASH -11 (28 sept): pe Android `sys.executable` = libpyexec.so, iar un
+            # subproces `libpyexec.so <script>` murea instant (SIGSEGV) pentru ca
+            # LD_LIBRARY_PATH continea directorul de STUB-uri NDK (sysroot) -> libc stubbed.
+            # Reparat la sursa in toolchain._rt_ld_path()/_clean_ld(). Acum subprocesele
+            # pip (build backend / metadata) RULEAZA normal, deci pip poate folosi
+            # backend-ul in mediul lui.
+            # ★ AUTO-RETRY: prima incercare cu --no-build-isolation (rapid, deps preinstalate
+            # in pysitepkg.zip); daca build-backend-ul cere un modul care lipseste
+            # (ModuleNotFoundError), reincercam CU izolare (pip descarca backend-ul).
+            def _pip_run(extra):
+                _bp2 = io.StringIO()
+                _old_argv = sys.argv[:]
+                sys.argv = ["pip", "install", "--no-cache-dir",
+                            "--disable-pip-version-check"] + list(extra) + [pkg]
+                _rc2 = 0
+                try:
+                    with contextlib.redirect_stdout(_bp2), contextlib.redirect_stderr(_bp2):
+                        from pip._internal.cli.main import main as _pm
+                        _rc2 = _pm(list(sys.argv[1:]))
+                except SystemExit as _se:
+                    _rc2 = int(_se.code or 0)
+                except Exception as _pe:
+                    _rc2 = 1
+                    _bp2.write("\n[pip inline exception] %r" % (_pe,))
+                finally:
+                    sys.argv = _old_argv
+                return _rc2, _bp2.getvalue()
+            try:
+                # ★ CRUCIAL: mediul COMPLET (PATH cu files/tmp PRIMUL, LD_LIBRARY_PATH fara
+                # stub-uri, CC/LDSHARED...) trebuie sa ajunga in os.environ, pentru ca pip
+                # lanseaza build-backend-ul ca SUBPROCES care mosteneste env-ul procesului.
+                # Fara asta: "clang: error: unable to execute command" (nu gaseste ld.lld,
+                # care sta in files/tmp) desi compilarea in sine merge.
+                _saved = {}
+                for _k, _v in _e.items():
+                    if isinstance(_v, str):
+                        _saved[_k] = os.environ.get(_k)
+                        os.environ[_k] = _v
+                try:
+                    _rc, _out = _pip_run(["--no-build-isolation"])
+                    _missm = "ModuleNotFoundError" in _out and _rc != 0
+                    if _missm and "--no-build-isolation" not in pkg:
+                        _bp0 = _out
+                        _t1 = time.time()
+                        _rc, _out2 = _pip_run([])      # izolat: pip isi instaleaza backend-ul
+                        _out = (_bp0 + "\n--- [retry cu build isolation: %s] ---\n" % _rc) + _out2
+                        _out += "(retry in %.0fs)" % (time.time() - _t1)
+                finally:
+                    for _k, _v in _saved.items():
+                        if _v is None:
+                            os.environ.pop(_k, None)
+                        else:
+                            os.environ[_k] = _v
+            except Exception as _ex:
+                return "pip_install error: %s" % str(_ex)[:300]
+            _tail = "\n".join([l for l in _out.splitlines() if l.strip()][-14:])
+            return "pip install %s (exit %s, %.0fs)\n%s" % (pkg, _rc, time.time()-_t0, _tail)
         except Exception as _ex:
             return "pip_install error: %s" % str(_ex)[:300]
     if action == "pip_install_adbsh":
@@ -2185,7 +2264,14 @@ def run_toolchain_tool(a):
                    "sp=iu.spec_from_file_location('tc','%s');"
                    "m=iu.module_from_spec(sp);sp.loader.exec_module(m);"
                    "m._fix_libcxx_needed()" % tc)
-            r2 = _run([sys.executable, "-c", fix], 900)
+            # ★ acelasi fix: fara -c (libpyexec re-incarca agent.py -> SIGSEGV)
+            _fx = F + "/tmp/_fixlibcxx.py"
+            try:
+                os.makedirs(F + "/tmp", exist_ok=True)
+                open(_fx, "w").write(fix)
+                r2 = _run([sys.executable, _fx], 900)
+            except Exception:
+                r2 = _run([sys.executable, "-c", fix], 900)
             if "LIBCXX_ADDED" in r2:
                 res += "\n" + r2.strip().split("\n")[-1]
         except Exception:
@@ -2517,6 +2603,30 @@ def quarantine(reason, lines):
 
 
 if __name__ == "__main__":
+    # ★ PAS 2: aplica in PROCESUL CURENT PATH/LD/PYTHONPATH din toolchain.env_vars(),
+    # altfel scripturile rulate prin /run si subprocess-urile NU gasesc make/ninja/cython
+    # (Kotlin porneste procesul cu PATH=/system/bin:/vendor/bin).
+    try:
+        import importlib.util as _iluS
+        _tcS_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "toolchain.py")
+        _spS = _iluS.spec_from_file_location("_tcS", _tcS_path)
+        _mS = _iluS.module_from_spec(_spS); _spS.loader.exec_module(_mS)
+        for _kS, _vS in _mS.env_vars().items():
+            if _vS:
+                os.environ[_kS] = str(_vS)
+        _FdS = os.path.dirname(os.path.abspath(__file__))
+        _FdS = os.path.dirname(_FdS)
+        _partsS = []
+        for _pS in (_FdS + "/tmp", _FdS + "/libs",
+                    os.environ.get("LD_LIBRARY_PATH", "")):
+            if _pS and _pS not in _partsS:
+                _partsS.append(_pS)
+        # ★ FIX CRITIC: fara stub-urile NDK (sysroot) in LD_LIBRARY_PATH - altfel
+        # orice proces copil (pip/build backend/setuptools) moare cu SIGSEGV (-11).
+        os.environ["LD_LIBRARY_PATH"] = _clean_ld(":".join(_partsS))
+        print("[pas2] PATH aplicat: " + os.environ.get("PATH","")[:80])
+    except Exception as _eS:
+        print("[pas2] EROARE: %r" % (_eS,))
     # ★ P3/P10: colectori de stare acumulata (backup-uri + loguri), la fiecare pornire
     try: _cleanup_backups()
     except Exception: pass
