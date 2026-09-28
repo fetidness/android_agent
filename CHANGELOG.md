@@ -3,13 +3,44 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `376b73e`.
+> Ultimul commit inclus: `8279966`.
 
-**Total: 165 commituri in 10 zile** (19 sept -> 28 sept 2026).
+**Total: 165 commituri in 9 zile** (19 sep -> 28 sep).
 
 ---
 
 ## 2026-09-28 (ELIMINARE TERMUX + FLANG + OpenBLAS + libc++abi)
+
+### ★ Sesiunea 2 - FIX `pip install` (SIGSEGV -11) + toolchain compilabil cu uid de app
+
+**Blocajul care tinea "independenta 100%" teoretica a cazut**: ORICE `pip install` cu extensie C
+murea cu `exit code: -11` la "Preparing metadata (pyproject.toml)".
+
+**Cauza reala (tombstone + bisect pe device, NU ipoteza din raport):** `LD_LIBRARY_PATH` incepea
+cu directorul de STUB-uri NDK (`toolchain/sysroot/usr/lib/aarch64-linux-android/35`) - acolo
+`libc.so`/`libm.so`/`libdl.so` sunt stub-uri de LINK (fara cod). Procesul agentului nu avea nicio problema
+(bionic citeste `LD_LIBRARY_PATH` la INIT, nu la `dlopen`), dar orice PROCES COPIL pornea cu libc
+stub -> SIGSEGV in constructorii `libpython3.14.so`.
+- `toolchain._rt_ld_path()` + `sanitize_ld_library_path()` + `agent._clean_ld()`: calea de RULARE
+  nu mai contine directoare `sysroot` (raman doar nativeLibraryDir, deps/lib, files/libs)
+
+**Al doilea strat (fiecare descoperit DUPA ce copilul a inceput sa ruleze; toate reparate):**
+- `_ensure_py_include()`: `pyhome/include/python3.14 -> toolchain/pyinc` (INCLUDEPY era `/usr/local/...`) -> "Python.h not found"
+- `_ensure_py_lib_link()`: `pyhome/lib/libpython3.14.so` + LIBDIR rescris -> "-lpython3.14 not found"
+- `_patch_sysconfig_device()`: CC/CXX/LDSHARED cu `-resource-dir` + `--target` + `--sysroot` (+ `-I deps/include`) -> "stddef.h not found"
+- `_ensure_sysroot_api_dir()`: symlink `<api>` -> `35`; fara el clang emite crt-urile ca NUME BARE, iar lld le cauta DOAR in CWD -> "cannot open crtbegin_so.o"
+- `-L` direct in `LDSHARED` (setuptools NU foloseste LDFLAGS din sysconfig la link)
+- `pip_install` aplica env-ul complet in `os.environ` pe durata rularii -> altfel copilul nu gaseste `ld.lld` din `files/tmp`
+- auto-retry cu build isolation la `ModuleNotFoundError` (backend cu dependinta lipsa)
+- `pathspec` 1.1.1 adaugat in `pysitepkg.zip` (dependinta de scikit-build-core)
+
+**VERIFICAT pe device (instalare curata `.assets_v180`):**
+- `pip install regex` -> exit 0, 23s; `import regex` + match OK (wheel `cp314-android_24_arm64_v8a`)
+- `pip install zstandard` -> exit 0 (C + scikit-build-core) | `msgpack` -> exit 0 (C++)
+- `markupsafe` -> exit 0; logcat dupa teste: ZERO "Fatal signal 11"
+- site-packages-ul instalat de pip supravietuieste update-ului de APK (`site_packages_keep`)
+
+
 
 **Termux ELIMINAT COMPLET SI DEFINITIV**
 - sters `tpm.py` (351 linii) + toate referintele termux/tpm din agent.py si toolchain.py (0 ramase)
