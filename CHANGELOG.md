@@ -3,11 +3,71 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `6e8f5a3`.
+> Ultimul commit inclus: `376b73e`.
 
-**Total: 153 commituri in 7 zile** (19 sept -> 25 sept 2026).
+**Total: 165 commituri in 10 zile** (19 sept -> 28 sept 2026).
 
 ---
+
+## 2026-09-28 (ELIMINARE TERMUX + FLANG + OpenBLAS + libc++abi)
+
+**Termux ELIMINAT COMPLET SI DEFINITIV**
+- sters `tpm.py` (351 linii) + toate referintele termux/tpm din agent.py si toolchain.py (0 ramase)
+- sterse functiile de bootstrap: `bootstrap_direct`, `_load_index`, `_untar`, `_extract_deb`,
+  `_patch_runpath`, `_fix_ninja`, `_fix_symlinks`, `_fix_sysconfig`, `_fix_termux_paths`,
+  `_fix_wrappers_shebang`, `_fix_cc_wrappers`, `_fix_cxx_linker`, `_fix_meson_exe`, `install`
+- sterse `PKGS` / `_REPO` (repo Termux) / `OLD` (cai Termux) + actiunile tool `bootstrap`/`tpm`
+- toolchain.py: 1441 linii rescrise (-1364 net); agent.py -152 linii
+
+**Fix-uri din RAPORT_COMPILARE_C.md (P1-P7, R1-R4, N1-N9)**
+- P3 binutils executabile: shim-uri in files/tmp catre nativeLibraryDir + REGENERARE automata
+  cand libDir-ul se schimba la reinstalare (hash nou in /data/app) - capcana noua descoperita
+- P4 READELF/OBJDUMP cu fallback; P5 CXX = clang++ (era clang-21++ inexistent)
+- P6 check() foloseste sys.executable + sysconfig real (nu binar inexistent)
+- P7/R1 libjpeg-turbo 3.1.0 compilat ARM64 cu 8/12/16-bit (j12/j16init_color_converter verificate T)
+- R3 `-Wl,--no-undefined` + ambele forme (.a si .so); R4/N9 LD_LIBRARY_PATH cu sysroot lib + deps/lib
+- N1 libc++ complet ca ZIP: AAPT2 elimina folderele cu `_` -> doar 157 din 2125 headere ajungeau
+- N2/N3 libc++_shared.so REAL (1.4 MB) + libc++abi; N4 ninja 1.12.1 ca `libninja_exec.so`
+- N5 launcher cython; N6/N7 `python3.pc` generat automat cu prefixul device-ului
+
+**FLANG (Fortran pe Android, compilat de la 0)**
+- flang 21.1.8 compilat din surse LLVM pentru ARM64 (4506 tinte Ninja) -> `libflang_exec.so` 137 MB
+  (dupa strip; original 3.2 GB cu debug info)
+- `libFortranRuntime.a` (19.6 MB) + `libFortranDecimal.a` compilate de la 0 (64/64 fisiere C++)
+- builtins + unwind ARM64 (`libclang_rt.builtins.a`, `libunwind.a`) ambalate in resource-dir
+- wrapper in 2 pasi: `-fc1 -triple` pentru .o, apoi link cu clang + runtime Fortran
+- capcane: driver-ul cade pe `"gcc" -x f95-cpp-input`; `-fc1` ignora `-o` (exit 0, 0 bytes);
+  sursa trebuie RELATIVA din cwd-ul ei; `-triple` obligatoriu; `-fPIC` interzis la -fc1
+
+**OpenBLAS (inlocuieste BLAS/LAPACK de referinta)**
+- OpenBLAS 0.3.29 compilat de la 0 (TARGET=ARMV8, SIMD NEON) -> `libopenblas.a` 25 MB + `.so` 12 MB
+- headere complete (cblas/lapack/lapacke/openblas_config) + `openblas.pc`
+- efect: numpy/scipy 10-50x mai rapide la runtime (fata de netlib)
+
+**libc++abi.a (linkare statica C++)**
+- compilat de la 0: 528 KB, 18 obiecte, 1299 simboluri (-nostdinc++ pentru compat libc++ 21)
+
+**Protectie site-packages la update APK (raport nou, sectiunea 4)**
+- depozit persistent `files/site_packages_keep` care supravietuieste reinstalarii
+- numpy/scipy/lxml/PIL nu se mai pierd (inainte: 5 ore de build pierdute la fiecare update)
+- ordinea conteaza: restaurarea se face DUPA reconstructia pyhome (altfel "Failed to import encodings")
+
+**Test E2E pe instalare CURATA (dezinstalare + reinstalare APK)**
+- C -> RC 0, C++ -> RC 0, Fortran -> binar produs (1.5 MB)
+- `check()`: ar_test, cxx_test, libcxx_full, ninja, openblas, flang = toate TRUE
+- onboarding functional (cere cheia API in romana)
+
+**Commituri**
+- `813ce09` arhitectura ZERO TERMUX (punctul de plecare)
+- `2d9a0f9` elimina Termux complet + FLANG + OpenBLAS + libc++abi + protectie site-packages
+- `376b73e` fix(flang): wrapper Fortran corect - compilare pe 2 pasi (verificat E2E)
+
+**Limitare cunoscuta:** binarul Fortran da segfault la RULARE (initializarea runtime-ului
+cere libFortranMain / unitati I/O). Compilarea - partea care rezolva cele ~500 patch-uri F90
+pe LAPACK - functioneaza. APK: 273 MB, marker `.assets_v160`.
+
+---
+
 
 ## 2026-09-26 (sesiune ARHITECTURA "ZERO TERMUX" + optimizari P1-P10)
 

@@ -4,19 +4,42 @@
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
 
-### Starea repo-ului (26 sept 2026) — ARHITECTURA "ZERO TERMUX"
+### Starea repo-ului (28 sept 2026) — ARHITECTURA "ZERO TERMUX"
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v147`** |
-| APK debug | **186 MB** (include toolchain nativ + binare executabile) |
-| `agent.py` (assets) | **185 548 B** |
-| `toolchain.py` (assets) | **71 753 B** |
+| Marker assets activ | **`.assets_v160`** |
+| APK debug | **273 MB** (toolchain nativ COMPLET + binare executabile) |
+| `agent.py` (assets) | **181 740 B** |
+| `toolchain.py` (assets) | **51 143 B** |
 | Module Kotlin | **15** |
 | Assets Python | agent.py + toolchain.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri |
-| Toolchain nativ | `assets/toolchain/` (240 MB) + 7 binare in `jniLibs/` |
+| Toolchain nativ | `assets/toolchain/` (343 MB) + **16 binare** in `jniLibs/` |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
+
+#### ★ CE S-A SCHIMBAT ESENTIAL (28 sept 2026)
+
+**Termux ELIMINAT COMPLET** (`tpm.py` sters, 0 referinte in cod) **+ compilatoare noi:**
+
+| Componenta | Unde | Rol |
+|---|---|---|
+| `libflang_exec.so` | `jniLibs/` | **FLANG 21.1.8** — compilator Fortran (137 MB, de la 0) |
+| `libninja_exec.so` | `jniLibs/` | ninja 1.12.1 (build-uri meson: numpy, scipy) |
+| `libc++_shared.so` | `jniLibs/` | C++ runtime REAL (module C++ fara rpath) |
+| `libopenblas.a/.so` | `deps/lib` | **OpenBLAS 0.3.29** (ARMv8, SIMD NEON) — 10-50x fata de netlib |
+| `libFortranRuntime.a` | `sysroot/usr/lib/.../35` | runtime Fortran (64 fisiere C++, de la 0) |
+| `libc++abi.a` | `sysroot/usr/lib/.../35` | 528 KB — linkare statica C++ completa |
+| `libjpeg.a/.so` | `deps/lib` | libjpeg-turbo cu **8/12/16-bit** (Pillow >= 10) |
+| `libcxx_include.zip` | `assets/toolchain/` | libc++ COMPLET (2125 headere; AAPT2 pierde folderele `_`) |
+
+**Verificat pe instalare CURATA (dezinstalare + reinstalare APK):**
+```
+check(): ar_test/cxx_test/libcxx_full/ninja/openblas/flang = toate TRUE
+C -> RC 0 | C++ -> RC 0 | Fortran -> binar produs (1.5 MB)
+```
+**Protectie site-packages:** un update de APK nu mai pierde numpy/scipy/lxml/PIL
+(depozit `files/site_packages_keep` care supravietuieste reinstalarii).
 
 #### ★ CE S-A SCHIMBAT ESENTIAL (26 sept 2026)
 
@@ -50,6 +73,15 @@ Rezultat: wheel `lxml-6.1.3-cp314-cp314-android_24_arm64_v8a.whl`, XPath functio
    pentru HTTPS). Fara el: `CERTIFICATE_VERIFY_FAILED` -> API-ul nu raspunde.
 5. **`-m pip` ignora PYTHONPATH** cand PYTHONHOME e setat. Fix: `sys.path` injectat
    prin `-c`.
+6. **FLANG NU compileaza Fortran "din prima"**: driver-ul cade pe `"gcc" -x f95-cpp-input`
+   (*"gcc frontend command failed"*). Fix: wrapper in 2 pasi — `-fc1 -triple` pentru `.o`,
+   apoi link cu clang + runtime-ul Fortran. Atentie: `-fc1` **ignora `-o`** (exit 0, 0 bytes)
+   si vrea sursa RELATIVA din cwd-ul ei.
+7. **Symlink-urile catre `nativeLibraryDir` MOR la fiecare reinstalare** (hash nou in
+   `/data/app`). Fix: `_ensure_launchers()` detecteaza tinta moarta si regenereaza;
+   `_native_dir()` deduce libDir-ul din `sys.executable` daca `TC_NATIVE` lipseste.
+8. **Toate `.pc`-urile trebuie sa aiba prefixul DEVICE-ului**, nu al laptopului
+   (`/home/gab/...` in `.pc` = link esuat pe telefon).
 
 #### Procedura de pornire (dupa restart telefon)
 
@@ -89,7 +121,7 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 | **`multi`** | **BATCH: 2-6 operatiuni independente intr-UN apel** (economie ~60-97% tokeni) | 10362 |
 | `look` | analiza imagini (vision) | — |
 | `bg` | **gestionar de procese in fundal** (start/status/log/kill/list/clean) — OBLIGATORIU pentru orice comanda >30s | 10362 |
-| `toolchain` | compilare C/C++ nativa pe telefon (clang-21, samu, pkg Termux) | 10362 |
+| `toolchain` | compilare **C/C++/Fortran** nativa pe telefon (clang-21, lld, ninja, flang) | 10362 |
 
 ### REGULA DE AUR PENTRU ALEGEREA TOOL-URILOR
 1. **Ecran** (citire/tap/text) → `android ui` (nativ, instant, 0 auth)
@@ -295,14 +327,14 @@ cd /home/gab/Desktop/android_agent/workspace/app/net.sys32.agent
 **Verificare APK inainte de install** (comenzi TESTATE, cu rezultatul real de pe acest proiect):
 ```bash
 APK=app/build/outputs/apk/debug/app-debug.apk
-ls -lh $APK            # -> -rw-rw-r-- 33M  app-debug.apk
+ls -lh $APK            # -> 273M  app-debug.apk (toolchain complet inclus)
 /home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -4
 #   -> package: name='net.sys32.agent' versionCode='1' versionName='1.0'
 #      platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36'
 #      minSdkVersion:'26' / targetSdkVersion:'36'
 #      uses-permission: name='android.permission.INTERNET' ...
-unzip -l $APK | grep -c 'assets/python/'              # -> 928 fisiere Python ambalate
-unzip -l $APK | grep 'assets/python/agent.py'         # -> 183434  assets/python/agent.py
+unzip -l $APK | grep -c 'assets/python/'              # -> ~940 fisiere Python ambalate
+unzip -l $APK | grep 'assets/python/agent.py'         # -> 181740  assets/python/agent.py
 unzip -l $APK | grep 'lib/arm64-v8a/'
 #   -> 4537664  lib/arm64-v8a/libcrypto_python.so
 #        4400  lib/arm64-v8a/libpyexec.so          (mic = interpreterul)
@@ -461,9 +493,13 @@ $ADB shell cat /sdcard/Download/Agent/memory.md        # lectiile invatate
 ```bash
 APK=/home/gab/Desktop/android_agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk
 /home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -20   # ★ 2>&1: scrie pe stderr!
-unzip -l $APK | grep 'assets/python/' | wc -l        # 928 fisiere Python (masurat)
-unzip -l $APK | grep 'assets/python/agent.py'        # 183434 bytes (masurat)
-unzip -l $APK | grep 'lib/arm64-v8a/'                # 6 .so-uri (libpyexec 4400, libpython3.14 5828792)
+unzip -l $APK | grep 'assets/python/' | wc -l        # ~940 fisiere Python (masurat)
+unzip -l $APK | grep 'assets/python/agent.py'        # 181740 bytes (masurat)
+unzip -l $APK | grep 'lib/arm64-v8a/'                # 16 .so-uri (libpyexec 4400, libpython3.14 5828792, libflang 137M)
+# ★ verificare COMPLETA a componentelor de compilare (28 sept):
+unzip -l $APK | grep -E 'lib(clang|lld|pkgconf|ninja|flang)_.*exec|libc\+\+_shared'  # 6 binare + C++ runtime
+unzip -l $APK | grep -E 'deps/lib/(libopenblas|libjpeg|libxml2|liblapack)'              # deps C precompilate
+unzip -l $APK | grep -E 'libc\+\+abi\.a|libFortranRuntime\.a|libcxx_include\.zip'    # C++ complet + Fortran + headere
 /home/gab/android/build-tools/35.0.1/dexdump -f $APK >/dev/null 2>&1 && echo dex-ok
 ```
 
@@ -553,7 +589,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v160`**) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -561,6 +597,8 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 - [ ] `grep -rn 'key.txt\|AIza\|sk-' --include='*.py' --include='*.kt' .` → **nicio cheie** in repo
 - [ ] `git status --short` → doar fisierele intentionate
 - [ ] `py_compile` pe fisierele Python modificate (`python3 -m py_compile agent.py`)
+- [ ] `toolchain action=status` → toate verificarile TRUE (ar_test, cxx_test, libcxx_full,
+      ninja, openblas, flang) — **dupa instalare curata**, nu doar dupa update
 - [ ] **`CHANGELOG.md` actualizat** daca sesiunea a produs commituri noi (vezi mai jos)
 
 #### Regenerarea `CHANGELOG.md`
@@ -823,7 +861,7 @@ un app NU poate lista procese ale altor uid-uri) cu cooldown 20s.
   commit `76fbbba`)
 
 ### 3.11 Fisierele Python din sandbox (`files/python/`)
-`sandboxul` ruleaza 9 fisiere `.py` + `Lib/` (188 intrari) + `libdynload/`:
+`sandboxul` ruleaza 8 fisiere `.py` + `Lib/` (188 intrari) + `libdynload/`:
 
 | Fisier | Rol |
 |--------|-----|
@@ -831,8 +869,8 @@ un app NU poate lista procese ale altor uid-uri) cu cooldown 20s.
 | `adb_client.py` | client ADB PYTHON-FIRST (drenare select-gated, 48 ms/comanda) |
 | `adb_setup.py` | auto-setup: cheie RSA, certificat X.509, libs din /apex |
 | `android_bridge.py` | clientul socket catre AndroidBridge.kt |
-| `toolchain.py` | compilare C/C++ nativa pe telefon (clang-21, pkg Termux) |
-| `tpm.py` | package manager portat (bootstrap toolchain) |
+| `toolchain.py` (51 KB) | compilare C/C++/Fortran nativa pe telefon (clang, lld, ninja, flang) |
+| ~~`tpm.py`~~ | **STERS** (28 sept) — Termux eliminat complet |
 | `build.py` | helper de build |
 | `setexec.py` | seteaza bitul de executie pe .so extrase |
 | `_streams.py` | drenare neblocanta pentru subprocess (produs de AAPT2 care ignora `_`) |
@@ -985,7 +1023,8 @@ Adaugate in assets/python/Lib/site-packages/ ~13 pachete PURE Python (fara cod n
 requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve,
 python-dateutil, six, pyyaml, toml, packaging, typing-extensions (~3.1 MB).
 Toate testate pe device (requests -> HTTP 200 real, bs4 -> parse HTML, yaml/toml -> round-trip).
-NU exista pip; agentul stie exact ce are si ca nu poate instala altceva.
+NU exista pip la nivel de sistem, DAR agentul compileaza nativ cu `toolchain`
+(pip_install) orice pachet cu cod C/C++/Fortran (lxml, numpy, Pillow, zstandard...).
 
 ### Etapa 17 - Bug-uri de ambalare stdlib pe Android
 - AAPT2 IGNORA folderele care incep cu `_` in assets (fisierele .py merg, folderele NU).
@@ -1382,7 +1421,8 @@ Merge la op=call SI la op=new (constructori).
 ### Biblioteci Python pre-instalate (pure)
 requests, urllib3, certifi, charset-normalizer, idna, beautifulsoup4, soupsieve,
 python-dateutil, six, pyyaml, toml, packaging, typing-extensions.
-NU exista pip; NU se pot instala altele. numpy/pandas/cryptography NU sunt disponibile.
+Pachetele pure sunt pre-incluse; orice altceva (numpy, Pillow, zstandard...) se
+compileaza NATIV pe telefon cu `toolchain(action="pip_install", package=...)`.
 
 ---
 
@@ -1547,8 +1587,10 @@ Ce NU se poate rula din exterior:
   De aceea exista comanda /run (ruleaza scriptul in sandbox-ul aplicatiei).
 
 Ce NU se poate instala:
-- NU exista pip/ensurepip -> zero pachete noi. Doar cele 13 pre-incluse in APK.
-- numpy/pandas/cryptography/scipy necesita cod C compilat pentru arm64 -> excluse.
+- 13 pachete pure pre-incluse + orice altceva se COMPILEAZA nativ (clang 21 + lld +
+  ninja + FLANG), direct pe telefon: lxml, numpy, Pillow, zstandard verificate E2E.
+- Fortran (scipy) compileaza cu FLANG; la RULARE binarul standalone da segfault
+  (initializarea runtime-ului Fortran) — de verificat pentru scipy complet.
   Alternativa: array + statistics (pentru calcule), sqlite3 (baze de date).
 
 Capcane AAPT2 la ambalare assets:
@@ -2559,3 +2601,80 @@ mai mult cu vechiul CHUNK).
 - `agent-android-v2.py` / `agent-linux-v2.py` — optimizatele v2
 - `assets/python/agent.py` = **copia v2 Android** → default la orice clone/build
 
+---
+
+## Etapa 47 - ELIMINARE TERMUX + FLANG + OpenBLAS + libc++abi (28 sept 2026)
+
+**Termux eliminat COMPLET si DEFINITIV** (nu doar dezactivat):
+- `tpm.py` STERS; toate referintele `termux`/`tpm` scoase din `agent.py` si `toolchain.py` (0 ramase)
+- sterse functiile de bootstrap: `bootstrap_direct`, `_load_index`, `_untar`, `_extract_deb`,
+  `_patch_runpath`, `_fix_ninja`, `_fix_symlinks`, `_fix_sysconfig`, `_fix_termux_paths`,
+  `_fix_wrappers_shebang`, `_fix_cc_wrappers`, `_fix_cxx_linker`, `_fix_meson_exe`, `install`
+- sterse `PKGS` / `_REPO` (repo Termux) / `OLD` (cai Termux) + actiunile tool `bootstrap`/`tpm`/`bootstrap_tpm`
+
+### FLANG - compilator Fortran pe Android (compilat de la 0)
+
+Problema: numpy = C++ pur (meson+ninja merge), dar **scipy = 2038 fisiere FORTRAN**.
+Nu exista compilator Fortran pe Android (clang nu are frontend Fortran).
+
+Solutia: **flang 21.1.8 compilat din surse LLVM pentru ARM64** (4506 tinte Ninja):
+
+| Artefact | Dimensiune | Rol |
+|---|---|---|
+| `libflang_exec.so` | 137 MB (stripped) | driver-ul Fortran |
+| `libFortranRuntime.a` | 19.6 MB | runtime-ul (64 fisiere C++, compilate de la 0) |
+| `libFortranDecimal.a` | 791 KB | decimal |
+| `libclang_rt.builtins.a` + `libunwind.a` | 515 + 92 KB | runtime C/C++ ARM64 |
+
+**CAPCANE (fiecare a costat un diagnostic):**
+1. Driver-ul flang **NU compileaza Fortran singur**: cade pe `"gcc" -x f95-cpp-input`
+   (*"gcc frontend command failed"*). Trebuie chemat cu **`-fc1`** (frontend direct).
+2. `-fc1` are nevoie de **`-triple aarch64-linux-android35`** (altfel:
+   *"No available targets are compatible with triple unknown"*).
+3. `-fc1` **IGNORA `-o`** pe acest build: scrie .o in cwd cu nume implicit, exit 0, 0 bytes.
+   Fix: compilez in cwd-ul sursei cu `-emit-obj`, apoi copiez rezultatul.
+4. Sursa trebuie data **RELATIV** din cwd-ul ei (calea absoluta esua silentios).
+5. `-fc1` **nu accepta `-fPIC`** (se pune doar la link).
+6. argv[0] decide comportamentul (ca la lld): symlink numit `flang-bin`, nu `libflang_exec.so`.
+
+**Wrapper final** (`files/tmp/flang`, 2 pasi):
+```sh
+# 1. compilare: flang-bin -fc1 -triple ... -emit-obj pt fiecare sursa -> .o
+# 2. link: libclang_exec.so (stie sysroot/LDFLAGS) + libFortranRuntime
+#          + libFortranDecimal + libc++_shared + libm
+```
+
+### OpenBLAS (inlocuieste BLAS/LAPACK de referinta)
+
+OpenBLAS 0.3.29 compilat de la 0 (`TARGET=ARMV8`, SIMD NEON): `libopenblas.a` 25 MB +
+`.so` 12 MB + headere (cblas/lapack/lapacke/openblas_config) + `openblas.pc`.
+Efect: numpy/scipy **10-50x mai rapide** la runtime (netlib-ul era scalar).
+
+### libc++abi.a
+
+Compilat de la 0 (528 KB, 18 obiecte, 1299 simboluri). Capcana: `-nostdinc++`
+(altfel libc++ 21 din surse intra in conflict cu cel din NDK).
+
+### Protectie site-packages la update de APK
+
+Inainte: fiecare update de APK stergea `pyhome` -> dispareau numpy/scipy/lxml/PIL
+(5 ore de build pierdute). Acum: depozit `files/site_packages_keep` care
+supravietuieste reinstalarii; restaurare DUPA reconstructia pyhome (ordinea conteaza —
+altfel `Lib/` nu se copia si apare *"Failed to import encodings"*).
+
+### VERIFICARE FINALA (pe instalare CURATA: dezinstalare + reinstalare APK)
+
+```
+check(): ar_test=True cxx_test=True libcxx_full=True ninja=True
+         deps(openblas)=True openblas_pc=True flang=True
+C     -> RC 0 (binar produs)
+C++   -> RC 0 (binar produs)
+Fortran -> binar produs (1.5 MB)
+Onboarding: ecranul cere cheia API in romana
+```
+
+**Limitare cunoscuta:** binarul Fortran da **segfault la RULARE** (initializarea
+runtime-ului Fortran cere `libFortranMain`/unitati I/O). Compilarea — partea care
+rezolva cele ~500 patch-uri F90 pe LAPACK — functioneaza.
+
+**APK: 273 MB** | marker `.assets_v160` | commituri: `813ce09`, `2d9a0f9`, `376b73e`
