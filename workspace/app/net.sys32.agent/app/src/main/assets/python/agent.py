@@ -842,7 +842,7 @@ def _live(i):
     return _clamp(st)
 
 def _clamp(s):
-    """Termux/Android: a line longer than the terminal wraps onto a second row, and a LIVE
+    """Android: a line longer than the terminal wraps onto a second row, and a LIVE
     line redrawn with \r then smears the scrollback when the operator scrolls up. So the live
     line is HARD-CLAMPED to (width-1) visible columns. Control sequences (\33[...m colours)
     are skipped while counting, so the colour codes never get cut in the middle."""
@@ -1028,7 +1028,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
-   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no Termux, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for lxml, numpy, pillow, cryptography etc.; this is the normal way to add libraries); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP AND NO TERMUX: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile","enum":["status","pip_install","compile","env","preflight","profile","doctor","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. lxml, numpy, pillow, cryptography)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for lxml, numpy, pillow, cryptography etc.; this is the normal way to add libraries); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile","enum":["status","pip_install","compile","env","preflight","profile","doctor","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. lxml, numpy, pillow, cryptography)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"help","description":"Return the FULL guide for an advanced Android topic, on demand - the detailed reflection/objects reference is kept OUT of the fixed prompt to save tokens and delivered here instead. Topics: \"reflection\" (eval ops: services/info/call/new/get/set/objs, targets svc:/class:/obj:/ctx/app, how to pass object refs), \"objects\" (proxy vs subclass for callbacks, await/events, getSystemService, Executor), \"privileged\" (capture/vpn/guard detail), \"all\" (everything). Call it the moment the native shortcuts are not enough.","parameters":{"type":"object","properties":{"topic":{"type":"string","description":"reflection | objects | privileged | all"}},"required":["topic"]}}}]
 
@@ -1094,7 +1094,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, tpm for CLI binaries, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
+ " MISSION RULES: (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1924,7 +1924,7 @@ def run_toolchain_tool(a):
     action = (a.get("action") or "status").strip()
     here = os.path.dirname(os.path.abspath(__file__))
     tc = os.path.join(here, "toolchain.py")
-    tpm = os.path.join(here, "tpm.py")
+
     # ★ FIX: pyhome traieste in filesDir (stocarea privata), NU in AGENT_HOME (sdcard).
     # Vechiul cod lua AGENT_HOME -> pip_install cauta zip-urile in /storage/... si esua.
     F = "/data/data/net.sys32.agent/files"
@@ -1985,7 +1985,7 @@ def run_toolchain_tool(a):
         # daca comanda e [python, toolchain.py, actiune, ...] o rulam inline
         try:
             _act0 = cmd[2] if len(cmd) > 2 else ""
-            _NOINLINE = ("bootstrap_direct", "install", "bootstrap", "bootstrap_tpm")
+            _NOINLINE = ("install",)
             if (len(cmd) >= 2 and str(cmd[0]).endswith(("python3", "python", "libpyexec.so"))
                     and os.path.basename(str(cmd[1])) == "toolchain.py"
                     and _act0 not in _NOINLINE):
@@ -2011,15 +2011,15 @@ def run_toolchain_tool(a):
                             print('export %s="%s"' % (_k, _v))
                     elif _act == "env-file":
                         _mod._write_env_file(); print("fisier: %s/env.sh" % _mod.ROOT)
-                    elif _act == "bootstrap_direct":
-                        _mod.bootstrap_direct()
-                    elif _act == "install_tpm":
+
+
+
                         _mod.install()
                     elif _act == "fix":
                         for _fn in ("_prepare_dirs", "_patch_runpath", "_fix_ninja",
                                     "_fix_cc_wrappers", "_fix_symlinks", "_fix_wrappers_shebang",
                                     "_fix_sysconfig", "_fix_ca_bundle", "_fix_libcxx_needed",
-                                    "_fix_cxx_linker", "_fix_termux_paths", "_write_env_file"):
+                                    "_write_env_file"):
                             try: getattr(_mod, _fn)()
                             except Exception: pass
                         print(json.dumps(_mod.preflight(), indent=2))
@@ -2051,80 +2051,80 @@ def run_toolchain_tool(a):
         # R3/R4b: flaguri gata facute (cmake/cflags/ldflags) - nu le descoperi iar
         return _run([sys.executable, tc, "profile", (a.get("package") or "cmake")], 60)
     if action == "fix":
-        # re-aplica toate fixurile (dupa ce s-au reinstalat pachete Termux)
+        # re-aplica fixurile de mediu (launchers, python3.pc, CA, env.sh)
         return _run([sys.executable, tc, "fix"], 1800)
     if action == "env-file":
         return _run([sys.executable, tc, "env-file"], 120)
-    if action == "bootstrap":
-        # ★ RULEAZA PE THREAD in procesul app-ului (NU subproces, NU shell):
-        # shell-ul (uid 2000) NU poate citi /data/data/net.sys32.agent/ (permisiuni),
-        # deci un python detasat prin shell moare cu "libpython3.14.so not found"
-        # sau Permission denied. In schimb, in procesul app-ului avem acces deplin.
-        # Thread = nu blocheaza UI-ul, iar progresul merge in log pe disc.
-        _log = os.path.join(BG_LOG, "toolchain_bootstrap_%s.log" % time.strftime("%Y%m%d-%H%M%S"))
-        try: os.makedirs(BG_LOG, exist_ok=True)
-        except Exception: pass
-        _jid = os.path.basename(_log).replace(".log", "")
-        # inregistrez jobul in registrul bg ca sa apara la bg action=status
-        try:
-            _reg = _bg_load()
-            _reg[_jid] = {"pid": os.getpid(), "name": "toolchain_bootstrap", "cmd": "toolchain bootstrap",
-                          "log": _log, "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-                          "ts": time.time(), "status": "running"}
-            _bg_save(_reg)
-        except Exception: pass
 
-        def _do_bootstrap(_logf=_log, _jid=_jid):
-            import importlib.util as _ilu3, traceback as _tb
-            try:
-                with open(_logf, "w", encoding="utf-8", buffering=1) as _lf:
-                    _lf.write("[toolchain] bootstrap pornit %s\n" % time.strftime("%H:%M:%S"))
-                    _spec3 = _ilu3.spec_from_file_location("_tc_boot", tc)
-                    _m3 = _ilu3.module_from_spec(_spec3)
-                    _spec3.loader.exec_module(_m3)
-                    import io as _io3, contextlib as _cl3
-                    _orig_print = getattr(_m3, "print", None)
-                    def _log_print(*a, **kw):
-                        try:
-                            _lf.write(" ".join(str(x) for x in a) + "\n"); _lf.flush()
-                        except Exception: pass
-                    try: _m3.print = _log_print
-                    except Exception: pass
-                    _m3.bootstrap_direct()
-                    _lf.write("[toolchain] BOOTSTRAP TERMINAT %s\n" % time.strftime("%H:%M:%S"))
-                _r = _bg_load()
-                if _jid in _r: _r[_jid]["status"] = "done"
-                _bg_save(_r)
-            except Exception as _e:
-                try:
-                    with open(_logf, "a", encoding="utf-8") as _lf2:
-                        _lf2.write("\n[toolchain] EROARE: %s\n" % str(_e)[:300])
-                        _lf2.write(_tb.format_exc()[-2000:])
-                except Exception: pass
-                try:
-                    _r = _bg_load()
-                    if _jid in _r: _r[_jid]["status"] = "error"
-                    _bg_save(_r)
-                except Exception: pass
 
-        import threading as _th
-        _t = _th.Thread(target=_do_bootstrap, daemon=True, name="toolchain_bootstrap")
-        _t.start()
-        return ("bootstrap pornit pe THREAD (ruleaza in fundal, agentul rămâne viu)\n"
-                "  log=%s\n"
-                "  urmareste cu: bg action=log job=%s   SAU   cat %s\n"
-                "  cand termina: toolchain action=status"
-                % (_log, _jid, _log))
 
-    if action == "bootstrap_tpm":
-        return _run([sys.executable, tc, "install"], int(a.get("timeout", 3600) or 3600))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     if action == "env":
         return _run([sys.executable, tc, "env"], 30)
-    if action == "tpm":
-        pkg = (a.get("package") or "").strip()
-        if not pkg: return "lipseste 'package'"
-        return _run([sys.executable, tpm, "install", pkg], int(a.get("timeout", 600) or 600))
-    if action == "pip_install":
+
+
+
+
+
         pkg = (a.get("package") or "").strip()
         if not pkg: return "lipseste 'package'"
         # ★ REWRITE (toolchain din APK): rulam pip CA APP (uid 10318), nu prin adbsh:

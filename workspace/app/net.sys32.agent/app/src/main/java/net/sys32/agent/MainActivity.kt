@@ -690,13 +690,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v147")
+        val stamp = File(filesDir, ".assets_v159")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
         val memFile = File(dest, "memory.md")
         val memSaved = if (memFile.exists()) memFile.readText() else null
         if (stamp.exists() && dest.exists()) return
+        // ★ PROTECTIE SITE-PACKAGES (raport nou, sectiunea 4): la update de APK se stergea
+        // pyhome si dispareau pachetele COMPILATE (numpy, scipy, lxml, PIL...) - 5 ore de
+        // munca. Le mutam intr-un depozit persistent inainte de stergere si le punem la loc.
+        val keepDir = File(filesDir, "site_packages_keep")
+        val oldSp = File(filesDir, "pyhome/lib/python3.14/site-packages")
+        if (oldSp.exists()) {
+            try {
+                keepDir.deleteRecursively()
+                keepDir.mkdirs()
+                oldSp.copyRecursively(keepDir, overwrite = true)
+            } catch (_: Exception) {}
+        }
         // la fiecare re-extragere, stergem si pyhome: altfel stdlib-ul copiat o singura data
         // (Lib/ + site-packages/) NU s-ar actualiza cand adaugam biblioteci noi in assets.
         File(filesDir, "pyhome").deleteRecursively()
@@ -716,8 +728,6 @@ class MainActivity : AppCompatActivity() {
         try { File(filesDir, "tmp").mkdirs() } catch (_: Exception) {}
         // punem la loc memoria salvata (daca exista); altfel ramane cea din APK
         if (memSaved != null) memFile.writeText(memSaved)
-        // ★ toolchain nativ (clang, lld, sysroot): AAPT NU pastreaza bitul +x,
-        // deci il extragem separat si il marcam executabil.
         try { extractToolchain() } catch (_: Exception) {}
         stamp.writeText("ok")
     }
@@ -853,6 +863,14 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) {}
                 // ★ sysconfig: inlocuieste caile de laptop (folosite la cross-build) cu cele de pe device
                 try { fixSysconfig(scripts) } catch (_: Exception) {}
+                // ★ RESTAURA site-packages COMPILATE (numpy/scipy/lxml/PIL) pastrate
+                // dintr-o instalare anterioara: un update de APK nu mai pierde 5 ore de build.
+                try {
+                    val keep = File(filesDir, "site_packages_keep")
+                    if (keep.exists() && keep.listFiles()?.isNotEmpty() == true) {
+                        keep.copyRecursively(File(stdlib, "site-packages"), overwrite = true)
+                    }
+                } catch (_: Exception) {}
                 val dynDst = File(stdlib, "lib-dynload")
                 if (!dynDst.exists() || dynDst.list()?.isEmpty() != false) {
                     dynDst.mkdirs()
