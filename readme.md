@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v184`** |
+| Marker assets activ | **`.assets_v187`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -2805,3 +2805,44 @@ Doua regresii prinse si reparate in timpul fazei (ambele in PLAN_AUTONOMIE.md 8.
 `pip wheel --no-build-isolation` ascunde cauza reala a cerintelor de build lipsa (drumul principal
 a revenit la `pip install`), si doua subcomenzi pip in acelasi proces nu mai vad `--find-links`
 (instalarea din wheelhouse se face intr-un proces nou).
+
+---
+
+## Etapa 51 - CMAKE PE DEVICE (FAZA 1, `.assets_v187`, 29 sept 2026)
+
+**cmake 3.31.6 ruleaza pe telefon si construieste proiecte reale.** Vezi
+`PLAN_AUTONOMIE.md` sectiunea 8.2 pentru toate patch-urile.
+
+- `toolchain action=selftest` -> `"cmake": true` (configure+build proiect C, ~1.2s);
+  proiect de test configure+build+binar RULAT pe device.
+- Binarul (10.7 MB, ARM64, **libc++ static**) e in APK ca `jniLibs/arm64-v8a/libcmake_exec.so`
+  (untrusted_app nu poate executa din filesDir) + `assets/toolchain/cmake/{Modules,Templates}` (11 MB).
+- `toolchain.py` scrie `files/tmp/android.toolchain.cmake` (sysroot + compilatoare + flags,
+  o singura sursa de adevar cu `_cflags`/`_extra`/`_ldflags`), construieste un **NDK minimal**
+  prin symlink-uri si exporta `CMAKE_ROOT`, `CMAKE_TOOLCHAIN_FILE`, `CMAKE_GENERATOR=Ninja`,
+  `CMAKE_ARGS`, `CMAKE_MAKE_PROGRAM`, `CMAKE_PREFIX_PATH` si **`PREFIX`**.
+
+### Capcane noi dovedite pe device (se adauga la lista de mai sus)
+
+11. **`PREFIX` este obligatoriu pentru cmake pe device.** Cand cmake *ruleaza* pe Android,
+    `Modules/CMakeDetermineSystem.cmake` citeste `$ENV{PREFIX}/include/android/api-level.h`
+    ca sa determine API-ul. Fara el: `file failed to open: /include/android/api-level.h`
+    -> "Configuring incomplete", desi compilatorul si sysroot-ul erau corecte.
+    Valoarea corecta: `PREFIX=<TOOLCHAIN>/sysroot/usr`.
+12. **cmake trebuie sa-si stie propriul binar (`CMAKE_COMMAND`).** Regulile generate pentru
+    Ninja contin `cmake -E rm -f ...`; daca radacina vine din mediu, cmake nu-si mai deduce
+    calea si comanda incepe cu `""` -> `/bin/sh: : can't execute: Is a directory`.
+13. **Cache-ul cmake este lipicios.** Un `CMakeCache.txt` scris de un configure esuat
+    memoreaza "compiler broken" si face ca TOATE configure-urile urmatoare sa esueze la fel,
+    chiar daca intre timp ai reparat mediul. Sterge directorul de build inainte de re-test.
+14. **Flags-urile compilatorului trebuie sa ajunga in `CMAKE_C_FLAGS_INIT`/`CMAKE_CXX_FLAGS_INIT`,
+    nu doar in `CC`/`CXX`.** Testele de compilator ale cmake folosesc doar variabilele CMake;
+    fara `-resource-dir` linkerul cauta `libclang_rt.builtins.a` in nativeLibraryDir si
+    raporteaza "compiler broken".
+15. **libc++_shared.so de pe device nu e suficient pentru cmake**: copia din APK are 1.4 MB
+    si NU exporta simbolurile `std::filesystem` (`_ZNKSt6__ndk14__fs10filesystem4path...`)
+    -> linkerul pica. Binarul de cmake e linkat cu **libc++ static**.
+16. **cmake detecteaza singur Android** din triple-ul folosit de clang
+    (`aarch64-linux-android35`) si atunci cere un NDK cu layout standard. Solutia pe device:
+    NDK minimal din symlink-uri (`<TOOLCHAIN>/ndk/toolchains/llvm/prebuilt/linux-x86_64/{bin,sysroot}`)
+    - `_ensure_fake_ndk()` in `toolchain.py`.

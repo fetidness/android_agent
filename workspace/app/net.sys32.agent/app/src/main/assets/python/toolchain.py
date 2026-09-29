@@ -955,6 +955,25 @@ def _ensure_launchers():
                 made.append(name)
             except Exception:
                 pass
+    # ★ cmake (FAZA 1): binar ARM64 cross-compilat de noi -> nativeLibraryDir ca
+    # libcmake_exec.so + symlink cu numele real in files/tmp (scikit-build-core il cauta
+    # dupa nume in PATH).
+    if nat and os.path.exists(nat + "/libcmake_exec.so"):
+        p = F + "/tmp/cmake"
+        try:
+            _st = False
+            if os.path.islink(p):
+                try:
+                    _st = not os.path.exists(os.readlink(p))
+                except Exception:
+                    _st = True
+            if os.path.lexists(p) and (not os.path.islink(p) or _st):
+                os.remove(p)
+            if not os.path.lexists(p):
+                os.symlink(nat + "/libcmake_exec.so", p)
+            made.append("cmake")
+        except Exception:
+            pass
     # ★ clang/clang++ (task greenlet, 28 sept): in filesDir untrusted_app NU poate
     # executa -> symlink in files/tmp catre libclang_exec.so, cu REPARARE cand tinta
     # e moarta (hash nou in /data/app la fiecare reinstalare). Numele 'clang++'
@@ -1114,6 +1133,102 @@ def _ensure_pipconf():
         except Exception:
             pass
     return conf
+
+
+def _ensure_fake_ndk():
+    """★ FAZA 1: cmake detecteaza automat platforma Android din triple-ul compilatorului
+    (aarch64-linux-android35) si atunci CEREE un NDK cu layout standard - altfel:
+    "file failed to open: /include/android/api-level.h" si "compiler broken".
+    Nu avem NDK pe device, dar avem exact piesele (clang + sysroot) -> construim un
+    NDK MINIMAL prin symlink-uri in files/toolchain/ndk. cmake il accepta si foloseste
+    compilatorul + sysroot-ul nostru.
+    """
+    base = ROOT + "/ndk/toolchains/llvm/prebuilt/linux-x86_64"
+    for d in (base + "/bin", base + "/sysroot", ROOT + "/ndk/build/cmake/hooks/pre",
+              ROOT + "/ndk/build/cmake/hooks/post"):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+    # sysroot-ul nostru real
+    try:
+        _sr = base + "/sysroot"
+        if os.path.islink(_sr) and not os.path.exists(_sr):
+            os.remove(_sr)
+        if not os.path.lexists(_sr):
+            os.symlink(ROOT + "/sysroot", _sr)
+    except Exception:
+        pass
+    # binarele cu numele cerute de cmake (clang/clang++/ld.lld/ar/ranlib/strip/nm)
+    _map = {"clang": "clang", "clang++": "clang++", "ld.lld": "ld.lld", "ld": "ld",
+            "ar": "ar", "ranlib": "ranlib", "strip": "strip", "nm": "nm"}
+    for name in _map:
+        src = F + "/tmp/" + name
+        dst = base + "/bin/" + name
+        try:
+            if not os.path.exists(src):
+                continue
+            if os.path.islink(dst) and not os.path.exists(dst):
+                os.remove(dst)
+            if not os.path.lexists(dst):
+                os.symlink(src, dst)
+        except Exception:
+            pass
+    # "source.properties" - cmake/NDK il citesc pentru versiune (optional, dar ieftin)
+    try:
+        _sp = ROOT + "/ndk/source.properties"
+        if not os.path.exists(_sp):
+            open(_sp, "w").write("Pkg.Desc = Android NDK (minimal, generat de net.sys32.agent)\n"
+                                 "Pkg.Revision = 27.1.12297006\n")
+    except Exception:
+        pass
+    return ROOT + "/ndk"
+
+
+def _write_cmake_toolchain(_cflags, _ldflags):
+    """★ FAZA 1: scrie toolchain-ul CMake pentru DEVICE (o singura sursa de adevar:
+    acelasi _cflags/_ldflags ca build-urile pip). cmake il citeste din variabila de
+    mediu CMAKE_TOOLCHAIN_FILE (vezi cmake.cxx: GetEnv("CMAKE_TOOLCHAIN_FILE")).
+    Fara el: cmake nu stie sysroot-ul -> "file failed to open: /include/android/api-level.h"."""
+    _cf = _cflags.replace("\\", "/")
+    _lf = _ldflags.replace("\\", "/")
+    _txt = """# GENERAT AUTOMAT de toolchain.py (net.sys32.agent) - nu edita manual.
+# Toolchain CMake pentru cmake care ruleaza PE TELEFON (Android/aarch64, fara NDK pe device).
+# ★ cmake detecteaza singur Android din triple-ul clang-ului, dar apoi cere un NDK cu
+# layout standard (altfel: "file failed to open: /include/android/api-level.h").
+# `_ensure_fake_ndk()` construieste layout-ul minim prin symlink-uri (clang + sysroot).
+set(CMAKE_SYSTEM_NAME Android)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+set(CMAKE_SYSTEM_VERSION 35)
+set(CMAKE_ANDROID_API 35)
+set(CMAKE_ANDROID_ARCH_ABI arm64-v8a)
+set(CMAKE_ANDROID_NDK "%(ndk)s")
+set(CMAKE_ANDROID_STL_TYPE c++_shared)
+set(CMAKE_SYSROOT "%(ndk)s/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
+set(CMAKE_C_COMPILER "%(f)s/tmp/clang")
+set(CMAKE_CXX_COMPILER "%(f)s/tmp/clang++")
+set(CMAKE_C_FLAGS_INIT "%(cf)s")
+set(CMAKE_CXX_FLAGS_INIT "%(cf)s")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "%(lf)s")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "%(lf)s")
+set(CMAKE_MODULE_LINKER_FLAGS_INIT "%(lf)s")
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_FIND_ROOT_PATH "%(root)s/sysroot" "%(deps)s")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+set(CMAKE_PREFIX_PATH "%(deps)s")
+""" % {"root": ROOT, "f": F, "deps": DEPS, "cf": _cf, "lf": _lf,
+       "ndk": _ensure_fake_ndk()}
+    _ndk = _ensure_fake_ndk()
+    _p = F + "/tmp/android.toolchain.cmake"
+    try:
+        if not os.path.exists(_p) or open(_p).read() != _txt:
+            open(_p, "w").write(_txt)
+    except Exception:
+        pass
+    return _p
 
 
 def env_vars():
@@ -1303,6 +1418,11 @@ def env_vars():
                 + " -Wl,--no-undefined"
                 # ★ sect. 5: grpcio cere -latomic explicit (libatomic.a = builtin clang).
                 + (" -latomic" if _atom else ""))
+    # ★ FAZA 1: in toolchain-ul CMake intra si _extra (-resource-dir + -B): fara el
+    # cmake isi face testele de compilator cu clang FARA resource-dir -> linkerul cauta
+    # libclang_rt.builtins.a in nativeLibraryDir si esueaza ("cannot open ...libclang_rt
+    # .builtins.a"), deci cmake raporta "compiler broken".
+    _tc_file = _write_cmake_toolchain(_cflags + _extra, _ldflags)
     return {
         "PATH": _binpath,
         "TC_ROOT": ROOT,
@@ -1328,6 +1448,25 @@ def env_vars():
         "CXXFLAGS": _cflags,
         "LDFLAGS": _ldflags,
         "PKG_CONFIG_PATH": DEPS + "/lib/pkgconfig",
+        # ★ FAZA 1: cmake are nevoie de CMAKE_ROOT (Modules/ + share/) si de un generator.
+        # Binarul nostru se numeste libcmake_exec.so, deci cmake NU-si poate deduce
+        # radacina -> o dam explicit. Generatorul = ninja (deja prezent).
+        "CMAKE_ROOT": ROOT + "/cmake",
+        "CMAKE_MAKE_PROGRAM": F + "/tmp/ninja",
+        # ★ FAZA 1: toolchain-ul CMake pentru device (sysroot+compilatoare+flags) si
+        # generatorul. CMAKE_TOOLCHAIN_FILE e citit de cmake din mediu; CMAKE_ARGS
+        # e folosit de scikit-build-core (care porneste cmake singur).
+        "CMAKE_TOOLCHAIN_FILE": _tc_file,
+        "CMAKE_GENERATOR": "Ninja",
+        "CMAKE_ARGS": ("-DCMAKE_TOOLCHAIN_FILE=" + _tc_file
+                       + " -DCMAKE_MAKE_PROGRAM=" + F + "/tmp/ninja"),
+        "CMAKE_PREFIX_PATH": DEPS,
+        # ★ FAZA 1 (descoperire cheie): CMake recunoaste ca RULEAZA pe Android (host)
+        # si atunci citeste "$ENV{PREFIX}/include/android/api-level.h" ca sa afle API-ul
+        # (Modules/CMakeDetermineSystem.cmake). Fara PREFIX: "file failed to open:
+        # /include/android/api-level.h" -> configure esua. PREFIX = prefixul de tip
+        # Termux, adica radacina sysroot-ului nostru.
+        "PREFIX": ROOT + "/sysroot/usr",
         # ★ variabilele explicite: setup.py le foloseste prin subprocess care poate
         # sa nu mosteneasca PATH-ul -> "Permission denied"/"not found" la pkg-config.
         "PKG_CONFIG": PKG_EXEC,
@@ -1551,8 +1690,42 @@ def selftest():
         except Exception:
             r[key] = False
 
-    # 7. ce NU avem (limite cunoscute) + wheelhouse
-    r["cmake"] = bool(_which("cmake"))
+    # 7. cmake: test REAL (configure + build al unui proiect minim C, prin toolchain-ul
+    # de device generat de `_write_cmake_toolchain`). Dovada ca pachetele care cer CMake
+    # (scikit-build-core: pyarrow/duckdb) au ce le trebuie.
+    cm = _which("cmake")
+    r["cmake"] = bool(cm)
+    if cm:
+        C = T + "/cmproj"
+        try:
+            # ★ cache-ul cmake e lipicios: daca un configure a esuat o data (ex. inainte
+            # de fix-ul cu PREFIX/NDK fals), CMakeCache.txt pastreaza "compiler broken"
+            # si TOATE configure-urile urmatoare esueaza la fel -> stergem directorul.
+            import shutil as _sh
+            _sh.rmtree(C + "/b", ignore_errors=True)
+            os.makedirs(C, exist_ok=True)
+            open(C + "/CMakeLists.txt", "w").write(
+                "cmake_minimum_required(VERSION 3.25)\nproject(st C)\n"
+                "add_library(st STATIC s.c)\n")
+            open(C + "/s.c", "w").write("int st_add(int a,int b){return a+b;}\n")
+            _env = dict(os.environ)
+            _env.update(env_vars())
+            _env["CMAKE_MAKE_PROGRAM"] = F + "/tmp/ninja"
+            t0 = time.time()
+            _p1 = subprocess.run([cm, "-G", "Ninja", "-S", C, "-B", C + "/b"], env=_env,
+                                 capture_output=True, text=True, timeout=300,
+                                 stdin=subprocess.DEVNULL)
+            _p2 = subprocess.run([cm, "--build", C + "/b"], env=_env, capture_output=True,
+                                 text=True, timeout=300, stdin=subprocess.DEVNULL)
+            r["cmake"] = bool(_p1.returncode == 0 and _p2.returncode == 0)
+            tm["cmake_s"] = round(time.time() - t0, 2)
+            if not r["cmake"]:
+                r["cmake_error"] = ((_p1.stdout or "") + (_p1.stderr or "")
+                                    + (_p2.stdout or "") + (_p2.stderr or ""))[-300:]
+        except Exception as _ex:
+            r["cmake"] = False
+            r["cmake_error"] = repr(_ex)[:200]
+    # 8. ce NU avem (limite cunoscute) + wheelhouse
     r["rust"] = bool(_which("cargo") or _which("rustc"))
     r["perl"] = bool(_which("perl"))
     wd = _wheels_dir()

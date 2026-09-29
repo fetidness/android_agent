@@ -299,7 +299,7 @@ simulat), deci testeaza codul real fara sa astepte modelul.
 | Faza | Status | Data | Dovada / note |
 |---|---|---|---|
 | 0 - Fundatia (self-test, taxonomie, cache wheels, wheel-first) | FACUT + VERIFICAT | 29 sept | vezi sectiunea 8.1 |
-| 1 - cmake | NEINCEPUT | - | - |
+| 1 - cmake | FACUT + VERIFICAT | 29 sept | vezi sectiunea 8.2 |
 | 2 - Rust | NEINCEPUT | - | - |
 | 3 - perl / autotools | NEINCEPUT | - | - |
 | 4 - Tier 2 (sqlite3, freetype, HDF5, libzmq) | NEINCEPUT | - | - |
@@ -370,3 +370,57 @@ Observatie pentru FAZA 6: la intrebari de tip "pot instala X?", agentul prefera 
 - Split ABI (arm64-only, -18 MB) si R8/ProGuard pe release (cand codul e stabil).
 - Test automat de regresie in CI (acelasi script de la FAZA 6, rulat pe laptop + device).
 - Encodare/criptare `agent.py` in assets daca se doreste protectia sursei (PyArmor / assets criptate).
+
+### 8.2 FAZA 1 - cmake pe device (29 sept 2026, `.assets_v187`)
+
+**Rezultat: cmake 3.31.6 ruleaza PE TELEFON si construieste proiecte reale.**
+`toolchain action=selftest` -> `"cmake": true` (configure+build proiect C, 1.2s);
+proiect de test: configure 0.9s + build + binarul RULAT pe device (`HELLO_FROM_CMAKE_ON_DEVICE`).
+
+Cum a fost obtinut:
+1. **Cross-compilat cmake 3.31.6** pentru aarch64-linux-android pe laptop (NDK 27, API 35),
+   cu `libc++ STATIC` (fara dependenta de libc++_shared de pe device - copia din APK/device
+   are 1.4 MB si NU exporta simbolurile `std::filesystem`, care rupeau link-ul).
+   Patch-uri necesare in sursele cmake (toate in `Utilities/*`):
+   - `cmlibarchive/libarchive/android_lf.h` - header gol (libarchive il include, dar nu
+     foloseste nimic din el; NDK-ul nu il are).
+   - `cmlibuv/src/unix/core.c` - `CPU_SETSIZE` (bionic nu il are) + `uv_available_parallelism`
+     prin `sysconf` in loc de `sched_getaffinity`/`CPU_COUNT`.
+   - `cmlibuv/src/unix/pipe.c` - `pipe2` lipseste in NDK -> `pipe()` + fcntl.
+   - `cmlibuv/src/unix/process.c` - blocul `cpumask` (cpu_set_t/CPU_ZERO/CPU_SET) dezactivat.
+   - `cmlibuv/src/unix/internal.h` - workaround-ul istoric `uv__pthread_sigmask` dezactivat
+     (definitia lui nu se compileaza in libuv-ul bundled -> simbol nedefinit la link).
+   - `cmlibuv/CMakeLists.txt` - sursele de platforma Linux (epoll/linux-core/inotify/procfs)
+     se adaugau DOAR pentru `CMAKE_SYSTEM_NAME=Linux`; pe Android lipseau ->
+     `uv__platform_invalidate_fd`/`uv__hrtime` nedefinite.
+   - `Source/cmAffinity.cxx` - `pthread_getaffinity_np` lipseste pe bionic -> `sysconf`.
+   - `Source/cmSystemTools.cxx` - `FindCMakeResources`: radacina (`CMAKE_ROOT`) si
+     `CMAKE_COMMAND` vin din variabile de mediu (pe device nu exista layout de instalare).
+2. **In APK**: binarul (10.7 MB) ca `jniLibs/arm64-v8a/libcmake_exec.so` (singurul loc
+   executabil pentru untrusted_app) + `assets/toolchain/cmake/{Modules,Templates}` (11 MB).
+3. **In `toolchain.py`**: `env_vars()` exporta `CMAKE_ROOT`, `CMAKE_MAKE_PROGRAM` (ninja),
+   `CMAKE_TOOLCHAIN_FILE`, `CMAKE_GENERATOR=Ninja`, `CMAKE_ARGS` (pentru scikit-build-core),
+   `CMAKE_PREFIX_PATH` (deps) si **`PREFIX`** - si scrie `files/tmp/android.toolchain.cmake`.
+   `_ensure_fake_ndk()` construieste un NDK MINIMAL prin symlink-uri (cmake detecteaza singur
+   Android din triple-ul clang-ului si altfel cere un NDK complet).
+
+Capcane noi, dovedite pe device (raman ca lectii):
+- **`PREFIX` e obligatoriu**: cand cmake RULEAZA pe Android, `CMakeDetermineSystem.cmake`
+  citeste `$ENV{PREFIX}/include/android/api-level.h` ca sa afle API-ul. Fara `PREFIX`:
+  `file failed to open: /include/android/api-level.h` -> configure esuat (desi compilatorul
+  era perfect). `PREFIX = <ROOT>/sysroot/usr`.
+- **`CMAKE_COMMAND` trebuie stiut de cmake**: la generarea regulilor lui Ninja, cmake isi
+  invoca propriul binar (`cmake -E rm -f ...`). Daca radacina vine din mediu si cmake nu-si
+  poate deduce calea, iese `"" -E rm -f libst.a` -> `/bin/sh: : can't execute: Is a directory`.
+- **cache-ul cmake e lipicios**: un `CMakeCache.txt` scris intr-un configure esuat pastreaza
+  "compiler broken" si TOATE configure-urile urmatoare esueaza identic. Sterge directorul de
+  build inainte de re-verificare.
+- **flags-urile compilatorului trebuie sa fie in toolchain**, nu doar in `CC`/`CXX`:
+  testele de compilator ale cmake primesc doar `CMAKE_C_FLAGS_INIT`; fara `-resource-dir`
+  linkerul cauta `libclang_rt.builtins.a` in nativeLibraryDir -> "compiler broken".
+- fara `CMAKE_SYSTEM_NAME=Android` + NDK fals, cmake tot detecteaza Android din triple si
+  cere NDK; cu `Linux` ca system name, proiectele care se uita la `ANDROID` ar fi nedumerite.
+
+Test real cu pachet de pe PyPI (build CMake + scikit-build-core): `h3` a trecut de
+configure cmake + generarea Cython + startul compilarii cu ninja si a picat pe o eroare
+Cython din sdist (`from .error_system cimport check_for_error`) - adica NU pe toolchain.
