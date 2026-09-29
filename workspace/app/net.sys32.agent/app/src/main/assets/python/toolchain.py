@@ -1646,6 +1646,12 @@ def env_vars():
                        + (" -Dpybind11_DIR=" + _pybind11_dir() if _pybind11_dir() else "")),
         "pybind11_DIR": _pybind11_dir(),
         "CMAKE_PREFIX_PATH": DEPS,
+        # ★ grpcio: NU construi BoringSSL de la zero (29 min pe device!) ci foloseste
+        # OpenSSL-ul static din deps (libssl.a/libcrypto.a + openssl.pc scris cu prefix de
+        # device). Plus compilare paralela (multiprocessing merge acum prin shim).
+        "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL": "1",
+        "GRPC_PYTHON_BUILD_SYSTEM_ZLIB": "1",
+        "GRPC_PYTHON_BUILD_EXT_COMPILER_JOBS": "4",
         # ★ FAZA 1 (descoperire cheie): CMake recunoaste ca RULEAZA pe Android (host)
         # si atunci citeste "$ENV{PREFIX}/include/android/api-level.h" ca sa afle API-ul
         # (Modules/CMakeDetermineSystem.cmake). Fara PREFIX: "file failed to open:
