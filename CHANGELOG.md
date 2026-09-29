@@ -73,6 +73,23 @@ LLVM dev (llvmlite/numba), torch (build >16 GB RAM), Fortran la RULARE (segfault
 
 **Marker: `.assets_v182`**
 
+### ★ FAZA 0 (autonomie) - FUNDATIA: selftest + taxonomie de esec + wheelhouse (`.assets_v184`)
+
+- `toolchain action=selftest`: compileaza+LINKEAZA real C, C++ (STL), extensie `Python.h` si Fortran,
+  verifica uneltele si backends-urile; intoarce `ok[]`/`lipsa[]`/`timpi_s`/`verdict`.
+  Verificat pe device: tot TRUE mai putin `cmake`/`rust`/`perl`; C 0.18s, C++ 2.03s, pyext 0.33s.
+- taxonomie de esec (`rust_lipsa`, `cmake_lipsa`, `perl_lipsa`, `ram_insuficient`,
+  `wheel_inexistent`, `eroare_build`, ...) + linia `[diagnostic] cod=... | lipseste: ... | urmatorul pas: ...`
+  Dovada: `cramjam` -> `rust_lipsa`.
+- wheelhouse `files/wheels` + `--find-links` + install OFFLINE (`--no-index`): `xxhash` salvat si
+  reinstalat fara retea, "instalat din wheelhouse local (fara retea, fara compilare)".
+- regresii prinse si reparate: `pip wheel --no-build-isolation` ascunde cauza cerintelor de build
+  (revenire la `pip install` pentru drumul principal; `kiwisolver` re-verificat exit 0, 38s);
+  doua subcomenzi pip in acelasi proces nu mai vad `--find-links` -> install din wheelhouse in
+  proces nou.
+- instalare curata + task din UI ("Poti instala pyarrow?") -> raspuns corect in 16.8s
+  (`CMakeNotFoundError: Could not find CMake with version >= 3.25`).
+
 
 
 **Termux ELIMINAT COMPLET SI DEFINITIV**

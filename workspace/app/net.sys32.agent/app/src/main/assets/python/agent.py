@@ -1028,7 +1028,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
-   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for lxml, numpy, pillow, cryptography etc.; this is the normal way to add libraries); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile","enum":["status","pip_install","compile","env","preflight","profile","doctor","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. lxml, numpy, pillow, cryptography)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for lxml, numpy, pillow, cryptography etc.; this is the normal way to add libraries); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file"]},"package":{"type":"string","description":"for pip_install: package name (e.g. lxml, numpy, pillow, cryptography)"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"help","description":"Return the FULL guide for an advanced Android topic, on demand - the detailed reflection/objects reference is kept OUT of the fixed prompt to save tokens and delivered here instead. Topics: \"reflection\" (eval ops: services/info/call/new/get/set/objs, targets svc:/class:/obj:/ctx/app, how to pass object refs), \"objects\" (proxy vs subclass for callbacks, await/events, getSystemService, Executor), \"privileged\" (capture/vpn/guard detail), \"all\" (everything). Call it the moment the native shortcuts are not enough.","parameters":{"type":"object","properties":{"topic":{"type":"string","description":"reflection | objects | privileged | all"}},"required":["topic"]}}}]
 
@@ -1094,7 +1094,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
+ " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (STL), a Python.h extension and Fortran ON THIS DEVICE in ~5s and returns `ok`/`lipsa` (what is missing: cmake/rust/perl). Quote its verdict instead of guessing or probing PyPI by hand. (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1389,6 +1389,60 @@ def _clean_ld(value):
         if p and p not in out and "sysroot" not in p:
             out.append(p)
     return ":".join(out)
+
+
+def _harvest_wheels(pkg, cachedir):
+    """★ FAZA 0C: copiaza in wheelhouse (files/wheels) wheel-urile construite/descarcate
+    pentru `pkg`, ca un reinstall sa NU mai compileze (si ca sa mearga si offline)."""
+    try:
+        wd = HOME_DIR + "/wheels"
+        os.makedirs(wd, exist_ok=True)
+        name = str(pkg).split("[")[0].split("==")[0].strip().replace("_", "-").lower()
+        n = 0
+        for dp, dn, fn in os.walk(cachedir or ""):
+            for f in fn:
+                if f.endswith(".whl") and name in f.lower():
+                    dst = os.path.join(wd, f)
+                    if not os.path.exists(dst):
+                        shutil.copy2(os.path.join(dp, f), dst)
+                        n += 1
+        return n
+    except Exception:
+        return 0
+
+
+def _classify_build_fail(txt):
+    """★ FAZA 0B: taxonomie de esec -> (cod, ce lipseste, urmatorul pas).
+
+    Scop: agentul sa spuna OPERATORULUI ce lipseste si ce alternativa are, in loc sa
+    verse un traceback. Codurile acopera limitele cunoscute din PLAN_AUTONOMIE.md.
+    """
+    t = str(txt or "")
+    low = t.lower()
+    if "maturin" in low or ("cargo" in low and "rust" in low):
+        return ("rust_lipsa",
+                "backend-ul de build e scris in Rust (maturin) si nu exista rustc/cargo pentru aarch64-linux-android",
+                "nu exista wheel binar pentru acest pachet; FAZA 2 din PLAN_AUTONOMIE.md deblocheaza Rust")
+    if "cmake" in low and ("not found" in low or "no such file" in low or "executable" in low):
+        return ("cmake_lipsa", "build-ul cere cmake (>= 3.29), care nu e in toolchain",
+                "FAZA 1 din PLAN_AUTONOMIE.md; alternativ cauta o versiune a pachetului cu wheel binar")
+    if "perl" in low and ("not found" in low or "no such file" in low):
+        return ("perl_lipsa", "build-ul cere perl (autoconf/asm BoringSSL)", "FAZA 3 din PLAN_AUTONOMIE.md; vezi si GRPC_BUILD_WITH_BORING_SSL_ASM=0")
+    if "no space left" in low or "enospc" in low:
+        return ("spatiu_insuficient", "spatiu liber insuficient pe device", "elibereaza files/tmp si wheelhouse-ul vechi")
+    if "cannot allocate memory" in low or "memoryerror" in low or "out of memory" in low:
+        return ("ram_insuficient", "RAM insuficient pentru acest build", "reia build-ul prin `bg` cu MAKEFLAGS=-j1 si scoate alte procese")
+    if "no matching distribution" in low or "could not find a version" in low:
+        return ("wheel_inexistent", "nu exista distributie compatibila (wheel sau sdist) pentru android/arm64",
+                "verifica numele/versiunea; unele pachete nu publica sdist")
+    if "missing setup required dependencies" in low:
+        return ("cerinte_build", "lipsesc cerintele de build din pyproject.toml", "se repara automat (prefetch) - vezi linia `pasi:`")
+    if "python.h" in low or "stddef.h" in low or "stdint.h" in low:
+        return ("headers_lipsa", "headerele de compilare nu sunt gasite", "ruleaza toolchain action=fix (rescrit sysconfig/INCLUDEPY)")
+    if "undefined symbol" in low or "cannot locate symbol" in low:
+        return ("link_runtime", "simbol nerezolvat la link/rulare (libc++/libm)", "ruleaza toolchain action=fix")
+    return ("eroare_build", "build-ul a esuat (cauza in liniile de mai sus)",
+            "ruleaza toolchain action=selftest ca sa vezi ce capabilitati are telefonul ACUM")
 
 
 def py_capture(argv, timeout=600):
@@ -2033,6 +2087,9 @@ def run_toolchain_tool(a):
                         print(json.dumps(_mod.check(), indent=2))
                     elif _act == "doctor":
                         print(json.dumps(_mod.doctor(), indent=2))
+                    elif _act == "selftest":
+                        # ★ FAZA 0A: ce POATE compila/linka agentul ACUM, pe acest device
+                        print(json.dumps(_mod.selftest(), indent=2))
                     elif _act == "preflight":
                         print(json.dumps(_mod.preflight(), indent=2))
                     elif _act == "profile":
@@ -2070,6 +2127,11 @@ def run_toolchain_tool(a):
 
     if action == "status":
         return _run([sys.executable, tc, "check"], 60)
+    if action == "selftest":
+        # ★ FAZA 0A (PLAN_AUTONOMIE.md): self-test de capabilitati - compileaza+linkeaza
+        # REAL (C, C++ cu STL, extensie Python.h, Fortran) si raporteaza ce lipseste.
+        # Ruleaza-l INAINTE sa promiti ca poti instala ceva.
+        return _run([sys.executable, tc, "selftest"], 900)
     if action == "doctor":
         # ★ raportul numpy A6: sanatatea toolchain-ului din PERSPECTIVA FIECARUI uid.
         # Raspunde la "poate CINE CERE sa-l foloseasca?" - nu doar "exista pe disc?".
@@ -2183,16 +2245,24 @@ def run_toolchain_tool(a):
             # ★ AUTO-RETRY: prima incercare cu --no-build-isolation (rapid, deps preinstalate
             # in pysitepkg.zip); daca build-backend-ul cere un modul care lipseste
             # (ModuleNotFoundError), reincercam CU izolare (pip descarca backend-ul).
-            def _pip_run(extra, targets=None):
+            _zp0 = F + "/pyhome/lib/pysitepkg.zip"
+            _ze0 = F + "/pyhome/lib/stdlib_extra.zip"
+            _wh = F + "/wheels"          # ★ FAZA 0C: wheelhouse local
+            try:
+                os.makedirs(_wh, exist_ok=True)
+            except Exception:
+                pass
+
+            def _pip_main(args):
+                """Ruleaza pip INLINE cu orice subcomanda (install / wheel)."""
                 _bp2 = io.StringIO()
                 _old_argv = sys.argv[:]
-                sys.argv = ["pip", "install", "--no-cache-dir",
-                            "--disable-pip-version-check"] + list(extra) + (list(targets) if targets else [pkg])
+                sys.argv = ["pip"] + list(args)
                 _rc2 = 0
                 try:
                     with contextlib.redirect_stdout(_bp2), contextlib.redirect_stderr(_bp2):
                         from pip._internal.cli.main import main as _pm
-                        _rc2 = _pm(list(sys.argv[1:]))
+                        _rc2 = _pm(list(args))
                 except SystemExit as _se:
                     _rc2 = int(_se.code or 0)
                 except Exception as _pe:
@@ -2201,6 +2271,49 @@ def run_toolchain_tool(a):
                 finally:
                     sys.argv = _old_argv
                 return _rc2, _bp2.getvalue()
+
+            def _pip_run(extra, targets=None):
+                # ★ FAZA 0C: FARA --no-cache-dir (cache-ul pip din files/home supravietuieste
+                # update-ului) + wheelhouse local ca sursa suplimentara (offline / reinstall).
+                return _pip_main(["install", "--disable-pip-version-check", "-v",
+                                  "--find-links", _wh] + list(extra)
+                                 + (list(targets) if targets else [pkg]))
+
+            def _pip_fresh(args):
+                """★ Ruleaza pip intr-un PROCES NOU.
+
+                Dovedit pe device: dupa `pip wheel` in-line, urmatorul `pip install
+                --no-index --find-links` in ACELASI proces nu mai vede wheelhouse-ul
+                ("Could not find a version ... from versions: none"), desi acelasi
+                comando intr-un proces nou merge. pip nu suporta doua subcomenzi in
+                acelasi proces fara scurgeri de stare -> izolam procesul.
+                """
+                _sf = F + "/tmp/_pipx.py"
+                try:
+                    open(_sf, "w").write(
+                        "import sys\n"
+                        "sys.path[:0]=[r'%s',r'%s']\n"
+                        "from pip._internal.cli.main import main\n"
+                        "sys.exit(main(sys.argv[1:]))\n" % (_zp0, _ze0))
+                except Exception as ex:
+                    return 1, "[nu pot scrie _pipx.py] %r" % (ex,)
+                try:
+                    _rp = _sp.run([sys.executable, _sf] + list(args), capture_output=True,
+                                  text=True, timeout=3600, env=_e, stdin=_sp.DEVNULL)
+                    return _rp.returncode, (getattr(_rp, "stdout", "") or "") + (getattr(_rp, "stderr", "") or "")
+                except Exception as ex:
+                    return 1, "[pip subproces: %r]" % (ex,)
+
+            def _wh_has(name):
+                """★ FAZA 0C: exista deja un wheel pentru pachet in wheelhouse?"""
+                try:
+                    n = str(name).split("[")[0].split("==")[0].strip().replace("_", "-").lower()
+                    for f in os.listdir(_wh):
+                        if f.endswith(".whl") and n in f.lower():
+                            return f
+                except Exception:
+                    pass
+                return ""
 
             _steps = []
 
@@ -2234,10 +2347,22 @@ def run_toolchain_tool(a):
                         _saved[_k] = os.environ.get(_k)
                         os.environ[_k] = _v
                 try:
-                    # ★ -v pe PRIMA incercare: fara el, pip ascunde cauza reala
-                    # (ex. "Missing setup required dependencies: cppy") in spatele
-                    # "BackendUnavailable: Cannot import 'setuptools.build_meta'".
-                    _rc, _out = _pip_run(["--no-build-isolation", "-v"])
+                    _hit = _wh_has(pkg)
+                    if _hit:
+                        # ★ FAZA 0C: wheel deja construit o data -> instalare OFFLINE, instant
+                        _steps.append("wheelhouse:%s" % _hit)
+                        _rc, _out = _pip_fresh(["install", "--disable-pip-version-check",
+                                               "--no-index", "--find-links", _wh, pkg])
+                        if _rc == 0:
+                            _out = "instalat din wheelhouse local (fara retea, fara compilare)\n" + _out
+                    else:
+                        # ★ Drumul PRINCIPAL ramane `pip install --no-build-isolation -v`:
+                        # `pip wheel` ascunde cauza reala a cerintelor de build lipsa
+                        # (setuptools raporteaza "Missing setup required dependencies: cppy"
+                        # doar pe calea de metadata, nu la build_wheel) - dovedit pe device
+                        # cu kiwisolver: cu `pip wheel` esua ca BackendUnavailable, fara sa
+                        # putem extrage cerintele lipsa.
+                        _rc, _out = _pip_run(["--no-build-isolation", "-v"])
                     # ★ PAS 1: cerinte de build lipsa -> le instalam (pip le aduce din PyPI)
                     # si reluam install-ul cu --no-build-isolation.
                     if _rc != 0:
@@ -2252,6 +2377,7 @@ def run_toolchain_tool(a):
                                 _rc, _out2 = _pip_run(["--no-build-isolation"])
                                 _steps.append("retry_dupa_deps=%s" % _rc)
                                 _out += "\n--- [retry dupa deps: %s] ---\n" % _rc + _out2
+                                _out += "(retry dupa deps)"
                     # ★ PAS 2: backend tot indisponibil -> reincercam CU izolare (pip isi
                     # aduce singur backend-ul + cerintele in mediu izolat).
                     _missm = _rc != 0 and any(
@@ -2272,11 +2398,36 @@ def run_toolchain_tool(a):
                             os.environ[_k] = _v
             except Exception as _ex:
                 return "pip_install error: %s" % str(_ex)[:300]
+            if _rc == 0:
+                try:
+                    _wheels_now = len([x for x in os.listdir(_wh) if x.endswith(".whl")])
+                    # ★ FAZA 0C: daca NU s-a construit local (pachetul a venit ca wheel de pe
+                    # PyPI), il copiem in wheelhouse: reinstallul devine instant + offline.
+                    # Daca s-a construit (apare "Building wheel for"), NU rulam `pip wheel`
+                    # iar - ar insemna o a doua compilare degeaba.
+                    if ("Building wheel for" not in _out) and not _wh_has(pkg):
+                        _rw, _ow = _pip_main(["wheel", "--no-deps", "--disable-pip-version-check",
+                                              "-w", _wh, pkg])
+                        if _rw == 0:
+                            _wheels_now = len([x for x in os.listdir(_wh) if x.endswith(".whl")])
+                            _steps.append("salvat_in_wheelhouse=%s" % _wh_has(pkg))
+                    _steps.append("wheels=%s" % _wheels_now)
+                except Exception:
+                    pass
+            # ★ FAZA 0B: la esec, spune CE LIPSESTE si ce urmeaza (nu traceback brut)
+            _dij = None
+            if _rc != 0:
+                _dij = _classify_build_fail(_out)
+                _steps.append("cod=%s" % _dij[0])
             _tail = "\n".join([l for l in _out.splitlines() if l.strip()][-11:])
             # ★ pasii incercati, PE SCURT, in prima linie (altfel tail-ul de 11 linii
             # ascunde exact informatia de care e nevoie: ce s-a incercat si cu ce rezultat).
             _sdep = (" pasi: " + "; ".join(_steps)) if _steps else ""
-            return "pip install %s (exit %s, %.0fs)%s\n%s" % (pkg, _rc, time.time()-_t0, _sdep, _tail)
+            _diag = ""
+            if _dij:
+                _diag = "\n[diagnostic] cod=%s | lipseste: %s | urmatorul pas: %s" % _dij
+            return "pip install %s (exit %s, %.0fs)%s%s\n%s" % (
+                pkg, _rc, time.time()-_t0, _sdep, _diag, _tail)
         except Exception as _ex:
             return "pip_install error: %s" % str(_ex)[:300]
     if action == "pip_install_adbsh":

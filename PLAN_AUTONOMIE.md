@@ -298,7 +298,7 @@ simulat), deci testeaza codul real fara sa astepte modelul.
 
 | Faza | Status | Data | Dovada / note |
 |---|---|---|---|
-| 0 - Fundatia (self-test, taxonomie, cache wheels, wheel-first) | NEINCEPUT | - | - |
+| 0 - Fundatia (self-test, taxonomie, cache wheels, wheel-first) | FACUT + VERIFICAT | 29 sept | vezi sectiunea 8.1 |
 | 1 - cmake | NEINCEPUT | - | - |
 | 2 - Rust | NEINCEPUT | - | - |
 | 3 - perl / autotools | NEINCEPUT | - | - |
@@ -307,6 +307,49 @@ simulat), deci testeaza codul real fara sa astepte modelul.
 | 6 - Inchidere + script regresie | NEINCEPUT | - | - |
 
 Statusuri: NEINCEPUT / IN LUCRU / FACUT+VERIFICAT / ESEC (cu cauza) / AMANAT.
+
+### 8.1 FAZA 0 - rezultat (29 sept 2026, APK `.assets_v184`)
+
+Implementat:
+- `toolchain.selftest()` - compileaza+LINKEAZA real C, C++ (STL), extensie Python.h si Fortran;
+  verifica ninja/make/ld.lld/pkg-config, backends importabile (meson, scikit-build-core, Cython,
+  setuptools, pybind11, pathspec), cmake/rust/perl, cate wheel-uri are wheelhouse-ul; intoarce
+  `ok[]`, `lipsa[]`, `timpi_s`, erorile per test si `verdict`.
+- `_classify_build_fail()` - taxonomie de esec cu coduri (`rust_lipsa`, `cmake_lipsa`,
+  `perl_lipsa`, `ram_insuficient`, `spatiu_insuficient`, `wheel_inexistent`, `cerinte_build`,
+  `headers_lipsa`, `link_runtime`, `eroare_build`) + "ce lipseste" + "urmatorul pas"; apare ca
+  linie `[diagnostic] ...` in rezultatul tool-ului.
+- Wheelhouse `files/wheels` + `--find-links` + fast-path OFFLINE (`--no-index --find-links`).
+
+Verificat pe device (SM-A366B):
+- `run_toolchain_tool({"action":"selftest"})` -> JSON 897 chars, tot TRUE mai putin
+  `cmake`/`rust`/`perl`; timpi: C 0.18s, C++ 2.03s, extensie Python 0.33s, Fortran 0.22s.
+- taxonomie: `cramjam` -> `cod=rust_lipsa`; `murmurhash` -> `cod=eroare_build` (Cython);
+  un install offline ratat -> `cod=wheel_inexistent`.
+- wheelhouse: `xxhash` (wheel de pe PyPI) -> salvat in `files/wheels`; dezinstalat si reinstalat
+  cu `--no-index --find-links` -> "instalat din wheelhouse local (fara retea, fara compilare)".
+- kiwisolver re-verificat dupa refacere: exit 0 (38s), import OK 1.5.1.
+- instalare curata v184 + intrebare din UI ("Poti instala pyarrow?") -> raspuns corect in 2 pasi /
+  16.8s: `CMakeNotFoundError: Could not find CMake with version >= 3.25` (sdists pentru pyarrow
+  cer cmake; scikit-build-core nu are cmake pe device).
+
+Regresii gasite si reparate in timpul fazei (lectii de retinut):
+1. `pip wheel --no-build-isolation` NU e echivalent cu `pip install --no-build-isolation`:
+   ascunde "Missing setup required dependencies: cppy" in spatele `BackendUnavailable` ->
+   prefetch-ul de cerinte nu mai functiona (kiwisolver a picat). Drumul principal a revenit la
+   `pip install`; wheelhouse-ul se populeaza cu `pip wheel --no-deps` DOAR dupa un install reusit
+   din wheel (nu dupa compilare locala, ca sa nu compileze a doua oara).
+2. Doua subcomenzi pip in ACELASI proces: a doua nu mai vede `--find-links` ("from versions: none")
+   -> instalarea din wheelhouse se face intr-un PROCES NOU (`_pip_fresh`).
+3. La re-extragerea assets se sterge `files/python/` (inclusiv `key.txt` scris de onboarding!), dar
+   `files/home/key.txt` SUPRavietuieste -> agentul porneste. Daca se sterge si acela, trebuie
+   re-lipita cheia in UI.
+4. Instalarea curata regenereaza cheia ADB -> adbd cere din nou "Allow USB debugging" (dialog de
+   sistem; se aproba cu `input tap` pe checkbox + Allow). Dupa aprobare, `adbsh` (uid=2000) merge.
+
+Observatie pentru FAZA 6: la intrebari de tip "pot instala X?", agentul prefera `pip install
+--dry-run` (2 pasi, 17s, raspuns corect) in loc de `selftest`; regula din system prompt care cere
+`selftest` exista, dar modelele aleg uneori proba directa. Ambele sunt valide; de intarit in FAZA 6.
 
 ---
 

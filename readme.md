@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v182`** |
+| Marker assets activ | **`.assets_v184`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -597,7 +597,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v182`**) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v184`**) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -2776,3 +2776,32 @@ liniar, nu doar import.
 agentul a ales si construit SINGUR kiwisolver.
 
 **APK: 282 MB** | marker `.assets_v182`
+
+---
+
+## Etapa 50 - FAZA 0: FUNDATIA DE AUTONOMIE (29 sept 2026, `.assets_v184`)
+
+Implementat in `toolchain.py` + `agent.py` (vezi `PLAN_AUTONOMIE.md`, sectiunea 5/8.1):
+
+- **`toolchain action=selftest`** - self-test de CAPABILITATI pe device: compileaza si LINKEAZA
+  real C, C++ cu STL, o extensie `Python.h` (link cu `-lpython3.14`) si un obiect Fortran; verifica
+  ninja/make/ld.lld/pkg-config, backends importabile (meson, scikit-build-core, Cython, setuptools,
+  pybind11, pathspec), cmake/rust/perl, wheelhouse-ul. Intoarce `ok[]`, `lipsa[]`, `timpi_s`,
+  erorile per test si un `verdict`. Legat in schema tool-ului (enum + descriere) si in dispatcher-ul
+  inline - verificat prin `run_toolchain_tool({"action":"selftest"})` -> JSON 897 chars.
+- **Taxonomie de esec** (`_classify_build_fail`): coduri `rust_lipsa`, `cmake_lipsa`, `perl_lipsa`,
+  `ram_insuficient`, `spatiu_insuficient`, `wheel_inexistent`, `cerinte_build`, `headers_lipsa`,
+  `link_runtime`, `eroare_build` + "ce lipseste" + "urmatorul pas", afisate ca `[diagnostic] ...`.
+- **Wheelhouse local** (`files/wheels`) + `--find-links` + fast-path OFFLINE
+  (`--no-index --find-links`): un wheel luat o data de pe PyPI se reinstaleaza instant, fara retea.
+
+VERIFICAT pe device: selftest toate TRUE mai putin cmake/rust/perl (C 0.18s, C++ 2.03s, extensie
+Python 0.33s, Fortran 0.22s); `cramjam` -> `cod=rust_lipsa`; `xxhash` salvat in wheelhouse si
+reinstalat offline ("instalat din wheelhouse local"); `kiwisolver` exit 0 (38s) dupa refacere;
+instalare curata + intrebare din UI ("Poti instala pyarrow?") -> raspuns corect in 16.8s
+(`CMakeNotFoundError: Could not find CMake with version >= 3.25`).
+
+Doua regresii prinse si reparate in timpul fazei (ambele in PLAN_AUTONOMIE.md 8.1):
+`pip wheel --no-build-isolation` ascunde cauza reala a cerintelor de build lipsa (drumul principal
+a revenit la `pip install`), si doua subcomenzi pip in acelasi proces nu mai vad `--find-links`
+(instalarea din wheelhouse se face intr-un proces nou).

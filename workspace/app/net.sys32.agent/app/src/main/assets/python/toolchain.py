@@ -30,7 +30,7 @@ import json, datetime
 #   Python 3.14                -> PSF-2.0
 #   sysroot Android (bionic)   -> Apache-2.0
 # Nimic nu se descarca la rulare.
-import os, sys, subprocess, json
+import os, sys, subprocess, json, time
 
 F = "/data/data/net.sys32.agent/files"
 WS = "/sdcard/Download/Agent/workspace"
@@ -1392,4 +1392,186 @@ def _enable_pip():
             print("[toolchain] pip activat")
     except Exception:
         pass
+
+
+# ==================== FAZA 0: FUNDATIA DE AUTONOMIE ====================
+
+def _wheels_dir():
+    """Wheelhouse LOCAL (faza 0C): fiecare wheel construit o data ajunge aici.
+
+    Traieste in filesDir/wheels (nu e sters de re-extragerea assets, ca
+    `site_packages_keep`), deci un reinstall NU mai reconstruieste (numpy = ore).
+    pip_install il da lui pip ca `--find-links`, iar la nevoie merge si offline
+    (`--no-index --find-links <dir>`).
+    """
+    d = F + "/wheels"
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def _which(name):
+    """Calea unui executabil cautat in locurile REALE (files/tmp, nativeLib, deps/bin,
+    toolchain/bin, /system/bin). Nu folosim `which` (nu exista garantat pe toybox)."""
+    cands = [F + "/tmp/" + name, (_native_dir() or "") + "/" + name,
+             DEPS + "/bin/" + name, BIN + "/" + name, "/system/bin/" + name,
+             "/apex/com.android.runtime/bin/" + name]
+    for c in cands:
+        if _exec_ok(c):
+            return c
+    return ""
+
+
+def _rt_link_dirs():
+    """Directoarele de care are nevoie LINKAREA (nu si rularea - vezi _rt_ld_path)."""
+    return [ROOT + "/sysroot/usr/lib/aarch64-linux-android/" + str(_device_api()),
+            DEPS + "/lib", ROOT + "/lib/clang/21/lib/linux/aarch64"]
+
+
+def _selftest_cc(args, timeout=300):
+    """Ruleaza compilatorul cu env-ul complet (deja executabil ca app)."""
+    import shlex
+    e = env_vars()
+    cc = shlex.split(e.get("CC", "clang"))
+    t0 = time.time()
+    try:
+        p = subprocess.run(cc + list(args), capture_output=True, text=True,
+                           timeout=timeout, env=e, stdin=subprocess.DEVNULL)
+        out = ((p.stdout or "") + (p.stderr or "")).strip()
+        return p.returncode, out[-300:], time.time() - t0
+    except Exception as ex:
+        return 127, repr(ex)[:200], time.time() - t0
+
+
+def selftest():
+    """★ FAZA 0A: ce POATE compila/linka agentul pe ACEST device, ACUM.
+
+    Raspunde la "pot instala pachetul X?" fara sa incerce un build de 30 de minute.
+    Fiecare test compileaza si LINKEAZA un artefact REAL (nu doar "exista binarul").
+    Returneaza un dict cu TRUE/FALSE per capabilitate + timpi + ce lipseste.
+    """
+    api = _device_api()
+    tgt = ["--target=aarch64-linux-android%d" % api, "--sysroot=" + ROOT + "/sysroot"]
+    ld = []
+    for _d in _rt_link_dirs():
+        ld += ["-L" + _d]
+    T = F + "/tmp/selftest"
+    try:
+        os.makedirs(T, exist_ok=True)
+    except Exception:
+        pass
+    r = {}
+    tm = {}
+
+    def _mk(name, text):
+        try:
+            p = os.path.join(T, name)
+            open(p, "w").write(text)
+            return p
+        except Exception:
+            return None
+
+    # 1. C: compile + LINK (shared object real)
+    c = _mk("t.c", "int add(int a,int b){return a+b;}\n")
+    if c:
+        rc1, o1, d1 = _selftest_cc(tgt + ["-fPIC", "-c", c, "-o", T + "/t.o"])
+        rc2, o2, d2 = _selftest_cc(tgt + ld + ["-shared", T + "/t.o", "-o", T + "/libt.so"])
+        r["c_compile_link"] = bool(rc1 == 0 and rc2 == 0 and os.path.exists(T + "/libt.so"))
+        tm["c_s"] = round(d1 + d2, 2)
+        if not r["c_compile_link"]:
+            r["c_error"] = (o1 + " | " + o2)[-200:]
+
+    # 2. C++ cu STL (headerele libc++ complete + libc++_shared la link)
+    cx = _mk("t.cpp",
+             '#include <vector>\n#include <string>\n#include <algorithm>\n'
+             'extern "C" int f(){std::vector<std::string> v{"b","a"};'
+             'std::sort(v.begin(),v.end());return (int)v.size();}\n')
+    if cx:
+        rc1, o1, d1 = _selftest_cc(tgt + ["-fPIC", "-c", cx, "-o", T + "/cx.o"])
+        rc2, o2, d2 = _selftest_cc(tgt + ld + ["-shared", T + "/cx.o", "-lc++_shared",
+                                               "-o", T + "/libcx.so"])
+        r["cxx_stl"] = bool(rc1 == 0 and rc2 == 0 and os.path.exists(T + "/libcx.so"))
+        tm["cxx_s"] = round(d1 + d2, 2)
+        if not r["cxx_stl"]:
+            r["cxx_error"] = (o1 + " | " + o2)[-200:]
+
+    # 3. extensie Python (Python.h + -lpython3.14) - exact ce face pip pentru orice modul C
+    pyx = _mk("m.c",
+              '#include <Python.h>\n'
+              'static PyObject* f(PyObject* s,PyObject* a){return PyLong_FromLong(42);}\n'
+              'static PyMethodDef M[]={{"f",f,METH_NOARGS,""},{0,0,0,0}};\n'
+              'static struct PyModuleDef md={PyModuleDef_HEAD_INIT,"m",NULL,-1,M};\n'
+              'PyMODINIT_FUNC PyInit_m(void){return PyModule_Create(&md);}\n')
+    if pyx:
+        inc = F + "/pyhome/include/python3.14"
+        ldir = F + "/pyhome/lib"
+        rc1, o1, d1 = _selftest_cc(tgt + ["-fPIC", "-I" + inc, "-c", pyx, "-o", T + "/m.o"])
+        rc2, o2, d2 = _selftest_cc(tgt + ld + ["-shared", T + "/m.o", "-L" + ldir,
+                                               "-lpython3.14", "-o", T + "/m.so"])
+        r["python_extension"] = bool(rc1 == 0 and rc2 == 0 and os.path.exists(T + "/m.so"))
+        tm["pyext_s"] = round(d1 + d2, 2)
+        if not r["python_extension"]:
+            r["pyext_error"] = (o1 + " | " + o2)[-200:]
+
+    # 4. Fortran: COMPILARE (rularea unui binar produs de app nu e posibila - SELinux)
+    f90 = _mk("t.f90", "      subroutine s(a)\n      real a\n      a=a+1.0\n      end\n")
+    fl = F + "/tmp/flang"
+    if f90 and os.path.exists(fl):
+        t0 = time.time()
+        try:
+            p = subprocess.run([fl, "-c", "t.f90"], cwd=T, capture_output=True, text=True,
+                               timeout=300, stdin=subprocess.DEVNULL)
+            obj = [x for x in os.listdir(T) if x.startswith("t.") and x.endswith(".o")
+                   and "_f" in x] or [x for x in os.listdir(T) if x.endswith(".o")]
+            r["fortran_compile"] = any(os.path.getsize(os.path.join(T, x)) > 0 for x in obj)
+            tm["fortran_s"] = round(time.time() - t0, 2)
+            if not r["fortran_compile"]:
+                r["fortran_error"] = ((p.stdout or "") + (p.stderr or ""))[-200:]
+        except Exception as ex:
+            r["fortran_compile"] = False
+            r["fortran_error"] = repr(ex)[:200]
+    else:
+        r["fortran_compile"] = False
+
+    # 5. unelte de build (executabile ACUM)
+    r["ninja"] = bool(_exec_ok(F + "/tmp/ninja"))
+    r["make"] = bool(_exec_ok(F + "/tmp/make"))
+    r["lld"] = bool(_exec_ok(F + "/tmp/ld.lld"))
+    r["pkg_config"] = bool(_which("pkg-config") or _exec_ok(_native_dir() + "/libpkgconf_exec.so"))
+
+    # 6. build-backends Python (importabile in ACEST proces)
+    for mod, key in (("mesonbuild", "meson"), ("scikit_build_core", "scikit_build_core"),
+                     ("Cython", "cython"), ("setuptools", "setuptools"),
+                     ("pybind11", "pybind11"), ("pathspec", "pathspec")):
+        try:
+            __import__(mod)
+            r[key] = True
+        except Exception:
+            r[key] = False
+
+    # 7. ce NU avem (limite cunoscute) + wheelhouse
+    r["cmake"] = bool(_which("cmake"))
+    r["rust"] = bool(_which("cargo") or _which("rustc"))
+    r["perl"] = bool(_which("perl"))
+    wd = _wheels_dir()
+    try:
+        r["wheelhouse"] = len([x for x in os.listdir(wd) if x.endswith(".whl")])
+    except Exception:
+        r["wheelhouse"] = 0
+
+    # 8. ce lipseste si ce se poate instala cu ce avem
+    _bools = [k for k, v in r.items() if isinstance(v, bool)]
+    r["ok"] = sorted([k for k in _bools if r[k]])
+    r["lipsa"] = sorted([k for k in _bools if not r[k]])
+    r["timpi_s"] = tm
+    if r.get("python_extension") and r.get("cxx_stl"):
+        r["verdict"] = ("TOOLCHAIN COMPLET pentru pip: extensii C si C++ compilate+linkate pe "
+                        "device" + ("" if r["cmake"] else " | lipsesc: cmake, rust, perl"))
+    elif r.get("c_compile_link"):
+        r["verdict"] = "PARTIAL: C merge, C++/extensii Python nu - vezi cheile *_error"
+    else:
+        r["verdict"] = "RUPT: nici macar C nu compileaza - vezi c_error"
+    return r
 
