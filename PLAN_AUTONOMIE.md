@@ -465,7 +465,8 @@ si verificare independenta in subproces nou: vezi tabelul din `readme.md` (Etapa
 
 **Pachete care se compileaza si functioneaza pe device (verificate cu import/functionalitate
 in subproces nou):** simplejson, MarkupSafe, cffi, msgpack, regex, lz4, kiwisolver, greenlet,
-lxml, zstandard (10) + testul de link C pentru Tier-2 (sqlite3+libpng+freetype+zlib).
+lxml, zstandard, **Pillow 12.3.0**, **apsw 3.53.4** (12) + testul de link C pentru Tier-2
+(sqlite3+libpng+freetype+zlib).
 
 **Pachete care au aratat gauri REALE in toolchain (si fixurile aplicate):**
 - zstandard -> header zstd vechi in deps (fix: zstd 1.5.7) -> acum OK.
@@ -474,7 +475,7 @@ lxml, zstandard (10) + testul de link C pentru Tier-2 (sqlite3+libpng+freetype+z
   se compileaza pe device si functioneaza (PNG save/open, `_imaging.cpython-314-aarch64-linux-android.so`)**.
 - duckdb -> `find_package(pybind11)` (fix: `_pybind11_dir()` extrage cmake-ul din zip +
   `-Dpybind11_DIR`) -> de re-verificat.
-- apsw -> descarca surse la build si pica pe CA (de investigat in continuare).
+- apsw -> descarca surse la build si pica pe CA. **REZOLVAT**: `_ca_bundle()` construieste un PEM real (SSL_CERT_FILE trebuie sa fie fisier, nu director) -> apsw 3.53.4 se compileaza si functioneaza.
 - numpy 2.5.3 -> `ninja: FAILED: numpy/_core/__ufunc_api.c` in generarea metadatelor.
 - grpcio -> `No module named '_multiprocessing'`: CPython-ul nostru nu are
   `_multiprocessing` (bionic nu are semafoare POSIX) -> orice build care face

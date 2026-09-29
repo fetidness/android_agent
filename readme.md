@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v190`** |
+| Marker assets activ | **`.assets_v193`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -2891,7 +2891,7 @@ zlib 1.3.1, libpng 1.6.44 (fara NEON - vezi capcana 17), freetype 2.13.3, sqlite
 | cbor2 | OK (pure-python) | NU (lipseste extensia C) | 3.6s |
 | Pillow | OK (dupa fix LDSHARED/libs) | **OK** (PNG round-trip, `_imaging...so` compilat nativ) | 47.9s |
 | numpy | NU | NU | 44.7s |
-| apsw | NU | NU | 157.8s |
+| apsw 3.53.4 | **OK** (dupa fix CA bundle) | **OK** (create/insert/select, sqlite 3.53.4) | 119.1s |
 | duckdb | NU | NU | 10.2s |
 | grpcio | NU | NU | 31.8s |
 
@@ -2954,3 +2954,11 @@ Fixuri de pachet descoperite de baterie:
     pachetele stau in ZIP-uri (zipimport), deci cmake nu putea citi din zip. Fix:
     `_pybind11_dir()` extrage `pybind11/share/cmake` in `files/toolchain/pybind11-cmake` si il
     da lui cmake prin `-Dpybind11_DIR=` (in `CMAKE_ARGS` si in mediu).
+
+29. **`SSL_CERT_FILE` trebuie sa fie FISIER, nu director** (bug gasit de apsw): `_ca_bundle()`
+    returna primul drum existent, inclusiv `/apex/com.android.conscrypt/cacerts` (DIRECTOR).
+    Python cere fisier PEM -> orice HTTPS din timpul unui build (`setup.py` care isi descarca
+    sursele, ca apsw) cadea cu `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`.
+    Fix: `_ca_bundle()` construieste un PEM real (630 KB, concatenand certificatele din cacerts)
+    in `files/home/ca-bundle.pem`. Dovada: HTTPS catre sqlite.org -> 8886 bytes; `apsw 3.53.4`
+    se instaleaza din sursa (isi descarca singur SQLite) si functioneaza.

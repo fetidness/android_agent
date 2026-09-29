@@ -1608,10 +1608,50 @@ def _py_exec():
 
 
 def _ca_bundle():
-    """Primul CA bundle disponibil pe Android (Python nu are unul implicit)."""
-    for c in (F + "/home/ca-bundle.pem",
-              "/apex/com.android.conscrypt/cacerts",
-              "/system/etc/security/cacerts"):
+    """★ CA bundle REAL (FISIER PEM) pentru Python.
+
+    BUG reparat (baterie, apsw): inainte returnam primul drum existent, inclusiv
+    `/apex/com.android.conscrypt/cacerts` - care e un DIRECTOR. Python cere ca
+    SSL_CERT_FILE sa fie FISIER -> orice HTTPS din timpul unui build (apsw isi descarca
+    sursele, setup.py-uri cu urlopen) cadea cu
+    "CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate".
+    Acum construim un fisier PEM real concatenand certificatele din cacerts.
+    """
+    out = F + "/home/ca-bundle.pem"
+    try:
+        if os.path.exists(out) and os.path.getsize(out) > 1000:
+            return out
+    except Exception:
+        pass
+    chunks = []
+    for d in ("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"):
+        try:
+            if not os.path.isdir(d):
+                continue
+            for n in sorted(os.listdir(d)):
+                q = os.path.join(d, n)
+                try:
+                    if os.path.islink(q) or not os.path.isfile(q):
+                        continue
+                    data = open(q, "rb").read()
+                    if b"BEGIN CERTIFICATE" in data:
+                        chunks.append(data if data.endswith(b"\n") else data + b"\n")
+                except Exception:
+                    continue
+            if chunks:
+                break
+        except Exception:
+            continue
+    if chunks:
+        try:
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, "wb") as fh:
+                for c in chunks:
+                    fh.write(c)
+            return out
+        except Exception:
+            pass
+    for c in (out, "/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"):
         if os.path.exists(c):
             return c
     return ""
