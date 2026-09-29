@@ -974,6 +974,26 @@ def _ensure_launchers():
             made.append("cmake")
         except Exception:
             pass
+    # ★ patchelf (numpy/meson-python): meson-python rescrie RPATH-urile modulelor
+    # construite si cheama `patchelf`; fara el build-ul pica la final cu
+    # "FileNotFoundError: [Errno 2] No such file or directory: 'patchelf'".
+    for _nm, _so in (("patchelf", "libpatchelf_exec.so"),):
+        if nat and os.path.exists(nat + "/" + _so):
+            _p = F + "/tmp/" + _nm
+            try:
+                _st = False
+                if os.path.islink(_p):
+                    try:
+                        _st = not os.path.exists(os.readlink(_p))
+                    except Exception:
+                        _st = True
+                if os.path.lexists(_p) and (not os.path.islink(_p) or _st):
+                    os.remove(_p)
+                if not os.path.lexists(_p):
+                    os.symlink(nat + "/" + _so, _p)
+                made.append(_nm)
+            except Exception:
+                pass
     # ★ perl (FAZA 3): binarul Termux (ARM64) in nativeLibraryDir ca libperl_exec.so +
     # symlink 'perl' in files/tmp (MakeMaker/Configure il cauta dupa nume in PATH).
     if nat and os.path.exists(nat + "/libperl_exec.so"):
@@ -1252,6 +1272,86 @@ def _pybind11_dir():
     return ""
 
 
+def _ensure_real_cython():
+    """★ BUG MAJOR reparat (numpy): Cython isi cauta fisierele `Includes/` RELATIV la
+    `__file__` (libc/stdint.pxd, cpython/ref.pxd). La noi Cython sta in pysitepkg.zip
+    (zipimport) -> Cython nu gaseste Includes si numpy pica la compilarea .pyx cu
+    "'libc/stdint.pxd' not found" / "'cpython/ref.pxd' not found".
+    Solutie: extragem arborele Cython din zip intr-un director REAL, pus in PYTHONPATH
+    INAINTEA zip-ului (altfel zipimport are prioritate)."""
+    real = F + "/pyhome/lib/pyreal"
+    dst = real + "/Cython"
+    try:
+        if os.path.isdir(dst) and os.path.exists(dst + "/Includes/libc/stdint.pxd"):
+            return real
+    except Exception:
+        pass
+    z = F + "/pyhome/lib/pysitepkg.zip"
+    try:
+        import zipfile
+        if not os.path.exists(z):
+            return ""
+        with zipfile.ZipFile(z) as zf:
+            memb = [n for n in zf.namelist() if n.startswith("Cython/") and not n.endswith("/")]
+            if not memb:
+                return ""
+            os.makedirs(dst, exist_ok=True)
+            for n in memb:
+                d = os.path.join(real, n)
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                with open(d, "wb") as fh:
+                    fh.write(zf.read(n))
+        return real if os.path.exists(dst + "/Includes/libc/stdint.pxd") else ""
+    except Exception:
+        return ""
+
+
+def _ensure_python_launcher():
+    """★ BUG MAJOR reparat (numpy): meson/meson-python scriu comenzi de forma
+        env PYTHONPATH=... '<interpreter>' -m ...
+    Interpreterul era libpyexec.so din nativeLibraryDir, iar calea contine `~~` si `==`
+    (/data/app/~~xxxx==/net.sys32.agent-yyyy==/lib/arm64/libpyexec.so) -> meson o pune
+    INTRE GHILIMELE SIMPLE, iar `env` nu stie de ghilimele: "env: exec -m: No such file
+    or directory" -> orice generator de cod din numpy pica.
+    Solutie: symlink cu nume CURAT in files/tmp (kernelul urmareste symlink-ul, deci
+    SELinux vede tinta exec-abila din nativeLibraryDir) + sys.executable setat catre el,
+    ca meson/scikit-build/setuptools sa primeasca o cale fara caractere speciale."""
+    _nat = _native_dir()
+    if not _nat:
+        return ""
+    p = F + "/tmp/python3"
+    try:
+        for name in ("python3", "python"):
+            q = F + "/tmp/" + name
+            _st = False
+            if os.path.islink(q):
+                try:
+                    _st = not os.path.exists(os.readlink(q))
+                except Exception:
+                    _st = True
+            if os.path.lexists(q) and (not os.path.islink(q) or _st):
+                os.remove(q)
+            if not os.path.lexists(q):
+                os.symlink(_nat + "/libpyexec.so", q)
+        return p
+    except Exception:
+        return ""
+
+
+def _patch_sys_executable():
+    """Setam sys.executable catre lansatorul cu nume curat (vezi _ensure_python_launcher)."""
+    p = _ensure_python_launcher()
+    if not p:
+        return
+    try:
+        if os.path.exists(p):
+            sys.executable = p
+            if hasattr(sys, "_base_executable"):
+                sys._base_executable = p
+    except Exception:
+        pass
+
+
 def _write_cmake_toolchain(_cflags, _ldflags):
     """★ FAZA 1: scrie toolchain-ul CMake pentru DEVICE (o singura sursa de adevar:
     acelasi _cflags/_ldflags ca build-urile pip). cmake il citeste din variabila de
@@ -1500,6 +1600,7 @@ def env_vars():
     # libclang_rt.builtins.a in nativeLibraryDir si esueaza ("cannot open ...libclang_rt
     # .builtins.a"), deci cmake raporta "compiler broken".
     _tc_file = _write_cmake_toolchain(_cflags + _extra, _ldflags)
+    _pyreal = _ensure_real_cython()   # Cython pe disc (nu din zip) - vezi _ensure_real_cython
     return {
         "PATH": _binpath,
         "TC_ROOT": ROOT,
@@ -1588,7 +1689,8 @@ def env_vars():
         "PYTHONHOME": F + "/pyhome",
         # ★ sect. 3E: stdlib_extra.zip PRIMUL (altfel zipfile._path lipseste
         # -> "ModuleNotFoundError: No module named 'zipfile._path'" la pip).
-        "PYTHONPATH": (F + "/pyhome/lib/stdlib_extra.zip:"
+        "PYTHONPATH": (((_pyreal + ":") if _pyreal else "")
+                       + F + "/pyhome/lib/stdlib_extra.zip:"
                        + F + "/pyhome/lib/python3.14:"
                        + F + "/pyhome/lib/pysitepkg.zip:"
                        + os.environ.get("PYTHONPATH", "")),

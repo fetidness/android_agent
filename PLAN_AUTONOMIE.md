@@ -486,3 +486,16 @@ lxml, zstandard, **Pillow 12.3.0**, **apsw 3.53.4** (12) + testul de link C pent
 (122 MB deb / 548 MB instalat) + `libllvm` (165 MB) + `maturin` (inexistent in repo, trebuie
 construit cu cargo) -> varianta curata e un bootstrap LA CERERE (agentul descarca toolchain-ul
 doar cand primeste un pachet Rust), nu bundling in APK (APK-ul ar sari de la ~309 MB la ~1 GB).
+
+### 8.5 Runda numpy / grpcio / duckdb (fixuri de "ultim kilometru")
+
+- **meson si interpretorul Python**: `sys.executable` era `libpyexec.so` din
+  `/data/app/~~...==/`; meson il pune intre ghilimele simple si `env` nu le interpreteaza
+  ("env: exec -m: No such file or directory"). Fix: lansator cu nume curat
+  (`files/tmp/python3`) + `_patch_sys_executable()`.
+- **`_multiprocessing`** (bionic nu are sem_open): shim pure-Python cu SemLock pe threading
+  si constantele de clasa cerute de `multiprocessing/synchronize.py`. `import multiprocessing` OK.
+- **Cython din zip** nu-si gaseste `Includes/` (numpy: `'libc/stdint.pxd' not found`): se extrage
+  pe disc in `files/pyhome/lib/pyreal/` si se pune PRIMUL in PYTHONPATH.
+- **duckdb**: build-ul complet (921 s) a esuat dupa configure; se reincearca cu
+  `CMAKE_BUILD_PARALLEL_LEVEL=2` (RAM: 7.5 GB total, sub 1 GB liber la -j8).

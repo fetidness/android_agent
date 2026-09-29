@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v193`** |
+| Marker assets activ | **`.assets_v197`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -2962,3 +2962,44 @@ Fixuri de pachet descoperite de baterie:
     Fix: `_ca_bundle()` construieste un PEM real (630 KB, concatenand certificatele din cacerts)
     in `files/home/ca-bundle.pem`. Dovada: HTTPS catre sqlite.org -> 8886 bytes; `apsw 3.53.4`
     se instaleaza din sursa (isi descarca singur SQLite) si functioneaza.
+
+### Capcane 30-32 (runda de fixuri pentru numpy / grpcio)
+
+30. **`sys.executable` nu trebuie sa fie `libpyexec.so` din `/data/app/~~...==/`** (numpy/meson):
+    meson scrie comenzile de generare ca `env PYTHONPATH=... '<interpreter>' -m ...`, iar calea
+    din nativeLibraryDir (cu `~~` si `==`) ajunge INTRE GHILIMELE SIMPLE - `env` nu interpreteaza
+    ghilimelele, deci: `env: exec -m: No such file or directory`. Fix:
+    `_ensure_python_launcher()` creeaza symlink-uri `files/tmp/python3` si `files/tmp/python`
+    (nume CURAT, kernelul urmareste symlink-ul -> SELinux vede tinta executabila) si
+    `_patch_sys_executable()` seteaza `sys.executable`/`_base_executable` catre ele
+    (apelat la startup in `agent.py`).
+31. **`_multiprocessing` lipseste pe bionic** -> `import multiprocessing` cade
+    (`ModuleNotFoundError: No module named '_multiprocessing'`), iar build-uri ca grpcio
+    (care folosesc `multiprocessing.pool.ThreadPool` pentru compilare paralela) pica instant.
+    Fix: shim pure-Python `Lib/_multiprocessing.py` (SemLock cu threading + constante de clasa
+    RECURSIVE_MUTEX/SEMAPHORE/BOUNDED_SEMAPHORE/SEM_VALUE_MAX - `multiprocessing/synchronize.py`
+    citeste `SemLock.SEM_VALUE_MAX`, altfel `AttributeError`). Dovada: `import multiprocessing`
+    -> OK; grpcio a trecut de acel pas.
+32. **Cython trebuie sa fie pe DISC, nu in zip** (numpy): Cython isi cauta `Includes/` relativ la
+    `__file__` (`libc/stdint.pxd`, `cpython/ref.pxd`); din zipimport nu le gaseste ->
+    `Error compiling Cython file: 'libc/stdint.pxd' not found`. Fix: `_ensure_real_cython()`
+    extrage arborele `Cython/` din `pysitepkg.zip` in `files/pyhome/lib/pyreal/` si acel director
+    e pus PRIMUL in `PYTHONPATH` (altfel zipimport are prioritate).
+
+### Capcane 33-35 (numpy reusit) + rezultat
+
+33. **`_posixshmem` lipseste** -> `multiprocessing/resource_tracker.py` il importa necondiționat
+    (`import _posixshmem`) -> `import multiprocessing` cadea si DUPA shim-ul de `_multiprocessing`
+    ("No module named '_posixshmem'", dovada: grpcio). Fix: shim `Lib/_posixshmem.py`
+    (shm_open/shm_unlink emulate peste fisiere in TMPDIR).
+34. **`SemLock` e chemat cu argumente POZITIONALE** (`SemLock(kind, value, maxvalue, name,
+    unlink_now)`) -> shim-ul nu trebuie sa aiba `*` (keyword-only): dovada grpcio
+    "TypeError: SemLock.__init__() takes 4 positional arguments but 6 were given".
+35. **patchelf este OBLIGATORIU pentru meson-python** (numpy): la finalul build-ului
+    meson-python rescrie RPATH-urile modulelor -> `FileNotFoundError: [Errno 2] No such file
+    or directory: 'patchelf'`. Fix: patchelf 0.18.0 cross-compilat de noi (libm/libdl/libc,
+    `-static-libstdc++`), livrat ca `jniLibs/arm64-v8a/libpatchelf_exec.so` + symlink
+    `files/tmp/patchelf`.
+
+**Rezultat: `numpy 2.5.3` se compileaza de la sursa PE TELEFON (204 s) si functioneaza
+(matmul verificat: 486.0).** Biblioteci BLAS/LAPACK: OpenBLAS-ul din APK.

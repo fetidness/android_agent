@@ -2811,6 +2811,13 @@ if __name__ == "__main__":
         for _kS, _vS in _mS.env_vars().items():
             if _vS:
                 os.environ[_kS] = str(_vS)
+        # ★ numpy/meson: sys.executable trebuie sa fie o cale CURATA si executabila
+        # (files/tmp/python3), nu libpyexec.so din /data/app/~~...==/ (meson o pune intre
+        # ghilimele simple si `env` nu le interpreteaza -> "env: exec -m: No such file").
+        try:
+            _mS._patch_sys_executable()
+        except Exception:
+            pass
         _FdS = os.path.dirname(os.path.abspath(__file__))
         _FdS = os.path.dirname(_FdS)
         _partsS = []
