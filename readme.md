@@ -8,7 +8,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v187`** |
+| Marker assets activ | **`.assets_v190`** |
 | APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **187 915 B** |
 | `toolchain.py` (assets) | **62 737 B** |
@@ -2846,3 +2846,111 @@ a revenit la `pip install`), si doua subcomenzi pip in acelasi proces nu mai vad
     (`aarch64-linux-android35`) si atunci cere un NDK cu layout standard. Solutia pe device:
     NDK minimal din symlink-uri (`<TOOLCHAIN>/ndk/toolchains/llvm/prebuilt/linux-x86_64/{bin,sysroot}`)
     - `_ensure_fake_ndk()` in `toolchain.py`.
+
+---
+
+## Etapa 52 - PERL AUTONOM + TIER-2 + BATERIE DE TESTE (`.assets_v190`, 29 sept 2026)
+
+**Nimic din Termux nu mai e in APK.** Tot ce ruleaza pe telefon e compilat de noi (laptop,
+cross-compilare cu NDK 27) sau e cod Python.
+
+### perl 5.42.0 - compilat de noi (inlocuieste binarul Termux)
+- `perl-cross` 1.6.5 peste sursa perl 5.42.0 (1.5.3 nu are patchset pentru 5.40/5.42).
+- configure cere explicit uneltele: `--with-cc --with-ar --with-ranlib --with-nm --with-objdump
+  --with-readelf`; fara ele: "ERROR: Cannot find ar/readelf".
+- `-Dd_futimes=undef -Dd_futimesat=undef -Dd_lchown=undef` (bionic nu are futimes/lchown).
+- **`-Dlibs='-ldl -lm'`** - ALTfel modulele XS se linkeaza fara libm si mor la dlopen cu
+  `cannot locate symbol "modf"` (dovedit cu `LD_PRELOAD=/system/lib64/libm.so`, care repara).
+- binarul e linkat cu libperl static (doar libc/libm/libdl) si are prefixul de pe device
+  compilat in el -> isi gaseste singur @INC; `auto/List/Util/Util.so` (linkat fara -lm in
+  build-ul intern) a fost relinkat manual cu `-lm`.
+- livrat: `assets/toolchain/perl` (55 MB) + `jniLibs/arm64-v8a/libperl_exec.so` + symlink
+  `files/tmp/perl`; verificat pe device: `perl -MList::Util -MPOSIX -e ...` -> `sum=6 ceil=2`.
+
+### Tier-2 in `assets/toolchain/deps` (static, `.pc` cu prefixul de pe device)
+zlib 1.3.1, libpng 1.6.44 (fara NEON - vezi capcana 17), freetype 2.13.3, sqlite3 3.46.1
+(FTS5/JSON1/RTREE), zstd **1.5.7**. Test de link C direct (sqlite3+png+freetype+zlib) trece pe device.
+
+### Baterie de teste (16 pachete + link C), pe `.assets_v190`:
+`toolchain action=pip_install` pentru fiecare, apoi verificare independenta in subproces nou.
+
+| pachet | pip | ruleaza | timp |
+|---|---|---|---|
+| simplejson | OK | OK | 5.5s |
+| MarkupSafe | OK | OK | 5.1s |
+| cffi | OK | OK | 0.9s |
+| msgpack | OK | OK | 16.5s |
+| regex | OK | OK | 22.2s |
+| lz4 | OK | OK | 25.0s |
+| kiwisolver | OK | OK | 0.5s |
+| greenlet | OK | OK | 18.0s |
+| lxml | OK | OK | 7.3s |
+| zstandard | OK | OK | 62.1s |
+| Pillow 12.3.0 | OK | OK (PNG save/open + extensia C nativa) | 47.9s |
+| link C Tier-2 (sqlite3+png+freetype+zlib) | - | OK (dupa fix libpng NEON) | 0.3s |
+| cbor2 | OK (pure-python) | NU (lipseste extensia C) | 3.6s |
+| Pillow | OK (dupa fix LDSHARED/libs) | **OK** (PNG round-trip, `_imaging...so` compilat nativ) | 47.9s |
+| numpy | NU | NU | 44.7s |
+| apsw | NU | NU | 157.8s |
+| duckdb | NU | NU | 10.2s |
+| grpcio | NU | NU | 31.8s |
+
+Fixuri de pachet descoperite de baterie:
+- **zstandard** - `deps/include/zstd.h` vechi (1.5.6) umbrea header-ul din sdist ->
+  `unknown type name 'ZSTD_FrameHeader'`. Fix: zstd 1.5.7 in deps. Acum OK (62s).
+- **cbor2** - isi construieste extensia C doar cu `CBOR2_BUILD_C_EXTENSION=1`; altfel instaleaza
+  silentios varianta pure-python (`Successfully installed`, dar `import cbor2._cbor2` esueaza).
+  Env-ul e adaugat in `env_vars()`, DAR un wheel pure-python deja aflat in wheelhouse poate
+  otrăvi reincercarea (lectie: sterge wheel-ul + cache-ul pip inainte de reincercare).
+
+### Capcane noi (17-19)
+17. **libpng cu NEON** se compileaza cu referinta la `png_init_filter_functions_neon` dar fara
+    obiectul care o defineste (CMake-ul libpng adauga `arm/filter_neon_intrinsics.c` doar la
+    NEON=on, insa `pngrutil.c` poate ramane cu referinta) -> la link: `undefined symbol:
+    png_init_filter_functions_neon`. Fix: rebuild cu `-DPNG_ARM_NEON_OPT=0
+    -DPNG_ARM_NEON_IMPLEMENTATION=0` (cale C).
+18. **Wheelhouse-ul poate servi un wheel prost**: daca o instalare a produs un wheel gresit
+    (ex. cbor2 pure-python), reincercarile primesc ACELASI wheel din `files/wheels`/cache si
+    "trec" fara sa compileze. Sterge wheel-ul + cache-ul pip cand schimbi ceva in toolchain.
+19. **`-lm` explicit pe bionic** (perl XS, module C++): fara `-lm` in linia de link, biblioteca
+    shared se incarca fara libm in DT_NEEDED si dlopen-ul esueaza cu "cannot locate symbol"
+    pentru functii din math (modf/floor/pow).
+
+### Fixuri mari gasite de baterie (drumul lui pip, nu teorii)
+
+20. **`LDSHARED` nu continea `_ldflags`** - cel mai important bug de toolchain ramas: orice modul
+    care se linka cu biblioteci din `deps` (Pillow -> libpng/libjpeg/freetype) esua cu
+    `undefined symbol: png_read_info / log / fmod`, pentru ca linia de link nu avea
+    `-L<deps>/lib` si nici `-lm`. Acum `LDSHARED = CC + _extra + --target/--sysroot + _ldflags + -shared`.
+21. **`-lm -ldl` explicit in LDFLAGS** (bionic): cu `-Wl,--no-undefined`, orice modul care
+    foloseste math (log/fmod/modf) sau dlopen are nevoie de ele la link. Dovada: Pillow
+    (`undefined symbol: log`), perl XS (`Cannot locate symbol "modf"`).
+22. **cmake: `CMAKE_FIND_ROOT_PATH_MODE_PACKAGE` trebuie sa fie `BOTH`, nu `ONLY`** -
+    `find_package(Python3)` pentru pachetele cu binding-uri (duckdb/pyarrow) nu se gasea,
+    desi Python-ul e NATIV pe device: `CMake Error at CMakeLists.txt:45 (find_package)`.
+23. **cbor2 6.x nu mai are extensie C, are RUST** (`setuptools-rust` in pyproject.toml) ->
+    fara cargo instaleaza silentios varianta pure-python ("Successfully installed", dar fara
+    `cbor2._cbor2`). Intra in categoria Rust (FAZA 2), nu e un bug de toolchain C.
+24. **grpcio: `ModuleNotFoundError: No module named '_multiprocessing'`** - CPython-ul nostru
+    (compilat de la 0) nu are `_multiprocessing` (bionic nu are sem_open/POSIX semaphores;
+    Termux patchuieste multiprocessing-ul). Orice build care face `import multiprocessing`
+    (grpcio) cade. Fix necesar: rebuild CPython cu suport de semafoare sau patch in
+    multiprocessing (item pentru FAZA 5).
+25. **numpy 2.5.3**: `ninja: FAILED: numpy/_core/__ufunc_api.c` in timpul generarii metadatelor
+    (meson). Ramane de diagnosticat (numpy cere versiuni foarte noi de meson/cython si
+    compilator C cu suport complet).
+26. **apsw**: setup.py isi descarca sursele la build (`urlopen` -> sqlite.org) si a picat cu
+    `CERTIFICATE_VERIFY_FAILED` desi `SSL_CERT_FILE` e setat de toolchain -> de verificat daca
+    bundle-ul CA exista in acel moment si daca subprocesul de build mosteneste env-ul.
+
+### Alte doua fixuri (dupa log-urile complete)
+
+27. **Pillow: setup-ul lui vede headerele (prin `-I deps/include`) si activeaza feature-ul, dar NU
+    adauga `-l...` la linia de link** -> `undefined symbol: png_create_read_struct / jpeg_* /
+    FT_Init_FreeType`. Fix: `_ldflags` include acum explicit `-lz -lpng16 -ljpeg -lfreetype`
+    (toate exista ca `.a` in `deps/lib`).
+28. **duckdb: `find_package(pybind11)`** -> `Could not find a package configuration file provided
+    by "pybind11"`. pybind11 livreaza `pybind11Config.cmake` IN pachetul Python, iar la noi
+    pachetele stau in ZIP-uri (zipimport), deci cmake nu putea citi din zip. Fix:
+    `_pybind11_dir()` extrage `pybind11/share/cmake` in `files/toolchain/pybind11-cmake` si il
+    da lui cmake prin `-Dpybind11_DIR=` (in `CMAKE_ARGS` si in mediu).

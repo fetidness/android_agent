@@ -974,6 +974,24 @@ def _ensure_launchers():
             made.append("cmake")
         except Exception:
             pass
+    # ★ perl (FAZA 3): binarul Termux (ARM64) in nativeLibraryDir ca libperl_exec.so +
+    # symlink 'perl' in files/tmp (MakeMaker/Configure il cauta dupa nume in PATH).
+    if nat and os.path.exists(nat + "/libperl_exec.so"):
+        p = F + "/tmp/perl"
+        try:
+            _st = False
+            if os.path.islink(p):
+                try:
+                    _st = not os.path.exists(os.readlink(p))
+                except Exception:
+                    _st = True
+            if os.path.lexists(p) and (not os.path.islink(p) or _st):
+                os.remove(p)
+            if not os.path.lexists(p):
+                os.symlink(nat + "/libperl_exec.so", p)
+            made.append("perl")
+        except Exception:
+            pass
     # ★ clang/clang++ (task greenlet, 28 sept): in filesDir untrusted_app NU poate
     # executa -> symlink in files/tmp catre libclang_exec.so, cu REPARARE cand tinta
     # e moarta (hash nou in /data/app la fiecare reinstalare). Numele 'clang++'
@@ -1185,6 +1203,55 @@ def _ensure_fake_ndk():
     return ROOT + "/ndk"
 
 
+def _pybind11_dir():
+    """★ pachetele C++ cu binding-uri (duckdb) fac `find_package(pybind11)`, care are nevoie
+    de pybind11Config.cmake. pybind11 il livreaza in pachetul Python - dar la noi pachetele
+    stau in ZIP-uri (zipimport), iar cmake nu citeste din zip -> extragem subtree-ul
+    share/cmake intr-un director real si il dam prin -Dpybind11_DIR."""
+    out = F + "/toolchain/pybind11-cmake"
+    try:
+        if os.path.isdir(out) and os.path.exists(out + "/pybind11Config.cmake"):
+            return out
+    except Exception:
+        pass
+    inst = os.path.dirname(os.path.abspath(__file__))
+    cands = [F + "/pyhome/lib/python3.14/site-packages/pybind11/share/cmake",
+             inst + "/pybind11/share/cmake"]
+    try:
+        import pybind11
+        d = pybind11.get_cmake_dir()
+        if d:
+            cands.insert(0, os.path.dirname(d))
+    except Exception:
+        pass
+    import zipfile
+    for z in (F + "/pyhome/lib/pysitepkg.zip", F + "/pyhome/lib/stdlib_extra.zip"):
+        try:
+            if not os.path.exists(z):
+                continue
+            with zipfile.ZipFile(z) as zf:
+                memb = [n for n in zf.namelist() if "pybind11/share/cmake/" in n]
+                if not memb:
+                    continue
+                os.makedirs(out, exist_ok=True)
+                for n in memb:
+                    rel = n.split("pybind11/share/cmake/", 1)[1]
+                    if not rel or n.endswith("/"):
+                        continue
+                    dst = os.path.join(out, rel)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with open(dst, "wb") as fh:
+                        fh.write(zf.read(n))
+                if os.path.exists(out + "/pybind11Config.cmake"):
+                    return out
+        except Exception:
+            pass
+    for d in cands:
+        if os.path.isdir(d) and os.path.exists(d + "/pybind11/pybind11Config.cmake"):
+            return d + "/pybind11"
+    return ""
+
+
 def _write_cmake_toolchain(_cflags, _ldflags):
     """★ FAZA 1: scrie toolchain-ul CMake pentru DEVICE (o singura sursa de adevar:
     acelasi _cflags/_ldflags ca build-urile pip). cmake il citeste din variabila de
@@ -1217,7 +1284,9 @@ set(CMAKE_FIND_ROOT_PATH "%(root)s/sysroot" "%(deps)s")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+# ★ find_package(Python3) trebuie sa functioneze (pachetele cu binding-uri: duckdb, pyarrow):
+# python-ul e NATIV (ruleaza pe acelasi device), deci BOTH, nu ONLY.
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 set(CMAKE_PREFIX_PATH "%(deps)s")
 """ % {"root": ROOT, "f": F, "deps": DEPS, "cf": _cf, "lf": _lf,
        "ndk": _ensure_fake_ndk()}
@@ -1415,6 +1484,14 @@ def env_vars():
     _atom = _atomic_dir()
     _ldflags = ("-L" + _sdk_lib + " -L" + DEPS + "/lib -L" + apexsdk
                 + (" -L" + _atom if _atom else "")
+                # ★ -lm -ldl EXPLICIT: pe bionic functiile de math/log/fmod sunt in libm si,
+                # cu --no-undefined, orice modul care le foloseste are nevoie de ele la link
+                # (dovedit: Pillow -> "undefined symbol: log/fmod"; perl XS -> "modf").
+                + " -lm -ldl"
+                # ★ Pillow/matplotlib: setup-ul lor vede headerele (via -I deps/include) si
+                # activeaza feature-ul, dar NU adauga -l... la link -> "undefined symbol:
+                # png_create_read_struct / jpeg_* / FT_Init_FreeType". Le dam noi explicit.
+                + " -lz -lpng16 -ljpeg -lfreetype"
                 + " -Wl,--no-undefined"
                 # ★ sect. 5: grpcio cere -latomic explicit (libatomic.a = builtin clang).
                 + (" -latomic" if _atom else ""))
@@ -1443,7 +1520,12 @@ def env_vars():
         "STRIP": STRIP_EXEC,
         "READELF": READELF_EXEC,
         "OBJDUMP": OBJDUMP_EXEC,
-        "LDSHARED": CC_EXEC + _extra + " --target=aarch64-linux-android35 --sysroot=" + ROOT + "/sysroot -shared",
+        # ★ BUG REPARAT (baterie, Pillow): LDSHARED nu continea _ldflags, deci orice modul
+        # care se linka cu libs din deps (libpng/libjpeg/freetype) esua cu
+        # "undefined symbol: png_read_info / log / fmod". Acum LDSHARED = CC + _extra +
+        # target/sysroot + _ldflags (-L deps, -lm, -latomic, --no-undefined) + -shared.
+        "LDSHARED": (CC_EXEC + _extra + " --target=aarch64-linux-android35 --sysroot="
+                     + ROOT + "/sysroot " + _ldflags + " -shared"),
         "CFLAGS": _cflags,
         "CXXFLAGS": _cflags,
         "LDFLAGS": _ldflags,
@@ -1459,7 +1541,9 @@ def env_vars():
         "CMAKE_TOOLCHAIN_FILE": _tc_file,
         "CMAKE_GENERATOR": "Ninja",
         "CMAKE_ARGS": ("-DCMAKE_TOOLCHAIN_FILE=" + _tc_file
-                       + " -DCMAKE_MAKE_PROGRAM=" + F + "/tmp/ninja"),
+                       + " -DCMAKE_MAKE_PROGRAM=" + F + "/tmp/ninja"
+                       + (" -Dpybind11_DIR=" + _pybind11_dir() if _pybind11_dir() else "")),
+        "pybind11_DIR": _pybind11_dir(),
         "CMAKE_PREFIX_PATH": DEPS,
         # ★ FAZA 1 (descoperire cheie): CMake recunoaste ca RULEAZA pe Android (host)
         # si atunci citeste "$ENV{PREFIX}/include/android/api-level.h" ca sa afle API-ul
@@ -1467,6 +1551,20 @@ def env_vars():
         # /include/android/api-level.h" -> configure esua. PREFIX = prefixul de tip
         # Termux, adica radacina sysroot-ului nostru.
         "PREFIX": ROOT + "/sysroot/usr",
+        # ★ FAZA 3: perl (binar Termux + arborele de module livrat in assets/toolchain/perl).
+        # @INC-ul compilat in binar arata spre /data/data/com.termux/... -> il redirectionam
+        # prin PERL5LIB (nu are nevoie de patch-uri pe binar). Necesar pentru build-uri
+        # autotools/openssl (Configure e script perl) si pentru grpcio.
+        # ★ perl 5.42.0 e COMPILAT DE NOI (perl-cross + NDK, ARM64) si are prefixul de pe
+        # device compilat in binar -> isi gaseste singur @INC. PERL5LIB ramane ca plasa de
+        # siguranta (versiune + arhdir-ul nostru: aarch64-linux, nu aarch64-android).
+        "PERL5LIB": (ROOT + "/perl/lib/perl5/5.42.0:"
+                     + ROOT + "/perl/lib/perl5/5.42.0/aarch64-linux:"
+                     + ROOT + "/perl/lib/perl5/site_perl"),
+        "PERL_MM_USE_DEFAULT": "1",
+        # NOTA (cbor2 6.x): acceleratorul lui NU mai e C, e RUST (setuptools-rust in
+        # pyproject.toml) -> fara cargo instaleaza silentios varianta pure-python
+        # ("Successfully installed", dar fara cbor2._cbor2). Intra in categoria Rust (FAZA 2).
         # ★ variabilele explicite: setup.py le foloseste prin subprocess care poate
         # sa nu mosteneasca PATH-ul -> "Permission denied"/"not found" la pkg-config.
         "PKG_CONFIG": PKG_EXEC,
@@ -1483,6 +1581,8 @@ def env_vars():
         # ★ FIX CRITIC: FARA directorul de stub-uri NDK (sysroot/usr/lib/...) - vezi
         # `_rt_ld_path()`; altfel ORICE PROCES COPIL moare cu SIGSEGV in constructori
         # (simptom: `pip install` -> exit -11 la "Preparing metadata").
+        # ★ FAZA 3: perl-ul compilat de noi e linkat cu libperl STATIC (doar libc/libm/libdl)
+        # -> nu mai adaugam ROOT/perl/lib in LD_LIBRARY_PATH (nu are ce sa caute acolo).
         "LD_LIBRARY_PATH": _rt_ld_path(),
         # ★ PYTHONHOME/PATH pentru stdlib: fara ele "Failed to import encodings".
         "PYTHONHOME": F + "/pyhome",
@@ -1725,9 +1825,26 @@ def selftest():
         except Exception as _ex:
             r["cmake"] = False
             r["cmake_error"] = repr(_ex)[:200]
-    # 8. ce NU avem (limite cunoscute) + wheelhouse
+    # 8. perl REAL (Termux ARM64 livrat in APK): ruleaza cod + incarca un modul XS.
+    # Necesar pentru Configure-ul OpenSSL (script perl) si pentru grpcio.
+    pl = _which("perl")
+    r["perl"] = False
+    if pl:
+        try:
+            _penv = dict(os.environ)
+            _penv.update(env_vars())
+            t0 = time.time()
+            _pp = subprocess.run([pl, "-MPOSIX", "-e", "print 6*7, qq{|}, POSIX::floor(1.9)"],
+                                 env=_penv, capture_output=True, text=True, timeout=120,
+                                 stdin=subprocess.DEVNULL)
+            r["perl"] = bool(_pp.returncode == 0 and "42|1" in (_pp.stdout or ""))
+            tm["perl_s"] = round(time.time() - t0, 2)
+            if not r["perl"]:
+                r["perl_error"] = ((_pp.stdout or "") + (_pp.stderr or ""))[-200:]
+        except Exception as _ex:
+            r["perl_error"] = repr(_ex)[:200]
+    # 9. ce NU avem (limite cunoscute) + wheelhouse
     r["rust"] = bool(_which("cargo") or _which("rustc"))
-    r["perl"] = bool(_which("perl"))
     wd = _wheels_dir()
     try:
         r["wheelhouse"] = len([x for x in os.listdir(wd) if x.endswith(".whl")])

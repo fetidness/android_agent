@@ -300,9 +300,9 @@ simulat), deci testeaza codul real fara sa astepte modelul.
 |---|---|---|---|
 | 0 - Fundatia (self-test, taxonomie, cache wheels, wheel-first) | FACUT + VERIFICAT | 29 sept | vezi sectiunea 8.1 |
 | 1 - cmake | FACUT + VERIFICAT | 29 sept | vezi sectiunea 8.2 |
-| 2 - Rust | NEINCEPUT | - | - |
-| 3 - perl / autotools | NEINCEPUT | - | - |
-| 4 - Tier 2 (sqlite3, freetype, HDF5, libzmq) | NEINCEPUT | - | - |
+| 2 - Rust | NEINCEPUT | - | cercetat: rust 1.98.1 = 122 MB deb / 548 MB instalat + libllvm 165 MB; maturin nu exista in repo; nevoie de bootstrap la cerere sau build din sursa |
+| 3 - perl / autotools | FACUT + VERIFICAT | 29 sept | perl 5.42.0 COMPILAT DE NOI (perl-cross 1.6.5 + NDK 27), vezi 8.3 |
+| 4 - Tier 2 (sqlite3, freetype, HDF5, libzmq) | IN LUCRU (sqlite3+freetype+png+zlib+zstd gata; HDF5/libzmq lipsesc) | 29 sept | vezi 8.3 |
 | 5 - Fortran la rulare / LLVM dev | NEINCEPUT | - | - |
 | 6 - Inchidere + script regresie | NEINCEPUT | - | - |
 
@@ -424,3 +424,64 @@ Capcane noi, dovedite pe device (raman ca lectii):
 Test real cu pachet de pe PyPI (build CMake + scikit-build-core): `h3` a trecut de
 configure cmake + generarea Cython + startul compilarii cu ninja si a picat pe o eroare
 Cython din sdist (`from .error_system cimport check_for_error`) - adica NU pe toolchain.
+
+### 8.3 FAZA 3 - perl autonom + Tier-2 + fixuri de pachete (29 sept 2026, `.assets_v190`)
+
+**Nimic din Termux nu mai e folosit in APK.** perl-ul vechi (binar Termux) a fost inlocuit cu
+perl 5.42.0 COMPILAT DE NOI pe laptop, cross-compilat pentru aarch64-linux-android.
+
+Reteta de cross-compilare perl (toate capcanele dovedite):
+- `perl-cross` 1.6.5 (versiunea 1.5.3 NU are patchset pentru 5.40/5.42 -> "No patchset found
+  for perl5-5.42.2"; 1.6.5 are patchset pentru 5.42.0).
+- configure cere EXPLICIT toate uneltele: `--with-cc --with-ar --with-ranlib --with-nm
+  --with-objdump --with-readelf` (fara ele: "ERROR: Cannot find ar/readelf").
+- `-Dd_futimes=undef -Dd_futimesat=undef -Dd_lchown=undef` - bionic nu are futimes/lchown
+  (altfel: `doio.c: error: call to undeclared function 'futimes'`).
+- **`-Dlibs='-ldl -lm'`** - esential pe Android: fara `-lm` explicit, modulele XS se linkeaza
+  fara DT_NEEDED libm si la dlopen mor cu `cannot locate symbol "modf"` (dovedit: cu
+  `LD_PRELOAD=/system/lib64/libm.so` mergeau; dupa rebuild cu -lm, POSIX.so are NEEDED libm).
+- binarul iese linkat cu libperl STATIC (doar libc/libm/libdl) si are prefixul de pe device
+  compilat in el -> isi gaseste singur @INC.
+- `lib/perl5/5.42.0/aarch64-linux/auto/List/Util/Util.so` se linkeaza in build-ul intern fara
+  -lm -> l-am relinkat manual cu `-lm` (altfel `use List::Util` pica).
+- livrat: `assets/toolchain/perl` (55 MB, cu `pod/` taiat) + `jniLibs/arm64-v8a/libperl_exec.so`
+  + symlink `files/tmp/perl`; `PERL5LIB=<ROOT>/perl/lib/perl5/5.42.0:<...>/aarch64-linux:<...>/site_perl`.
+
+Tier-2 (in `assets/toolchain/deps`, static, cu `.pc` scrise cu prefixul DE PE TELEFON):
+- zlib 1.3.1 (`libz.a`), libpng 1.6.44 (`libpng16.a`), freetype 2.13.3 (`libfreetype.a`),
+  sqlite3 3.46.1 (`libsqlite3.a`, FTS5+JSON1+RTREE), zstd **1.5.7** (`libzstd.a`).
+
+Doua bug-uri reale de pachet gasite de baterie si reparate:
+- **zstandard** pica la build: `deps/include/zstd.h` era vechi (1.5.6) si umbrea header-ul din
+  sdist -> `unknown type name 'ZSTD_FrameHeader'`. Fix: zstd 1.5.7 in deps.
+- **cbor2** se instala "cu succes" dar FARA extensia C (`import cbor2._cbor2` ->
+  ModuleNotFoundError): pachetul isi construieste extensia doar cu `CBOR2_BUILD_C_EXTENSION=1`.
+  Fix: variabila adaugata in `env_vars()`.
+
+Baterie de teste (16 pachete + test de link C), prin `run_toolchain_tool(action='pip_install')`
+si verificare independenta in subproces nou: vezi tabelul din `readme.md` (Etapa 52).
+
+### 8.4 Rezultatele bateriei pe `.assets_v192` (situatia la inchiderea sesiunii)
+
+**Pachete care se compileaza si functioneaza pe device (verificate cu import/functionalitate
+in subproces nou):** simplejson, MarkupSafe, cffi, msgpack, regex, lz4, kiwisolver, greenlet,
+lxml, zstandard (10) + testul de link C pentru Tier-2 (sqlite3+libpng+freetype+zlib).
+
+**Pachete care au aratat gauri REALE in toolchain (si fixurile aplicate):**
+- zstandard -> header zstd vechi in deps (fix: zstd 1.5.7) -> acum OK.
+- Pillow -> `LDSHARED` fara `_ldflags` + libs de imagini necerute la link
+  (fix: LDSHARED complet + `-lm -ldl -lz -lpng16 -ljpeg -lfreetype`) -> **REZOLVAT: Pillow 12.3.0
+  se compileaza pe device si functioneaza (PNG save/open, `_imaging.cpython-314-aarch64-linux-android.so`)**.
+- duckdb -> `find_package(pybind11)` (fix: `_pybind11_dir()` extrage cmake-ul din zip +
+  `-Dpybind11_DIR`) -> de re-verificat.
+- apsw -> descarca surse la build si pica pe CA (de investigat in continuare).
+- numpy 2.5.3 -> `ninja: FAILED: numpy/_core/__ufunc_api.c` in generarea metadatelor.
+- grpcio -> `No module named '_multiprocessing'`: CPython-ul nostru nu are
+  `_multiprocessing` (bionic nu are semafoare POSIX) -> orice build care face
+  `import multiprocessing` cade. Necesita rebuild CPython cu suport de semafoare.
+- cbor2 6.x -> accelerator RUST (setuptools-rust), nu C -> intra la FAZA 2 (Rust).
+
+**Rust (FAZA 2) - de ce nu e facut in aceasta sesiune:** pachetul Termux `rust 1.98.1`
+(122 MB deb / 548 MB instalat) + `libllvm` (165 MB) + `maturin` (inexistent in repo, trebuie
+construit cu cargo) -> varianta curata e un bootstrap LA CERERE (agentul descarca toolchain-ul
+doar cand primeste un pachet Rust), nu bundling in APK (APK-ul ar sari de la ~309 MB la ~1 GB).
