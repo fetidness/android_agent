@@ -3064,3 +3064,21 @@ Fortran, cmake, perl, Rust - toate capabilitatile prezente).
 * rustc are nevoie de `LD_LIBRARY_PATH` catre acel lib dir (setat in `toolchain.env_vars()` /
   `toolchain.rust_env()`), de linker-ul `files/tmp/clang` cu `--target`/`--sysroot` (scrise in
   `files/cargo/config.toml`) si de CA bundle pentru crates.io.
+
+### Capcane dovedite DUPA prima runda (46-48) - pachete Python cu Rust (cbor2 6.x)
+46. **cargo NU propaga linker-ul catre build-scripturi** (nici prin `[target.*].linker`, nici
+    prin `RUSTFLAGS`, nici cu `build.target-applies-to-host` - cheia nici nu e recunoscuta de
+    cargo 1.98). Simptom: build-scripturile se linkau cu clang FARA `--target/--sysroot` ->
+    `cannot open crtbegin_dynamic.o` + `unable to find library -ldl/-llog/-lm/-lc`, deci orice
+    crate cu `build.rs` cadea (majoritatea). Fix: **wrapper de linker** `files/tmp/cc-rust`
+    (script shell care executa clang-ul din APK cu `--target/--sysroot`) pus ca `linker` in
+    `files/cargo/config.toml`. Scriptul e executabil pentru ca e interpretat de `/system/bin/sh`.
+47. **App-ul POATE executa binare din propriul filesDir** (verificat: `rustc --version` rc=0
+    dintr-un director din `files/`). Restrictia SELinux se aplica `shell_data_file`
+    (`/data/local/tmp`), nu datelor proprii ale app-ului. Concluzie practica: build-scripturile
+    cargo merg; pentru binarele "de sistem" (rustc/cargo) ramane totusi mai curat jniLibs.
+48. **`cbor2 6.x` se compileaza acum de la sursa pe device**: wheel
+    `cbor2-6.1.4-cp314-cp314-android_24_arm64_v8a.whl`, 710 s, rulare verificata
+    (`CBOR2_RUST_OK {'a': [1, 2, 3]}`). Baza: `setuptools-rust` + cargo/rustc din APK.
+    (Pachetele care folosesc `maturin` ca backend - orjson, cramjam, pydantic-core - cer
+    binarul `maturin` livrat in jniLibs: pas urmator.)

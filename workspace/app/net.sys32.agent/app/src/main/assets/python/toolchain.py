@@ -1427,6 +1427,20 @@ def _rust_lib():
 _RUST_NEEDS_PRELOAD = None
 
 
+def _rust_link_flags():
+    """Flags de LINK pentru rustc/cargo pe device (clang din APK + sysroot-ul de device).
+
+    Sunt puse in RUSTFLAGS (variabila de MEDIU), nu doar in `files/cargo/config.toml`:
+    `rustflags` din `[target.*]` NU ajung la compilarea build-scripturilor (cargo le
+    compileaza pentru gazda) -> linkul lor cadea cu "cannot open crtbegin_dynamic.o" si
+    "-ldl/-llog/-lm/-lc not found". Build-scripturile sunt obligatorii pentru majoritatea
+    crate-urilor, deci trebuie sa mearga.
+    """
+    return ("-C linker=" + F + "/tmp/clang"
+            + " -C link-arg=--target=aarch64-linux-android" + str(_device_api())
+            + " -C link-arg=--sysroot=" + ROOT + "/sysroot")
+
+
 def _ensure_rust():
     """★ FAZA 4 (Rust): rustc + cargo cross-compilate de noi pentru Android.
 
@@ -1504,16 +1518,33 @@ def _ensure_rust():
                 break
         except Exception:
             _RUST_NEEDS_PRELOAD = False
-    # config cargo: linker-ul nostru + sysroot-ul de device (altfel cargo cheama "cc")
+    # ★ wrapper de LINKER (script, in files/tmp): cargo NU propaga linker-ul/rustflags catre
+    # linkul build-scripturilor (nici cu target-applies-to-host, nici prin RUSTFLAGS - dovedit
+    # pe device), deci singura cale sigura e ca `cc`-ul insusi sa adauge --target/--sysroot.
+    # Scriptul e executabil pentru ca e interpretat de /system/bin/sh (nu exec direct).
+    try:
+        _cc = F + "/tmp/cc-rust"
+        _body = ('#!/system/bin/sh\n'
+                 'exec ' + F + '/tmp/clang --target=aarch64-linux-android' + str(_device_api())
+                 + ' --sysroot=' + ROOT + '/sysroot "$@"\n')
+        _old = open(_cc).read() if os.path.exists(_cc) else None
+        if _old != _body:
+            open(_cc, "w").write(_body)
+        os.chmod(_cc, 0o755)
+    except Exception:
+        pass
+    # config cargo: linker-ul nostru + sysroot-ul de device. ★ `target-applies-to-host` e
+    # OBLIGATORIU: fara el cargo NU aplica linker/rustflags build-scripturilor (le compileaza
+    # "pentru gazda") si linkul lor cade cu "cannot open crtbegin_dynamic.o" / "-lc not found".
     try:
         _ch = F + "/cargo"
         os.makedirs(_ch, exist_ok=True)
         _cfg = _ch + "/config.toml"
+        _rf = '["-C", "link-arg=--target=aarch64-linux-android%d", "-C", "link-arg=--sysroot=%s/sysroot"]' % (_device_api(), ROOT)
         _want = ('[build]\ntarget = "aarch64-linux-android"\n\n'
                  '[target.aarch64-linux-android]\n'
-                 'linker = "' + F + '/tmp/clang"\n'
-                 'rustflags = ["-C", "link-arg=--target=aarch64-linux-android' + str(_device_api()) + '", '
-                 '"-C", "link-arg=--sysroot=' + ROOT + '/sysroot"]\n')
+                 'linker = "' + F + '/tmp/cc-rust"\n'
+                 'rustflags = ' + _rf + '\n')
         if (not os.path.exists(_cfg)) or open(_cfg).read() != _want:
             open(_cfg, "w").write(_want)
     except Exception:
@@ -1535,6 +1566,11 @@ def rust_env(base=None):
         pass
     env["CARGO_HOME"] = F + "/cargo"
     env["PATH"] = F + "/tmp:" + F + "/cargo/bin:" + env.get("PATH", "")
+    # ★ CAPCANA: `rustflags` din [target.*] din config.toml NU se aplica la compilarea
+    # build-scripturilor (cargo le compileaza "pentru gazda") -> linkerul clang rula fara
+    # --target/--sysroot si linkul cadea cu "cannot open crtbegin_dynamic.o" /
+    # "-ldl/-llog/-lm/-lc not found". RUSTFLAGS din MEDIU se aplica la TOT.
+    env["RUSTFLAGS"] = _rust_link_flags()
     # ★ cargo are curl STATIC in el -> fara CA bundle "SSL certificate problem"
     # la primul `cargo fetch`/`cargo install` de pe crates.io.
     try:
@@ -1848,6 +1884,9 @@ def env_vars():
         "CARGO_HOME": F + "/cargo",
         "RUSTUP_HOME": F + "/cargo/rustup",
         "RUST_BACKTRACE": "0",
+        # ★ RUSTFLAGS in MEDIU (nu doar in config.toml): fara ele build-scripturile
+        # crate-urilor Rust nu se pot linka pe device (capcana dovedita).
+        "RUSTFLAGS": _rust_link_flags(),
         "CARGO_NET_GIT_FETCH_WITH_CLI": "true",
         # ★ PYTHONHOME/PATH pentru stdlib: fara ele "Failed to import encodings".
         "PYTHONHOME": F + "/pyhome",
