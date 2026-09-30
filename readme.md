@@ -3082,3 +3082,40 @@ Fortran, cmake, perl, Rust - toate capabilitatile prezente).
     (`CBOR2_RUST_OK {'a': [1, 2, 3]}`). Baza: `setuptools-rust` + cargo/rustc din APK.
     (Pachetele care folosesc `maturin` ca backend - orjson, cramjam, pydantic-core - cer
     binarul `maturin` livrat in jniLibs: pas urmator.)
+
+---
+
+## Etapa 54 - FAZA 5: MATURIN PE DEVICE (pachete Python cu backend maturin) - `.assets_v207`
+
+**Rezultat: `orjson 3.12.0` compilat PE TELEFON in 28 s** (wheel `orjson-3.12.0-cp314-cp314-
+android_35_arm64_v8a.whl`), verificat functional: `ORJSON_RUST_OK {'a': [1,2,3], ...}`.
+
+### Ce s-a construit / livrat
+- `maturin 1.15.0` construit PE DEVICE (`cargo install maturin`, 11m46s) -> `jniLibs/
+  libmaturin_exec.so` (21 MB stripat) + lansator `files/tmp/maturin`;
+- shim Python PEP 517 `maturin` scris automat in site-packages (`toolchain._ensure_maturin()`):
+  pachetele cu `build-backend="maturin"` n-au wheel pentru Android, deci modulul nu exista deloc;
+- rustc RECONSTRUIT cu `optimize = true` (vezi capcana 49) -> driver 87 MB in loc de 415 MB;
+- APK: 619 MB.
+
+### Capcane dovedite (49-54)
+49. **`optimize = false` produce un rustc CARE CRAPA**: `SIGSEGV` la compilarea lui `typenum`
+    (rc=-11, reprodus si fara cargo). bootstrap avertiza exact asta ("known to cause errors and
+    should be considered unsupported"). Fix: `[rust] optimize = true` (rebuild 34 min).
+50. **`patchelf --add-needed` DUPĂ `strip` rupe tabela de hash** -> bionic refuza libraria:
+    "empty/missing DT_HASH/DT_GNU_HASH ... (new hash type from the future?)". Fix: **strip
+    INAINTE, patchelf DUPĂ** (invers fata de cum pare natural).
+51. **`cc-rs` cauta `<target>-clang`** (crate-uri cu C: libgit2/ring/zstd) -> "failed to find
+    tool aarch64-linux-android-clang". Fix: `CC_/CXX_/AR_aarch64-linux-android` +
+    `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER` = wrapper-ul nostru `files/tmp/cc-rust`.
+52. **clang-ul din APK nu-si gaseste headerele BUILTIN** (`float.h`): binarul e redenumit in
+    `libclang_exec.so` -> "fatal error: 'float.h' file not found" (a oprit zstd-sys). Fix:
+    `-resource-dir=$ROOT/lib/clang/21` in wrapper.
+53. **LTO cade cu bitcode din alt LLVM**: std-ul are bitcode produs de LLVM 22.1.8 (LLVM-ul
+    intern al Rust 1.98.1), rustc-ul de device e linkat cu libLLVM 21.1.8 ->
+    "Unknown attribute kind (105) (Producer: 'LLVM22.1.8-rust-1.98.1-stable' Reader: 'LLVM
+    21.1.8')" (dovedit cu orjson, care activeaza LTO in profilul release). Fix:
+    `CARGO_PROFILE_RELEASE_LTO=false` (+ `DEBUG=false`) in `rust_env()`/`env_vars()`.
+54. **cargo NU propaga linker-ul/rustflags catre build-scripturi** (nici cu
+    `build.target-applies-to-host`, cheie nerecunoscuta de cargo 1.98, nici prin RUSTFLAGS) ->
+    wrapper de linker `files/tmp/cc-rust` pus ca `linker` in `files/cargo/config.toml`.

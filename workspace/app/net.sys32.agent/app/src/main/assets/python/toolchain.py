@@ -1427,6 +1427,115 @@ def _rust_lib():
 _RUST_NEEDS_PRELOAD = None
 
 
+_MATURIN_SHIM = '''"""maturin - shim PEP 517 pentru device (net.sys32.agent).
+
+Pachetele cu `[build-system] build-backend = "maturin"` (orjson, cramjam, pydantic-core,
+tokenizers...) au nevoie de MODULUL python `maturin`, care in mod normal vine cu un wheel
+binar (inexistent pentru Android). Aici modulul e doar un invelis subtire peste binarul
+`maturin` livrat in APK (jniLibs/libmaturin_exec.so, symlink in files/tmp).
+"""
+import glob
+import os
+import subprocess
+import sys
+
+
+def _bin():
+    p = "/data/data/net.sys32.agent/files/tmp/maturin"
+    if os.path.exists(p):
+        return p
+    raise RuntimeError("maturin: binarul lipseste din APK (libmaturin_exec.so)")
+
+
+def _run(args, capture=True):
+    env = dict(os.environ)
+    env.setdefault("CARGO_HOME", "/data/data/net.sys32.agent/files/cargo")
+    p = subprocess.run([_bin()] + list(args), capture_output=capture, text=True, env=env)
+    if p.returncode != 0:
+        tail = ((p.stdout or "") + (p.stderr or ""))[-4000:]
+        raise RuntimeError("maturin %s a esuat:\\n%s" % (" ".join(args), tail))
+    return p
+
+
+def _newest(d, pat):
+    f = sorted(glob.glob(os.path.join(d, pat)), key=os.path.getmtime)
+    if not f:
+        raise RuntimeError("maturin: nu a produs niciun %s in %s" % (pat, d))
+    return os.path.basename(f[-1])
+
+
+def get_requires_for_build_wheel(config_settings=None):
+    return []
+
+
+def get_requires_for_build_sdist(config_settings=None):
+    return []
+
+
+def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
+    args = ["build", "--release", "--out", wheel_directory, "--interpreter", sys.executable]
+    _run(args)
+    return _newest(wheel_directory, "*.whl")
+
+
+def build_sdist(sdist_directory, config_settings=None):
+    _run(["sdist", "--out", sdist_directory])
+    return _newest(sdist_directory, "*.tar.gz")
+
+
+def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
+    try:
+        _run(["pep517", "write-dist-info", "--metadata-directory", metadata_directory,
+              "--interpreter", sys.executable])
+        import os as _os
+        for d in _os.listdir(metadata_directory):
+            if d.endswith(".dist-info"):
+                return d
+    except Exception:
+        pass
+    raise NotImplementedError("fara prepare_metadata (pip construieste wheel-ul pentru metadate)")
+'''
+
+
+def _ensure_maturin():
+    """★ FAZA 5: pachete Python cu backend `maturin` (orjson, cramjam, pydantic-core...).
+
+    Doua componente, ca la rustc/cargo:
+      * binarul (jniLibs/libmaturin_exec.so) -> lansator in files/tmp/maturin;
+      * modulul python `maturin` (PEP 517) -> shim scris in site-packages, care cheama binarul.
+    Fara binar: pachetele cu maturin nu se pot construi deloc pe Android (nu exista wheel).
+    """
+    nat = _native_dir()
+    if nat and os.path.exists(nat + "/libmaturin_exec.so"):
+        _p = F + "/tmp/maturin"
+        try:
+            _st = False
+            if os.path.islink(_p):
+                try:
+                    _st = not os.path.exists(os.readlink(_p))
+                except Exception:
+                    _st = True
+            if os.path.lexists(_p) and (not os.path.islink(_p) or _st):
+                os.remove(_p)
+            if not os.path.lexists(_p):
+                os.symlink(nat + "/libmaturin_exec.so", _p)
+        except Exception:
+            pass
+    # shim-ul python (in site-packages-ul REAL, unde cauta pip)
+    try:
+        import sysconfig as _sc
+        _sp = _sc.get_paths().get("purelib") or _sc.get_paths().get("platlib")
+        if not _sp:
+            _sp = F + "/pyhome/lib/python3.14/site-packages"
+        _d = _sp + "/maturin"
+        os.makedirs(_d, exist_ok=True)
+        _f = _d + "/__init__.py"
+        if (not os.path.exists(_f)) or open(_f).read() != _MATURIN_SHIM:
+            open(_f, "w").write(_MATURIN_SHIM)
+    except Exception:
+        pass
+
+
 def _rust_link_flags():
     """Flags de LINK pentru rustc/cargo pe device (clang din APK + sysroot-ul de device).
 
@@ -1524,8 +1633,13 @@ def _ensure_rust():
     # Scriptul e executabil pentru ca e interpretat de /system/bin/sh (nu exec direct).
     try:
         _cc = F + "/tmp/cc-rust"
+        # ★ clang-ul din APK nu-si gaseste headerele BUILTIN (float.h, stddef.h...) pentru ca
+        # binarul e redenumit (libclang_exec.so) -> fara -resource-dir: "fatal error: 'float.h'
+        # file not found" (l-a oprit pe zstd-sys, dependinta de maturin).
+        _res = ROOT + "/lib/clang/21"
+        _resf = (" -resource-dir=" + _res) if os.path.isdir(_res + "/include") else ""
         _body = ('#!/system/bin/sh\n'
-                 'exec ' + F + '/tmp/clang --target=aarch64-linux-android' + str(_device_api())
+                 'exec ' + F + '/tmp/clang' + _resf + ' --target=aarch64-linux-android' + str(_device_api())
                  + ' --sysroot=' + ROOT + '/sysroot "$@"\n')
         _old = open(_cc).read() if os.path.exists(_cc) else None
         if _old != _body:
@@ -1571,6 +1685,20 @@ def rust_env(base=None):
     # --target/--sysroot si linkul cadea cu "cannot open crtbegin_dynamic.o" /
     # "-ldl/-llog/-lm/-lc not found". RUSTFLAGS din MEDIU se aplica la TOT.
     env["RUSTFLAGS"] = _rust_link_flags()
+    # ★ crate-urile care compileaza C prin `cc-rs` (maturin -> git2/libgit2, ring, psm...)
+    # cauta un compilator NUMIT `<target>-clang` sau variabilele CC_<target>/CXX_<target>.
+    # Fara ele: "failed to find tool \"aarch64-linux-android-clang\"".
+    _t = "aarch64-linux-android"
+    env.setdefault("CC_" + _t, F + "/tmp/cc-rust")
+    env.setdefault("CXX_" + _t, F + "/tmp/cc-rust")
+    env.setdefault("AR_" + _t, F + "/tmp/ar")
+    env.setdefault("CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", F + "/tmp/cc-rust")
+    # ★ LTO OFF: std-ul vine cu bitcode LLVM 22.1.8 (LLVM-ul intern al Rust 1.98.1), iar
+    # rustc-ul de pe device e linkat cu libLLVM 21.1.8 -> LTO cade cu
+    # "failed to load bitcode of module ...: Unknown attribute kind (105)
+    #  (Producer: 'LLVM22.1.8-rust-1.98.1-stable' Reader: 'LLVM 21.1.8')" (dovedit cu orjson).
+    env.setdefault("CARGO_PROFILE_RELEASE_LTO", "false")
+    env.setdefault("CARGO_PROFILE_RELEASE_DEBUG", "false")
     # ★ cargo are curl STATIC in el -> fara CA bundle "SSL certificate problem"
     # la primul `cargo fetch`/`cargo install` de pe crates.io.
     try:
@@ -1596,6 +1724,7 @@ def env_vars():
     pipcache = home + "/.cache/pip"
     _ensure_launchers()
     _ensure_rust()                # ★ FAZA 4: rustc/cargo + librustc_driver/libLLVM/std
+    _ensure_maturin()             # ★ FAZA 5: maturin (backend pentru orjson/cramjam/...)
     _ensure_python_pc()
     _ensure_pipconf()
     _ensure_py_include()          # ★ Python.h pentru extensii C (INCLUDEPY)
@@ -1887,6 +2016,15 @@ def env_vars():
         # ★ RUSTFLAGS in MEDIU (nu doar in config.toml): fara ele build-scripturile
         # crate-urilor Rust nu se pot linka pe device (capcana dovedita).
         "RUSTFLAGS": _rust_link_flags(),
+        # ★ cc-rs (crate-uri cu C: libgit2/ring/psm) cauta `<target>-clang`:
+        # le dam wrapper-ul nostru de linker/compilator.
+        "CC_aarch64-linux-android": F + "/tmp/cc-rust",
+        "CXX_aarch64-linux-android": F + "/tmp/cc-rust",
+        "AR_aarch64-linux-android": F + "/tmp/ar",
+        "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER": F + "/tmp/cc-rust",
+        # ★ LTO OFF (vezi rust_env): bitcode std = LLVM 22.1.8, rustc de device = libLLVM 21.1.8.
+        "CARGO_PROFILE_RELEASE_LTO": "false",
+        "CARGO_PROFILE_RELEASE_DEBUG": "false",
         "CARGO_NET_GIT_FETCH_WITH_CLI": "true",
         # ★ PYTHONHOME/PATH pentru stdlib: fara ele "Failed to import encodings".
         "PYTHONHOME": F + "/pyhome",

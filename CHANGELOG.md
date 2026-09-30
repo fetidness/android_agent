@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-09-30 (FAZA 5: MATURIN + pachete Python cu backend maturin)
+
+- `maturin 1.15.0` construit PE DEVICE (11m46s) -> `jniLibs/libmaturin_exec.so` + lansator in
+  `files/tmp` + shim Python PEP 517 scris de `toolchain._ensure_maturin()`.
+- **`orjson 3.12.0` compilat pe telefon in 28 s** si verificat functional (`ORJSON_RUST_OK`).
+- rustc RECONSTRUIT cu `optimize = true` (cel vechi crapa cu SIGSEGV pe `typenum`).
+- Capcane noi 49-54 in `readme.md` (optimize=false -> SIGSEGV; strip inainte de patchelf;
+  cc-rs; `-resource-dir` pentru headere builtin; LTO cu bitcode LLVM 22 vs libLLVM 21;
+  wrapper de linker pentru build-scripturi).
+- APK `.assets_v207` (619 MB).
+
 ## 2026-09-30 (FAZA 4: RUST PE DEVICE - LLVM 21.1.8 + rustc/cargo 1.98.1, compilate de la 0)
 
 **Obiectiv atins:** pachetele Python cu acceleratoare RUST se compileaza PE TELEFON. Zero Termux,
