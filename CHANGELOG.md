@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-09-30 (TEST E2E DIN UI + reparatii toolchain)
+
+- Test end-to-end: task din interfata -> agentul compileaza/verifica pe device (33 pasi).
+- Reparate dupa test: `selftest()` verifica REAL `cargo --version` (era doar existenta);
+  avertisment de RAM libera (`ram_liber_mb`/`ram_atentionare`); `libc++_shared.so` inapoi in
+  arhiva Rust (regresie de impachetare); regula in `agent.py` ca LD_LIBRARY_PATH se prepend.
+- `.assets_v210`: `selftest` -> rust=True, cargo=True.
+
 ### 2026-09-30 (FAZA 5: MATURIN + pachete Python cu backend maturin)
 
 - `maturin 1.15.0` construit PE DEVICE (11m46s) -> `jniLibs/libmaturin_exec.so` + lansator in

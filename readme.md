@@ -3119,3 +3119,26 @@ android_35_arm64_v8a.whl`), verificat functional: `ORJSON_RUST_OK {'a': [1,2,3],
 54. **cargo NU propaga linker-ul/rustflags catre build-scripturi** (nici cu
     `build.target-applies-to-host`, cheie nerecunoscuta de cargo 1.98, nici prin RUSTFLAGS) ->
     wrapper de linker `files/tmp/cc-rust` pus ca `linker` in `files/cargo/config.toml`.
+
+---
+
+## Etapa 55 - FAZA 4c: TEST E2E DIN UI + 3 REPARATII (`.assets_v210`)
+
+Test real: task scris din interfata, executat de agent pe device. Agentul a lucrat corect
+(33 pasi, a compilat si verificat pe device), dar a raportat de doua ori concluzii gresite -
+de fiecare data din cauza unor defecte REALE ale toolchain-ului, reparate acum:
+
+1. **`selftest()` raporta `cargo` OK doar pe EXISTENTA** binarului (fals pozitiv semnalat de
+   agent). Acum ruleaza real `cargo --version` si intoarce `cargo_error`.
+2. **Presiune de memorie**: cu ~579 MB liberi, `rustc` moare cu SIGSEGV fara mesaj (incarca
+   librustc_driver ~90 MB + libLLVM). `selftest()` intoarce acum `ram_liber_mb` +
+   `ram_atentionare` sub 900 MB, iar `agent.py` are regula: la SIGSEGV/-11/139 pe Rust,
+   primul lucru verificat e RAM-ul liber.
+3. **`libc++_shared.so` lipsea din `rust-libs.tar.gz`** (regresie de impachetare) ->
+   "CANNOT LINK EXECUTABLE rustc: library libc++_shared.so not found". Reparat in
+   `build/rust_pack.sh` (pasul 3b).
+
+Plus: `agent.py` noteaza explicit ca `LD_LIBRARY_PATH` trebuie **PREPEND**, niciodata inlocuit
+(agentul a descoperit singur ca inlocuirea pierde calea nativeLibraryDir -> segfault).
+
+**Rezultat pe `.assets_v210`: `selftest` -> `rust=True`, `cargo=True`, `ram_liber_mb=4485`.**

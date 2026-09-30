@@ -1580,21 +1580,40 @@ def _ensure_rust():
         tgz = ROOT + _nm
         if os.path.exists(tgz):
             break
-    if not os.path.exists(lib + "/.extracted") and os.path.exists(tgz):
+    if os.path.exists(tgz):
+        # ★ CAPCANA (dovedita de testul E2E din UI): marker-ul ".extracted" supravietuieste
+        # update-urilor de APK, dar arhiva din assets se schimba (rustc nou -> nume NOU de
+        # librustc_driver). Rezultatul: rustc nou + driver vechi -> agentul raporta
+        # "Rust rupt (segfault)". De aceea stampilam (size, mtime) si re-extragem la schimbare.
         try:
-            import tarfile
-            with tarfile.open(tgz) as t:
-                # ★ CAPCANA (Python 3.14): filtrul implicit "data" ARUNCA
-                # AbsoluteLinkError daca arhiva are vreun symlink absolut
-                # (lib/rustlib/src/rust -> /home/gab/... din arborele de build).
-                # Filtrul "tar" doar ignora linkurile absolut/escape-urile, nu pica.
-                try:
-                    t.extractall(rd, filter="tar")
-                except TypeError:
-                    t.extractall(rd)
-            open(lib + "/.extracted", "w").write("1")
+            _st = os.stat(tgz)
+            _sig = "%d:%d" % (_st.st_size, int(_st.st_mtime))
         except Exception:
-            pass
+            _sig = ""
+        _need = not os.path.exists(lib + "/.extracted")
+        if not _need and _sig:
+            try:
+                _need = open(lib + "/.extracted").read().strip() != _sig
+            except Exception:
+                _need = True
+        if _need:
+            try:
+                import shutil as _sh0
+                import tarfile
+                _sh0.rmtree(lib, ignore_errors=True)   # scoatem .so-urile vechi (nume/hash nou)
+                os.makedirs(lib, exist_ok=True)
+                with tarfile.open(tgz) as t:
+                    # ★ CAPCANA (Python 3.14): filtrul implicit "data" ARUNCA
+                    # AbsoluteLinkError daca arhiva are vreun symlink absolut
+                    # (lib/rustlib/src/rust -> /home/gab/... din arborele de build).
+                    # Filtrul "tar" doar ignora linkurile absolut/escape-urile, nu pica.
+                    try:
+                        t.extractall(rd, filter="tar")
+                    except TypeError:
+                        t.extractall(rd)
+                open(lib + "/.extracted", "w").write(_sig or "1")
+            except Exception:
+                pass
     # lansatoare executabile in files/tmp (acelasi tipar ca cmake/perl/clang)
     nat = _native_dir()
     for _nm, _so in (("rustc", "librustc_exec.so"), ("cargo", "libcargo_exec.so")):
@@ -2259,7 +2278,32 @@ def selftest():
             r["rust_error"] = repr(ex)[:200]
     else:
         r["rust"] = False
-    r["cargo"] = bool(_exec_ok(F + "/tmp/cargo"))
+    # ★ FALS POZITIV (raportat de testul E2E din UI): verificarea de existenta nu spune daca
+    # binarul CHIAR ruleaza (are nevoie de librustc_driver + libLLVM + RAM). Rulam real.
+    r["cargo"] = False
+    if os.path.exists(F + "/tmp/cargo"):
+        try:
+            _cp = subprocess.run([F + "/tmp/cargo", "--version"], capture_output=True, text=True,
+                                 timeout=180, env=rust_env(), stdin=subprocess.DEVNULL)
+            r["cargo"] = bool(_cp.returncode == 0 and "cargo" in (_cp.stdout or ""))
+            if not r["cargo"]:
+                r["cargo_error"] = ((_cp.stdout or "") + (_cp.stderr or ""))[-200:]
+        except Exception as _ex:
+            r["cargo_error"] = repr(_ex)[:200]
+    # ★ MEMORIE: rustc incarca librustc_driver (90 MB) + libLLVM; sub ~900 MB liberi poate
+    # muri cu SIGSEGV fara mesaj (vazut pe device la 579 MB liberi - testul E2E din UI).
+    try:
+        _mi = {}
+        for _l in open("/proc/meminfo"):
+            _k, _, _v = _l.partition(":")
+            _mi[_k.strip()] = int(_v.split()[0])
+        _av = _mi.get("MemAvailable", 0) // 1024
+        r["ram_liber_mb"] = _av
+        if _av < 900:
+            r["ram_atentionare"] = ("doar %d MB liberi - build-urile Rust pot cadea cu SIGSEGV "
+                                    "fara mesaj (inchide aplicatii de fundal)" % _av)
+    except Exception:
+        pass
 
     # 4. Fortran: COMPILARE (rularea unui binar produs de app nu e posibila - SELinux)
     f90 = _mk("t.f90", "      subroutine s(a)\n      real a\n      a=a+1.0\n      end\n")
