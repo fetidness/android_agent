@@ -3,9 +3,59 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `dc11293`.
+> Ultimul commit inclus: `19d2083`.
 
-**Total: 182 commituri in 10 zile** (19 sep -> 29 sep).
+**Total: 186 commituri in 12 zile** (19 sep -> 30 sep).
+
+---
+
+## 2026-09-30 (FAZA 4: RUST PE DEVICE - LLVM 21.1.8 + rustc/cargo 1.98.1, compilate de la 0)
+
+**Obiectiv atins:** pachetele Python cu acceleratoare RUST se compileaza PE TELEFON. Zero Termux,
+zero artefact precompilat de la terti: LLVM-ul si Rust-ul sunt construite de noi, cross, din sursa.
+
+### Commituri
+- `bd7ecf5` - **FAZA 4: Rust pe device** (LLVM + rustc + cargo cross-compilate)
+- `19d2083` - **FAZA 4b: pachete Python cu Rust** (cbor2 6.x) - wrapper de linker pentru build-scripturi
+
+### Piese construite (cross, pe laptop)
+| piesa | sursa | rezultat |
+|---|---|---|
+| LLVM 21.1.8 | llvm-project-21.1.8.src.tar.xz | `libLLVM.so.21.1` (dylib, PIC, doar AArch64) |
+| Rust 1.98.1 | rustc-1.98.1-src.tar.gz + stage0 oficial x86_64 | `rustc` ARM64 + `librustc_driver-*.so` |
+| cargo | `x.py build --stage 2 src/tools/cargo` | `cargo` ARM64 (NEEDED doar libdl/libm/libc) |
+| std | `x.py build --stage 2 library/std` | `rustlib/aarch64-linux-android/lib/*.rlib` + `.rmeta` |
+
+### Livrare in APK (`.assets_v206`)
+- binarele (`rustc`, `cargo`) -> `jniLibs/arm64-v8a/lib*_exec.so` + symlink in `files/tmp`;
+- librariile grele + std -> `assets/toolchain/rust-libs.tar.gz`, extrase o singura data in
+  `files/toolchain/rust/lib`;
+- `toolchain.py`: `_ensure_rust()` (extragere + lansatoare + `files/cargo/config.toml` +
+  wrapper de linker `files/tmp/cc-rust`), `rust_env()`, pas Rust REAL in `selftest()`;
+- APK: 497 MB (de la 467 MB).
+
+### Dovezi pe device (uid de app, toolchain din APK)
+- `rustc 1.98.1` si `cargo 1.98.1` ruleaza (rc=0);
+- program Rust (Vec + iteratori) **compilat si LINKAT pe telefon in 1.3 s** -> ELF ARM64 229 KB;
+- `toolchain.selftest()` -> **`rust=True`, `cargo=True`, `lipsa: []`** (C, C++, extensii Python,
+  Fortran, cmake, perl, Rust - toate capabilitatile);
+- **`cbor2 6.1.4` cu accelerator RUST compilat de la sursa pe device** (710 s, wheel
+  `cbor2-6.1.4-cp314-cp314-android_24_arm64_v8a.whl`), verificat functional
+  (`CBOR2_RUST_OK {'a': [1, 2, 3]}`).
+
+### Capcane noi dovedite (36-48, detaliate in `readme.md`)
+PIC la dylib-ul LLVM; bootstrap-ul Rust isi deduce `bin/` din calea `llvm-config`;
+`-lLLVM-21` (nu `-lLLVM-21.1`); `patchelf --add-needed libc++_shared.so` pe `librustc_driver`;
+LLVM cu `AArch64;X86` pentru bootstrap; AGP dezarhiveaza asset-urile `.gz`; filtrul `data` din
+Python 3.14 arunca pe symlink-uri absolute; `libunwind.a` lipseste din NDK; std-ul e in arborele
+`stage1` + `.rmeta` obligatorii; **cargo nu propaga linker-ul catre build-scripturi** (wrapper
+`cc-rust`); app-ul POATE executa binare din propriul filesDir (restrictia e doar pe
+`shell_data_dir`/`/data/local/tmp`).
+
+### Raman (cunoscute)
+- pachete cu backend **`maturin`** (orjson, cramjam, pydantic-core) - in lucru (build-ul
+  `maturin` ruleaza pe device, urmeaza livrarea in `jniLibs`);
+- grpcio (link) si duckdb (RAM) - din lista veche.
 
 ---
 
