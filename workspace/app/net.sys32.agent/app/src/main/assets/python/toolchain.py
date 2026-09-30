@@ -2409,7 +2409,9 @@ def selftest():
     r["timpi_s"] = tm
     if r.get("python_extension") and r.get("cxx_stl"):
         r["verdict"] = ("TOOLCHAIN COMPLET pentru pip: extensii C si C++ compilate+linkate pe "
-                        "device" + ("" if r["cmake"] else " | lipsesc: cmake, rust, perl"))
+                        "device" + (" | ATENTIE (nu sunt capabilitati): "
+                        + ", ".join(sorted([k for k in ("cmake", "rust", "perl", "cargo")
+                                            if not r.get(k)])) if any(not r.get(k) for k in ("cmake", "rust", "perl", "cargo")) else ""))
     elif r.get("c_compile_link"):
         r["verdict"] = "PARTIAL: C merge, C++/extensii Python nu - vezi cheile *_error"
     else:
