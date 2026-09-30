@@ -3003,3 +3003,64 @@ Fixuri de pachet descoperite de baterie:
 
 **Rezultat: `numpy 2.5.3` se compileaza de la sursa PE TELEFON (204 s) si functioneaza
 (matmul verificat: 486.0).** Biblioteci BLAS/LAPACK: OpenBLAS-ul din APK.
+
+---
+
+## Etapa 53 - FAZA 4: RUST PE DEVICE (LLVM + rustc + cargo, compilate de la 0) - `.assets_v203`, 30 sept 2026
+
+Obiectiv: pachetele Python cu acceleratoare **Rust** (cbor2 6.x, cramjam, orjson, pydantic-core)
+si backend-ul `maturin`. NDK-ul NU livreaza `libLLVM.so`, deci rustc trebuia construit cu TOT
+LLVM-ul, de la sursa, pentru `aarch64-linux-android`. Zero Termux.
+
+### Ce s-a construit (cross, pe laptop)
+| piesa | sursa | rezultat |
+|---|---|---|
+| LLVM 21.1.8 | `llvm-project-21.1.8.src.tar.xz` | `libLLVM.so.21.1` (dylib, PIC, doar AArch64) |
+| Rust 1.98.1 | `rustc-1.98.1-src.tar.gz` + stage0 oficial x86_64 | `rustc` ARM64 (`librustc_driver-*.so`) |
+| cargo | `x.py build --stage 2 src/tools/cargo` | `cargo` ARM64, NEEDED doar libdl/libm/libc |
+| std | `x.py build --stage 2 library/std` | `rustlib/aarch64-linux-android/lib/*.rlib` + `.rmeta` |
+
+### Fluxul dovedit PE TELEFON (uid de app, toolchain din APK)
+`rustc --version` -> 0.3 s; `cargo --version` -> 0.1 s; program Rust real (Vec + iterator +
+println) **compilat si LINKAT pe device in 1.5 s** -> ELF ARM64 265 KB;
+`toolchain.selftest()` -> `rust=True`, `cargo=True`, **`lipsa: []`** (C, C++, extensii Python,
+Fortran, cmake, perl, Rust - toate capabilitatile prezente).
+
+### Capcane dovedite (36-45)
+36. **LLVM fara PIC** -> linkul dylib-ului cade: `relocation R_AARCH64_ADR_PREL_PG_HI21 cannot
+    be used against symbol ...; recompile with -fPIC`. Fix: `-DLLVM_ENABLE_PIC=ON
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DLLVM_BUILD_LLVM_DYLIB=ON`.
+37. **Bootstrap-ul Rust isi deduce directorul `bin/` al LLVM din calea lui `llvm-config`** ->
+    daca shim-ul nu sta intr-un `bin/`, panica `src.symlink_metadata() failed ("src = .../llvm-cov")`.
+    Fix: shim in `build/rust/llvm-bin/bin/llvm-config` + symlink-uri pentru uneltele LLVM.
+38. **`llvm-config --link-shared --libs` trebuie sa dea `-lLLVM-21`** (SONAME-ul real e
+    `libLLVM-21.so`), nu `-lLLVM-21.1` -> altfel `ld.lld: unable to find library -lLLVM-21.1`.
+39. **`-lstdc++` nu exista in NDK** -> (a) la link: `undefined reference ... std::__ndk1::cerr`
+    (punte: symlink `libstdc++.so -> libc++_shared.so`); (b) la RULARE: acelasi simbol ->
+    `CANNOT LINK EXECUTABLE rustc`. Fix definitiv: `patchelf --add-needed libc++_shared.so`
+    (NU `LD_PRELOAD` - ar putea strica clang-ul, care isi are propriul libc++).
+40. **LLVM cu doar AArch64** -> bootstrap nu poate genera info pentru gazda de build
+    (`could not create LLVM TargetMachine for triple: x86_64-unknown-linux-gnu`). Fix:
+    `[llvm] targets = "AArch64;X86"` (LLVM-ul de device ramane AArch64-only).
+41. **AGP/aapt2 DEZARHIVEAZA asset-urile `.gz`** -> `rust-libs.tar.gz` ajunge pe device ca
+    `rust-libs.tar` (650 MB, comprimat de zip-ul APK). Codul accepta ambele nume.
+42. **Python 3.14 + `tarfile.extractall`** -> filtrul implicit `data` ARUNCA
+    `AbsoluteLinkError` pe symlink-uri absolute din arhiva. Fix: `filter="tar"` + scoaterea
+    symlink-urilor din arhiva.
+43. **`-lunwind` nu exista in NDK** -> `ld.lld: unable to find library -lunwind`. Fix:
+    `libunwind.a` din compiler-rt (`lib/clang/18/lib/linux/aarch64/libunwind.a`) copiat in
+    `assets/toolchain/sysroot/usr/lib/aarch64-linux-android/` (+ in subdir-urile de API).
+44. **`rustlib` din arborele `stage2` e GOL** -> std-ul real sta in
+    `build/x86_64-unknown-linux-gnu/stage1/lib/rustlib/<target>` (42 fisiere, 96 MB), iar
+    fisierele **`.rmeta` sunt obligatorii** langa `.rlib` (altfel: "only metadata stub found
+    for `rlib` dependency ..., please provide the corresponding .rmeta").
+45. **SELinux**: rustc/cargo NU pot fi executate din filesDir -> stau in APK ca
+    `jniLibs/arm64-v8a/librustc_exec.so` / `libcargo_exec.so`, cu symlink in `files/tmp/`.
+
+### Impachetare
+* binarele (rustc, cargo) -> `jniLibs` (ca `lib*_exec.so`);
+* librariile (librustc_driver, libLLVM, std+rmeta) -> `assets/toolchain/rust-libs.tar.gz`,
+  extrase o singura data in `files/toolchain/rust/lib`;
+* rustc are nevoie de `LD_LIBRARY_PATH` catre acel lib dir (setat in `toolchain.env_vars()` /
+  `toolchain.rust_env()`), de linker-ul `files/tmp/clang` cu `--target`/`--sysroot` (scrise in
+  `files/cargo/config.toml`) si de CA bundle pentru crates.io.

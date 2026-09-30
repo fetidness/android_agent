@@ -721,9 +721,25 @@ def _ensure_sysroot_api_dir(api):
                 src = p
                 break
         if src:
+            # ★ CAPCANA: daca `dst` exista ca DIRECTOR REAL dar nu are crt-urile (ex. a fost
+            # livrat gresit in assets cu un singur fisier), symlink-ul nu se mai poate face
+            # (`os.remove` pe dir non-gol esueaza) si clang cauta degeaba in el ->
+            # "cannot open crtend_android.o" / "-lm not found". Il inlocuim cu symlink.
+            if os.path.isdir(dst) and not os.path.islink(dst):
+                try:
+                    import shutil as _sh2
+                    _sh2.rmtree(dst, ignore_errors=True)
+                except Exception:
+                    pass
             if os.path.lexists(dst):
-                os.remove(dst)
-            os.symlink(src, dst)
+                try:
+                    os.remove(dst)
+                except Exception:
+                    pass
+            try:
+                os.symlink(src, dst)
+            except Exception:
+                pass
     except Exception:
         pass
     return dst
@@ -1400,6 +1416,139 @@ set(CMAKE_PREFIX_PATH "%(deps)s")
     return _p
 
 
+def _rust_dir():
+    return ROOT + "/rust"
+
+
+def _rust_lib():
+    return _rust_dir() + "/lib"
+
+
+_RUST_NEEDS_PRELOAD = None
+
+
+def _ensure_rust():
+    """★ FAZA 4 (Rust): rustc + cargo cross-compilate de noi pentru Android.
+
+    Doua lumi diferite, cu reguli diferite (capcana dovedita pe device):
+      * BINARELE (rustc, cargo) trebuie EXECUTATE -> untrusted_app nu poate executa
+        din filesDir -> stau in APK ca lib*_exec.so, cu symlink in files/tmp/ (PATH).
+      * LIBRARIILE (librustc_driver, libLLVM.so.21.1, libc++_shared, std/*.rlib) se
+        INCARCA (dlopen/read) -> merg din filesDir, unde le extragem din
+        assets/toolchain/rust-libs.tar.gz (o singura data, ~480 MB pe disc).
+    Fara librustc_driver in LD_LIBRARY_PATH: "CANNOT LINK EXECUTABLE rustc".
+    """
+    global _RUST_NEEDS_PRELOAD
+    rd, lib = _rust_dir(), _rust_lib()
+    # ★ dupa un update de APK, sysroot-ul se re-extrage si pierde subdir-ul de API creat
+    # la rulare (35/36) -> rustc/clang nu mai gasesc crtend_android.o/-lm/-lc. Il refacem.
+    try:
+        _ensure_sysroot_api_dir(_device_api())
+    except Exception:
+        pass
+    try:
+        os.makedirs(lib, exist_ok=True)
+    except Exception:
+        pass
+    # ★ CAPCANA: AGP/aapt2 DEZARHIVEAZA asset-urile .gz (ajung pe device ca
+    # "rust-libs.tar", 650 MB, comprimate de zip-ul APK-ului) -> acceptam ambele
+    # nume, iar tarfile detecteaza singur compresia.
+    for _nm in ("/rust-libs.tar.gz", "/rust-libs.tar"):
+        tgz = ROOT + _nm
+        if os.path.exists(tgz):
+            break
+    if not os.path.exists(lib + "/.extracted") and os.path.exists(tgz):
+        try:
+            import tarfile
+            with tarfile.open(tgz) as t:
+                # ★ CAPCANA (Python 3.14): filtrul implicit "data" ARUNCA
+                # AbsoluteLinkError daca arhiva are vreun symlink absolut
+                # (lib/rustlib/src/rust -> /home/gab/... din arborele de build).
+                # Filtrul "tar" doar ignora linkurile absolut/escape-urile, nu pica.
+                try:
+                    t.extractall(rd, filter="tar")
+                except TypeError:
+                    t.extractall(rd)
+            open(lib + "/.extracted", "w").write("1")
+        except Exception:
+            pass
+    # lansatoare executabile in files/tmp (acelasi tipar ca cmake/perl/clang)
+    nat = _native_dir()
+    for _nm, _so in (("rustc", "librustc_exec.so"), ("cargo", "libcargo_exec.so")):
+        if nat and os.path.exists(nat + "/" + _so):
+            _p = F + "/tmp/" + _nm
+            try:
+                _st = False
+                if os.path.islink(_p):
+                    try:
+                        _st = not os.path.exists(os.readlink(_p))
+                    except Exception:
+                        _st = True
+                if os.path.lexists(_p) and (not os.path.islink(_p) or _st):
+                    os.remove(_p)
+                if not os.path.lexists(_p):
+                    os.symlink(nat + "/" + _so, _p)
+            except Exception:
+                pass
+    # librustc_driver refera std::__ndk1::* (libc++). Daca NU are deja NEEDED
+    # libc++_shared.so (patch cu patchelf la impachetare), singura cale de a-l incarca
+    # e LD_PRELOAD - si doar pentru procesele Rust, ca sa nu atingem clang-ul.
+    if _RUST_NEEDS_PRELOAD is None:
+        _RUST_NEEDS_PRELOAD = False
+        try:
+            import glob as _glob
+            for _d in _glob.glob(lib + "/librustc_driver*.so"):
+                _head = open(_d, "rb").read(60000)
+                if b"libc++_shared.so" not in _head:
+                    _RUST_NEEDS_PRELOAD = True
+                break
+        except Exception:
+            _RUST_NEEDS_PRELOAD = False
+    # config cargo: linker-ul nostru + sysroot-ul de device (altfel cargo cheama "cc")
+    try:
+        _ch = F + "/cargo"
+        os.makedirs(_ch, exist_ok=True)
+        _cfg = _ch + "/config.toml"
+        _want = ('[build]\ntarget = "aarch64-linux-android"\n\n'
+                 '[target.aarch64-linux-android]\n'
+                 'linker = "' + F + '/tmp/clang"\n'
+                 'rustflags = ["-C", "link-arg=--target=aarch64-linux-android' + str(_device_api()) + '", '
+                 '"-C", "link-arg=--sysroot=' + ROOT + '/sysroot"]\n')
+        if (not os.path.exists(_cfg)) or open(_cfg).read() != _want:
+            open(_cfg, "w").write(_want)
+    except Exception:
+        pass
+
+
+def rust_env(base=None):
+    """Mediul pentru rustc/cargo pe device (librustc_driver + libLLVM + std)."""
+    _ensure_rust()
+    env = dict(base or os.environ)
+    ld = [x for x in (env.get("LD_LIBRARY_PATH", "") or "").split(":") if x]
+    for d in (_rust_lib(), _native_dir()):
+        if d and d not in ld:
+            ld.append(d)
+    env["LD_LIBRARY_PATH"] = ":".join(ld)
+    try:
+        os.makedirs(F + "/cargo", exist_ok=True)
+    except Exception:
+        pass
+    env["CARGO_HOME"] = F + "/cargo"
+    env["PATH"] = F + "/tmp:" + F + "/cargo/bin:" + env.get("PATH", "")
+    # ★ cargo are curl STATIC in el -> fara CA bundle "SSL certificate problem"
+    # la primul `cargo fetch`/`cargo install` de pe crates.io.
+    try:
+        _ca = _ca_bundle()
+        env.setdefault("SSL_CERT_FILE", _ca)
+        env.setdefault("CURL_CA_BUNDLE", _ca)
+        env.setdefault("CARGO_HTTP_CAINFO", _ca)
+    except Exception:
+        pass
+    if _RUST_NEEDS_PRELOAD:
+        env["LD_PRELOAD"] = _rust_lib() + "/libc++_shared.so"
+    return env
+
+
 def env_vars():
     """Mediul COMPLET de compilare pentru toolchain-ul livrat in APK.
 
@@ -1410,6 +1559,7 @@ def env_vars():
     home = F + "/home"
     pipcache = home + "/.cache/pip"
     _ensure_launchers()
+    _ensure_rust()                # ★ FAZA 4: rustc/cargo + librustc_driver/libLLVM/std
     _ensure_python_pc()
     _ensure_pipconf()
     _ensure_py_include()          # ★ Python.h pentru extensii C (INCLUDEPY)
@@ -1690,7 +1840,15 @@ def env_vars():
         # (simptom: `pip install` -> exit -11 la "Preparing metadata").
         # ★ FAZA 3: perl-ul compilat de noi e linkat cu libperl STATIC (doar libc/libm/libdl)
         # -> nu mai adaugam ROOT/perl/lib in LD_LIBRARY_PATH (nu are ce sa caute acolo).
-        "LD_LIBRARY_PATH": _rt_ld_path(),
+        # ★ FAZA 4: + lib dir-ul Rust (librustc_driver-*.so, libLLVM.so.21.1) - fara el
+        # rustc moare la pornire cu "CANNOT LINK EXECUTABLE".
+        "LD_LIBRARY_PATH": (_rt_ld_path() + (":" + _rust_lib() if os.path.isdir(_rust_lib()) else "")),
+        # ★ FAZA 4 (Rust): cargo/rustc cross-compilate de noi pentru aarch64-linux-android.
+        # CARGO_HOME tine config.toml cu linker-ul (clang din APK) + sysroot-ul de device.
+        "CARGO_HOME": F + "/cargo",
+        "RUSTUP_HOME": F + "/cargo/rustup",
+        "RUST_BACKTRACE": "0",
+        "CARGO_NET_GIT_FETCH_WITH_CLI": "true",
         # ★ PYTHONHOME/PATH pentru stdlib: fara ele "Failed to import encodings".
         "PYTHONHOME": F + "/pyhome",
         # ★ sect. 3E: stdlib_extra.zip PRIMUL (altfel zipfile._path lipseste
@@ -1902,6 +2060,30 @@ def selftest():
         if not r["python_extension"]:
             r["pyext_error"] = (o1 + " | " + o2)[-200:]
 
+    # 3b. Rust (FAZA 4): compile + LINK real. rustc ruleaza PE device (host=target=
+    # aarch64-linux-android), linker-ul e clang-ul din APK + sysroot-ul de device.
+    rs = _mk("t.rs", 'fn main(){println!("rust ok {}", 6*7);}\n')
+    rsc = F + "/tmp/rustc"
+    if rs and os.path.exists(rsc):
+        t0 = time.time()
+        try:
+            p = subprocess.run([rsc, "--edition", "2021", "-o", T + "/t_rust", rs,
+                                "-C", "linker=" + F + "/tmp/clang",
+                                "-C", "link-arg=--target=aarch64-linux-android%d" % api,
+                                "-C", "link-arg=--sysroot=" + ROOT + "/sysroot"],
+                               cwd=T, capture_output=True, text=True, timeout=1200,
+                               env=rust_env(), stdin=subprocess.DEVNULL)
+            r["rust"] = bool(p.returncode == 0 and os.path.exists(T + "/t_rust"))
+            tm["rust_s"] = round(time.time() - t0, 2)
+            if not r["rust"]:
+                r["rust_error"] = ((p.stdout or "") + (p.stderr or ""))[-300:]
+        except Exception as ex:
+            r["rust"] = False
+            r["rust_error"] = repr(ex)[:200]
+    else:
+        r["rust"] = False
+    r["cargo"] = bool(_exec_ok(F + "/tmp/cargo"))
+
     # 4. Fortran: COMPILARE (rularea unui binar produs de app nu e posibila - SELinux)
     f90 = _mk("t.f90", "      subroutine s(a)\n      real a\n      a=a+1.0\n      end\n")
     fl = F + "/tmp/flang"
@@ -1991,8 +2173,8 @@ def selftest():
                 r["perl_error"] = ((_pp.stdout or "") + (_pp.stderr or ""))[-200:]
         except Exception as _ex:
             r["perl_error"] = repr(_ex)[:200]
-    # 9. ce NU avem (limite cunoscute) + wheelhouse
-    r["rust"] = bool(_which("cargo") or _which("rustc"))
+    # 9. wheelhouse. ATENTIE: r["rust"]/r["cargo"] sunt deja stabilite mai sus
+    # (test REAL de compilare+linkare) -> NU le suprascriem cu o cautare in PATH.
     wd = _wheels_dir()
     try:
         r["wheelhouse"] = len([x for x in os.listdir(wd) if x.endswith(".whl")])
