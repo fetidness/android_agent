@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-01 (optimizari din E2E-ul de 121k tokeni - `.assets_v230`)
+
+- `files/tmp/python3`/`python`: lansatoare auto-suficiente (PYTHONHOME/PYTHONPATH/TMPDIR/LD_LIBRARY_PATH)
+  - rezolva esecul "pip install numpy (exit 1, 19s)" (pip isi lansa backend-ul fara mediu).
+  Dovada: python3 cu env minimal -> PY3_OK; numpy rc=0 in 162s.
+- cargo: config GLOBAL in $CARGO_HOME/config.toml (nu mai depinde de cwd) - rezolva exit 127 la Rust.
+- `action=compile`: mesaj clar cand sursa lipseste (nu FileNotFoundError) + detectie Python.h sigura.
+- env: exemplul cmake include export PREFIX (fara el CMakeDetermineSystem esueaza).
 ### 2026-10-01 (fix crash: tempfile pe /sdcard omora agentul - `.assets_v229`)
 
 - cauza: `py()` -> `tempfile.TemporaryFile(dir=WORK)` (/sdcard, FUSE) -> excepție neprinsa -> proces mort.

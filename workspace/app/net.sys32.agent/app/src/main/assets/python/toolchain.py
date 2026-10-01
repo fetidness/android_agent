@@ -1223,6 +1223,54 @@ def _ensure_launchers():
             made.append("env")
         except Exception:
             pass
+        # ★ FAZA 4p: `python3`/`python` AUTO-SUFICIENTE. pip lanseaza build-backend-ul cu
+        # sys.executable, adica prin acest lansator, DAR cu un env minimal (fara PYTHONHOME):
+        # Python nu-si gasea stdlib-ul ("Could not find platform independent libraries",
+        # "No available output") si ORICE pip install cu build backend murea - de aici esecul
+        # "pip install numpy (exit 1, 19s)" din testul din laborator.
+        # Lansatorul isi exporta SINGUR PYTHONHOME/PYTHONPATH/TMPDIR, deci merge din orice context.
+        try:
+            _pysh = F + "/tmp/python3.sh"
+            _pyhome = F + "/pyhome"
+            # ★ si LD_LIBRARY_PATH: fara el, incarcatorul nu gaseste libpython3.14.so
+            # ("CANNOT LINK EXECUTABLE ... libpyexec.so") cand pip il lanseaza cu env minimal.
+            # PREPEND, niciodata replace (regula dovedita: pierderea nativeLibraryDir = moarte).
+            _pybody = ("#!/system/bin/sh\n"
+                       "export PYTHONHOME=%s\n"
+                       "export PYTHONPATH=%s/lib/stdlib_extra.zip:%s/lib/pysitepkg.zip:%s/python\n"
+                       "export TMPDIR=%s/tmp\n"
+                       "export LD_LIBRARY_PATH=%s:%s/libs:%s/lib:${LD_LIBRARY_PATH}\n"
+                       "exec %s/libpyexec.so \"$@\"\n"
+                       % (_pyhome, _pyhome, _pyhome, F, F, nat, F, DEPS, nat))
+            if (not os.path.exists(_pysh)) or open(_pysh).read() != _pybody:
+                open(_pysh, "w").write(_pybody)
+            os.chmod(_pysh, 0o755)
+            for _nm in ("python3", "python"):
+                _pp = F + "/tmp/" + _nm
+                if _sw2 and os.path.exists(_sw2):
+                    if os.path.lexists(_pp):
+                        os.remove(_pp)
+                    os.symlink(_sw2, _pp)
+                else:
+                    _pp2 = F + "/tmp/" + _nm + ".sh"
+                    open(_pp2, "w").write(_pybody)
+                    os.chmod(_pp2, 0o755)
+                made.append(_nm)
+        except Exception:
+            pass
+        # ★ cargo: config GLOBAL (CARGO_HOME/config.toml) - altfel build-urile Rust pornite din alt
+        # cwd (ex. /storage) nu gasesc linker-ul cc-rust si cad cu "linking with cc failed: exit 127".
+        try:
+            _ch = F + "/cargo"
+            os.makedirs(_ch, exist_ok=True)
+            _ccfg = F + "/cargo/config.toml"
+            _body = ("[target.aarch64-linux-android]\n"
+                     "linker = \"%s/tmp/cc-rust\"\n" % F)
+            if (not os.path.exists(_ccfg)) or open(_ccfg).read() != _body:
+                open(_ccfg, "w").write(_body)
+        except Exception:
+            pass
+
         for name, mod in (("cython", "cython"), ("cython3", "cython"), ("cython-3", "cython"),
                           ("f2py", "numpy.f2py"), ("pip", "pip"), ("pip3", "pip")):
             p = F + "/tmp/" + name

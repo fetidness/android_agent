@@ -2063,6 +2063,14 @@ def call_tool(c):
         return run_help_tool(a)
     return run_tool(a.get("code",""))
 
+def _uses_python_h(path):
+    """True daca sursa include Python.h (pentru a adauga automat -lpython3.14)."""
+    try:
+        return "Python.h" in open(path, encoding="utf-8", errors="ignore").read()
+    except Exception:
+        return False
+
+
 def run_toolchain_tool(a):
     """Toolchain nativ de compilare pe telefon (clang, pip, meson...)."""
     import subprocess as _sp
@@ -2182,7 +2190,8 @@ def run_toolchain_tool(a):
                         print("  pyext:   $CC -shared -fPIC m.c -o m.so $LDFLAGS -lpython3.14")
                         print("  Fortran: %s/bin/flang t.f90 -o t_bin" % _P)
                         print("  Rust:    %s/bin/cargo build --release" % _P)
-                        print("  cmake:   %s/bin/cmake -G Ninja -S . -B b && %s/bin/ninja -C b" % (_P, _P))
+                        print("  cmake:   export PREFIX=%s && %s/bin/cmake -G Ninja -S . -B b && %s/bin/ninja -C b"
+                              "   (fara PREFIX, CMakeDetermineSystem.cmake esueaza)" % (_P, _P, _P))
                         print("  RULARE:  /apex/com.android.runtime/bin/linker64 <binar>  (exec direct din filesDir e INTERZIS)")
                         print("  BUILD DIR: files/tmp sau workspace-ul app-ului; /sdcard e NOEXEC.")
                     elif _act == "env-file":
@@ -2586,6 +2595,12 @@ def run_toolchain_tool(a):
         if not srcf: return "lipseste 'source'"
         if not os.path.isabs(srcf):
             srcf = F + "/tmp/" + srcf
+        # ★ FAZA 4p: verificare CLARA inainte de orice (inainte dadea FileNotFoundError(2) cu
+        # traceback, raportat in testul din laborator: "COMPILE error: FileNotFoundError")
+        if not os.path.exists(srcf):
+            _d = os.path.dirname(srcf)
+            _near = sorted(os.listdir(_d))[:8] if os.path.isdir(_d) else []
+            return ("sursa nu exista: %s\n(scrie fisierul intai; in %s: %s)" % (srcf, _d, _near))
         cpp = srcf.endswith((".cpp", ".cc", ".cxx"))
         shared = out.endswith(".so")
         try:
@@ -2602,7 +2617,7 @@ def run_toolchain_tool(a):
                      # ★ extensie Python: daca sursa include Python.h, linkam automat libpython
                      # (raportat in testul din UI: "unable to find library -lpython3.14" /
                      # "undefined symbol: PyModule_Create2" - agentul trebuia sa ghiceasca flag-ul)
-                     + (["-lpython3.14"] if (shared and "Python.h" in open(srcf, encoding="utf-8", errors="ignore").read()) else []))
+                     + (["-lpython3.14"] if (shared and _uses_python_h(srcf)) else []))
             p = subprocess.run(cargs, capture_output=True, text=True, env=e, cwd=F + "/tmp",
                                timeout=int(a.get("timeout", 600) or 600), stdin=subprocess.DEVNULL)
             res = (p.stdout or "") + (p.stderr or "")

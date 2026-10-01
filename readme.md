@@ -3518,3 +3518,33 @@ sa omoare niciodata procesul.
 
 **Dovada (test cu fd-uri epuizate intentionat):** limita coborata la 64, 58 fd-uri ocupate ->
 `py()` a rulat codul: `COD_RULAT_CHIAR_SI_CU_FD_EPUIZAT`; in regim normal: `42`.
+
+## Etapa 73 - OPTIMIZARI DIN TESTUL E2E "testeaza toolchain complet" (`.assets_v230`)
+
+Sesiune de 202 pasi / ~121k tokeni (95 mesaje asistent, 105 apeluri de tool) - cea mai lunga de pana
+acum. Cauzele reale, toate reparate:
+
+1. **`pip install numpy` cadea in 19s** ("preparing metadata ... No available output").
+   Cauza: pip isi lanseaza build-backend-ul prin `sys.executable`, adica prin lansatorul
+   `files/tmp/python3` - care era doar un SYMLINK catre libpyexec.so, fara mediu. Pornit cu env
+   minimal (cum face pip), Python nu-si gasea stdlib-ul ("Could not find platform independent
+   libraries <prefix>") si nu producea nimic.
+   **Fix:** `files/tmp/python3` (si `python`) sunt acum lansatoare AUTO-SUFICIENTE
+   (shwrap + python3.sh) care isi exporta SINGURE PYTHONHOME, PYTHONPATH, TMPDIR si
+   LD_LIBRARY_PATH (PREPEND). Dovada: `python3 -c` cu `PATH=/system/bin` -> `PY3_OK 3.14.7`;
+   `pip install numpy` -> rc=0 in **162s**, `numpy.linalg.det` = -2.0.
+2. **Rust cadea cu "linking with `cc` failed: exit status 127"** (~10 pasi) desi regula (3d) spunea
+   sa foloseasca cargo: cargo isi lua configul doar daca era lansat din `files/`. **Fix:** configul
+   e acum GLOBAL (`$CARGO_HOME/config.toml`, CARGO_HOME=files/cargo). Dovada: `cargo build
+   --release` dintr-un director oarecare -> rc=0 in 1s.
+3. **`COMPILE error: FileNotFoundError(2)`** la `action=compile` cu sursa lipsa. **Fix:** verificare
+   explicita + lista fisierelor din director (`_(scrie fisierul intai; in <dir>: [...])_`), iar
+   detectia Python.h nu mai citeste orbeste fisierul.
+4. **cmake**: "CMakeDetermineSystem.cmake: file failed to open" - lipsa `PREFIX` in mediu.
+   Exemplul din `toolchain env` include acum `export PREFIX=<toolchain>` explicit.
+5. Regasite in aceeasi sesiune (deja acoperite de regulile (3c)/(3e)/(3f) din prompt): incercari de
+   a rula `python3`/toolchain-ul prin shell uid 2000 (nu poate citi filesDir), tempfile in locuri
+   nepotrivite, TMPDIR greșit la clang.
+
+Total: 5 fix-uri de cod + 2 de prompt/env. Verificat pe device: compile C/C++ cu rulare
+(`C_OK 1.414214`, `CXX_OK 11`), numpy 2.5.3 reinstalat, cargo din orice cwd.
