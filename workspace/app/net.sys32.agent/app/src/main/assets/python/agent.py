@@ -2042,6 +2042,9 @@ def run_toolchain_tool(a):
             pass
         if not e:
             e = {"PATH": ROOT + "/deps/bin:" + ROOT + "/bin:/system/bin"}
+        # ★ FIX (raportat de agent): cheile cu cratime (CC_aarch64-linux-android) nu sunt
+        # identificatori shell valizi -> "export: ...: is not an identifier" la sursare.
+        e = {k: v for k, v in e.items() if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", str(k))}
         parts = []
         for k, v in e.items():
             if v is None: continue
@@ -2114,6 +2117,12 @@ def run_toolchain_tool(a):
                         # ~7.4 KB (cel mai mare mesaj din context) si se re-trimitea la fiecare
                         # pas. Acum: pe scurt + EXEMPLE gata de copiat (agentul pierdea pasi
                         # ghicind flag-uri: -latomic, --target, -resource-dir) + build-dir corect.
+                        # ★ FIX (raportat de agent): fisierul la care trimiteam NU era scris
+                        # ("toolchain_env.sh: No such file or directory") - il scriem ACUM.
+                        try:
+                            _mod._write_env_file()
+                        except Exception:
+                            pass
                         _e = _mod.env_vars()
                         _P = _mod.ROOT
                         print("[toolchain env] prefix=%s  (exports complete: %s/toolchain_env.sh)" % (_P, _mod.F))
@@ -2286,23 +2295,35 @@ def run_toolchain_tool(a):
                 pass
 
             def _pip_main(args):
-                """Ruleaza pip INLINE cu orice subcomanda (install / wheel)."""
+                """Ruleaza pip INTR-UN SUBPROCES (nu in-process!).
+
+                ★ FIX (raportat de agent, testul "fa test complet toolchain"): varianta in-process
+                (from pip._internal.cli.main import main) crapa cu KeyError('prefix') pentru ca
+                pip isi citeste configuratia schemei din propriul proces, iar procesul agentului nu
+                are mediul pip corect (sysconfig/purelib). Subprocesul are env-ul complet
+                (env_vars + PYTHONPATH cu stdlib_extra.zip PRIMUL) - exact calea care merge
+                dovedit (pip install lxml a functionat prin subproces).
+                """
                 _bp2 = io.StringIO()
-                _old_argv = sys.argv[:]
-                sys.argv = ["pip"] + list(args)
-                _rc2 = 0
+                _code = ("import sys;"
+                         "sys.path[:0]=[r'%s',r'%s',r'%s'];"
+                         "from pip._internal.cli.main import main as _m;"
+                         "sys.exit(_m(%r))" % (_ze0, _zp0, _wh, list(args)))
+                _pe_env = dict(_env())
+                _pe_env["PYTHONHOME"] = F + "/pyhome"
+                _pe_env["PYTHONPATH"] = "%s/stdlib_extra.zip:%s/pysitepkg.zip:%s" % (
+                    F + "/pyhome/lib", F + "/pyhome/lib", F + "/python")
+                _pe_env["TMPDIR"] = F + "/tmp"
+                _pe_env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
                 try:
-                    with contextlib.redirect_stdout(_bp2), contextlib.redirect_stderr(_bp2):
-                        from pip._internal.cli.main import main as _pm
-                        _rc2 = _pm(list(args))
-                except SystemExit as _se:
-                    _rc2 = int(_se.code or 0)
+                    _p = subprocess.run([sys.executable, "-c", _code], capture_output=True,
+                                        text=True, timeout=3600, env=_pe_env, cwd=F + "/tmp",
+                                        stdin=subprocess.DEVNULL)
+                    return int(_p.returncode), ((_p.stdout or "") + (_p.stderr or ""))
                 except Exception as _pe:
-                    _rc2 = 1
-                    _bp2.write("\n[pip inline exception] %r" % (_pe,))
-                finally:
-                    sys.argv = _old_argv
-                return _rc2, _bp2.getvalue()
+                    import traceback as _tb
+                    _bp2.write("\n[pip subprocess exception] %r\n%s" % (_pe, _tb.format_exc()))
+                    return 1, _bp2.getvalue()
 
             def _pip_run(extra, targets=None):
                 # ★ FAZA 0C: FARA --no-cache-dir (cache-ul pip din files/home supravietuieste

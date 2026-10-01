@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-01 (FAZA 4i: 5 bug-uri reale din "fa test complet toolchain" - `.assets_v219`)
+
+- pip: in-process -> SUBPROCES (cauza reala a `KeyError('prefix')`); env complet + stdlib_extra primul.
+- `env`: scrie efectiv `toolchain_env.sh` (inainte trimitea la un fisier inexistent); sh -n + sursare OK.
+- `_toolchain_exports()`: filtreaza cheile care nu sunt identificatori shell (`CC_aarch64-...`).
+- LDFLAGS: `-Wl,-rpath,nativeLibraryDir` + deps/lib -> binarul isi gaseste libc++_shared la rulare
+  (inainte: "CANNOT LINK EXECUTABLE ... libc++_shared.so not found").
+- Launcher-e ELF (libshwrap) pentru cython/f2py/pip, nu scripturi in filesDir
+  (inainte: "cython: Permission denied").
+- CFLAGS: + `-L<TC>/lib/clang/21/lib/linux` (libatomic/compiler-rt statice la build dintr-un pas).
+
 ### 2026-10-01 (selftest auto-documentat - `.assets_v218`)
 
 - `selftest()` intoarce `detalii`: clang 21.1.8 + libc++ (NU libstdc++), FLANG (NU gfortran),

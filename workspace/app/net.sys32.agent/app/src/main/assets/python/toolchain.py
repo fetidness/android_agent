@@ -1226,13 +1226,27 @@ def _ensure_launchers():
         except Exception:
             pass
     if py:
-        for name, mod in (("cython", "cython"), ("f2py", "numpy.f2py")):
+        # ★ FAZA 4i: launcher ELF (libshwrap_exec.so) + script .sh - NU script executabil direct.
+        # Raportat de agent: "cython: Permission denied" pentru ca files/tmp/cython era un SCRIPT
+        # in filesDir, iar untrusted_app nu poate executa scripturi de acolo (doar ELF/symlink-ELF).
+        _sw2 = nat + "/libshwrap_exec.so" if nat else ""
+        for name, mod in (("cython", "cython"), ("f2py", "numpy.f2py"), ("pip", "pip")):
             p = F + "/tmp/" + name
+            ps = F + "/tmp/" + name + ".sh"
             try:
-                body = '#!/system/bin/sh\nexec "%s" -m %s "$@"\n' % (py, mod)
-                if (not os.path.exists(p)) or open(p).read() != body:
+                body = ('#!/system/bin/sh\nexec "%s" -m %s "$@"\n' % (py, mod))
+                if (not os.path.exists(ps)) or open(ps).read() != body:
+                    open(ps, "w").write(body)
+                os.chmod(ps, 0o755)
+                if _sw2 and os.path.exists(_sw2):
+                    if os.path.lexists(p):
+                        os.remove(p)
+                    os.symlink(_sw2, p)
+                else:
+                    if os.path.lexists(p):
+                        os.remove(p)
                     open(p, "w").write(body)
-                os.chmod(p, 0o755)
+                    os.chmod(p, 0o755)
                 made.append(name)
             except Exception:
                 pass
@@ -2096,6 +2110,9 @@ def env_vars():
     # Il fixam EXPLICIT in CFLAGS (se aplica si in cmake, care foloseste acest string).
     _cflags = ("-fPIC -O2 --target=aarch64-linux-android35 --sysroot=" + ROOT + "/sysroot "
                "-resource-dir=" + ROOT + "/lib/clang/21 "
+               # ★ si in CFLAGS: compilarea+linkarea intr-un singur pas (clang s.c -o bin) nu vede
+               # LDFLAGS-ul; libatomic.a/compiler-rt sunt in lib/clang/21/lib/linux (raportat de agent)
+               + "-L" + ROOT + "/lib/clang/21/lib/linux "
                "-I" + ROOT + "/sysroot/usr/include -I" + _cxxinc + "/c++/v1 "
                "-I" + ROOT + "/pyinc "
                "-I" + DEPS + "/include -I" + DEPS + "/include/libxml2")
@@ -2108,6 +2125,12 @@ def env_vars():
                 # ★ libatomic/libclang_rt sunt STATICE, in lib/clang/21/lib/linux (agentul:
                 # "-latomic" nu se rezolva fara aceasta cale)
                 + " -L" + ROOT + "/lib/clang/21/lib/linux"
+                # ★ CAPCANA raportata de agent ("CANNOT LINK EXECUTABLE t_f90: library
+                # libc++_shared.so not found"): binarul proaspat construit nu-si gaseste libc++_shared
+                # la RULARE (LD_LIBRARY_PATH nu-l are mereu). RPATH-ul fix (nativeLibraryDir din APK)
+                # rezolva definitiv, fara sa depinda de env-ul celui care ruleaza binarul.
+                + " -Wl,-rpath," + _native_dir()
+                + " -Wl,-rpath," + DEPS + "/lib"
                 + (" -L" + _atom if _atom else "")
                 # ★ -lm -ldl EXPLICIT: pe bionic functiile de math/log/fmod sunt in libm si,
                 # cu --no-undefined, orice modul care le foloseste are nevoie de ele la link

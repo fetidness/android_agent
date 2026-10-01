@@ -3279,3 +3279,27 @@ clang 21.1.8 + libc++ (NU libstdc++), FLANG 21.1.8 (NU gfortran), rustc/cargo 1.
 perl 5.42.0, unde sunt binarele, cum se ruleaza ELF-ul (linker64/adbsh) si ca build-dir-ul e
 files/tmp (nu /sdcard). Regula (0) din prompt cere agentului sa foloseasca numele reale din
 `detalii` in rapoarte.
+
+## Etapa 63 - FAZA 4i: 5 BUG-URI REALE DIN TESTUL "fa test complet toolchain" (`.assets_v219`)
+
+Al saselea test din UI (68 de pasi, agent pornit de la 0) a sapat mult mai adanc decat selftest-ul
+si a scos 5 defecte reale:
+
+1. **`pip` in-process -> `KeyError('prefix')`** (`[pip inline exception]` la orice `pip_install`).
+   Cauza: varianta veche rula `from pip._internal.cli.main import main` IN PROCESUL AGENTULUI,
+   unde pip nu-si poate citi configuratia schemei. **Fix:** pip ruleaza acum intr-un SUBPROCES cu
+   env-ul complet (`env_vars()` + `PYTHONPATH` cu `stdlib_extra.zip` PRIMUL), cwd=`files/tmp`.
+   Dovedit: subprocesul ajunge la validarea argumentelor pip (fara `KeyError`), iar
+   `pip install --force-reinstall MarkupSafe` merge rc=0/15s.
+2. **`toolchain_env.sh: No such file or directory`** - `env` trimitea la un fisier care nu era scris.
+   **Fix:** actiunea `env` scrie fisierul. Verificat: `sh -n` rc=0 si sursare OK.
+3. **`export CC_aarch64-linux-android=...: is not an identifier`** - cheile cu cratime ajungeau in
+   export-uri. **Fix:** `_toolchain_exports()` filtreaza identificatorii shell valizi.
+4. **`CANNOT LINK EXECUTABLE t_f90: library "libc++_shared.so" not found`** - binarul construit nu-si
+   gasea libc++ la RULARE. **Fix:** `-Wl,-rpath,<nativeLibraryDir>` + rpath deps/lib in LDFLAGS.
+   Verificat: binar C++ (`std::vector`, libc++) ruleaza cu `LD_LIBRARY_PATH=/nonexistent` -> `cpp=6`.
+5. **`cython: Permission denied`** - `files/tmp/cython` era SCRIPT in filesDir (untrusted_app nu
+   executa scripturi de acolo). **Fix:** launcher ELF (`libshwrap_exec.so`) + `<nume>.sh`, ca la
+   flang; adaugat si `pip`. Verificat: `cython --version` -> rc=0 "Cython version 3.3.0".
+6. **`-latomic` nu se rezolva** la compilare+linkare intr-un singur pas: calea
+   `lib/clang/21/lib/linux` (libatomic/compiler-rt statice) e acum si in CFLAGS, nu doar in LDFLAGS.
