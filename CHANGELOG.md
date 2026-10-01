@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-01 (preflight reparat, C++ libc++ implicit, pyext automat - `.assets_v227`)
+
+- preflight: deleaga la selftest (varianta pe script shell folosea caile vechi -> raporta totul fals).
+- LDFLAGS: `-L files/libs` + `-lc++_shared` (C++ se leaga fara flag-uri: CXX_DEFAULT=9).
+- `_stable_libs()`: asigura si libpython3.14.so; compile adauga `-lpython3.14` automat pentru .so
+  cu Python.h (import OK, dublu(21)=42).
+- prompt: corectata afirmatia perimata despre /data/local/tmp / uid 2000.
 ### 2026-10-01 (optimizari din testul uid-2000 + toolchain - `.assets_v226`)
 
 - adb_client: demultiplexare corecta shell-v2 (`_demux_shellv2`) - header-ele de substream

@@ -117,100 +117,27 @@ def have(binary):
 
 
 def preflight():
-    """R2 + R4 (din raportul llama.cpp): PRE-FLIGHT CHECK inainte de build.
+    """Pre-flight rapid inainte de build-uri mari.
 
-    Raportul noteaza: "Nu am construit un test minim (un program C++ de 3 linii)
-    inainte de a lansa compilarea completa de 10 minute. Un test de acest fel ar
-    fi expus ambele probleme de linkare in 10 secunde."
-
-    Rulare: 10 secunde. Prinde: target API, libc++ nelegat, libm stub,
-    PREFIX lipsa, make SHELL, cmake config.
+    ★ FAZA 4m (raportat in testul din UI, "fa o verificare completa toolchain"): varianta veche
+    rula un SCRIPT SHELL bazat pe aranjamentul vechi (toolchain/bin/python3.14, ROOT/usr/lib,
+    $B/samu, $B/git, LD_PRELOAD). Dupa ce toolchain-ul a fost mutat in APK (nativeLibraryDir) si
+    deps/*.a in assets, scriptul raporta TOTUL false (in contradictie directa cu doctor/selftest
+    care erau verzi) si agentul pierdea pasi verificand cine are dreptate.
+    Acum preflight deleaga la selftest (compileaza+linkeaza REAL, in procesul aplicatiei) si
+    intoarce aceleasi chei plus cateva rezumate - o singura sursa de adevar.
     """
-    api = _device_api()
-    r = {"api": api}
-    script = r"""
-B="__BIN__"; L="__LIB__"; P="__PREFIX__"; BIONIC="__BIONIC__"; TC="__TC__"
-T=__TMP__/preflight; rm -rf $T; mkdir -p $T; cd $T
-# ★ PREFIX in MEDIU (referat numpy + diagnostic cmake): modulul cmake
-# CMakeDetermineSystem.cmake citeste `$ENV{PREFIX}/include/android/api-level.h`.
-# Fara el variabila e GOALA -> calea devine "/include/android/api-level.h" ->
-# "file failed to open for reading" -> "Configuring incomplete" si cmake_build cade,
-# desi compilatorul e perfect functional. Testat: cu PREFIX setat, cmake trece.
-export PREFIX="$P"
-export PATH=__TMP__:$B:/system/bin:$PATH
-export LD_LIBRARY_PATH=$L:$BIONIC:$LD_LIBRARY_PATH
-export LD_PRELOAD=$L/libc++_shared.so
-export TMPDIR=__TMP__; mkdir -p $TMPDIR
-# 1. C simplu (target corect)
-printf '#include <stdio.h>\nint main(void){printf("C_OK");return 0;}\n' > c.c
-if $B/clang --target=aarch64-linux-android__API__ c.c -o c.bin >/dev/null 2>&1; then echo "C_COMPILE=1"; else echo "C_COMPILE=0"; fi
-# 2. C++ cu libc++ + STL (obstacolul 6)
-printf '#include <iostream>\n#include <string>\nint main(){std::string s="CXX_OK";std::cout<<s;return 0;}\n' > x.cpp
-if $B/clang++ --target=aarch64-linux-android__API__ x.cpp -o x.bin -L$L -L$BIONIC -lc++_shared -Wl,-rpath,$L >/dev/null 2>&1; then echo "CXX_COMPILE=1"; else echo "CXX_COMPILE=0"; fi
-# 3. functii matematice (obstacolul 7 - libm stub)
-printf '#include <math.h>\n#include <stdio.h>\nint main(void){printf("%%f",(double)(log2f(8.f)+expf(0.f)));return 0;}\n' > m.c
-if $B/clang --target=aarch64-linux-android__API__ m.c -o m.bin -L$BIONIC -lm >/dev/null 2>&1; then echo "MATH_LINK=1"; else echo "MATH_LINK=0"; fi
-# 4. PREFIX (obstacolul 5)
-if [ -f "$P/include/android/api-level.h" ]; then echo "PREFIX_HDR=1"; else echo "PREFIX_HDR=0"; fi
-# 5. make SHELL corect (obstacolul 4)
-if make -p -f /dev/null 2>/dev/null | grep -q "SHELL = /system/bin/sh"; then echo "MAKE_SHELL=1"; else echo "MAKE_SHELL=0"; fi
-# 6. python + SSL (obstacolul 3)
-if SSL_CERT_FILE=$P/etc/tls/cert.pem $B/python3.14 -c "import ssl,urllib.request;urllib.request.urlopen('https://pypi.org',timeout=15)" >/dev/null 2>&1; then echo "SSL=1"; else echo "SSL=0"; fi
-# 7. cmake prezent
-if $B/cmake --version >/dev/null 2>&1; then echo "CMAKE=1"; else echo "CMAKE=0"; fi
-# 8. pkg-config prezent (meson il cere)
-if $B/git --version >/dev/null 2>&1; then echo "GIT=1"; else echo "GIT=0"; fi
-# 8b. ★ SPAWN TEST: cea mai inselatoare problema - un ninja care nu poate face spawn
-#     nu poate executa NICIUN subproces pe Android 16 (esua cu 127 chiar si la
-#     `/system/bin/sh -c "echo OK"`), in timp ce compilarea directa mergea perfect.
-#     Preflight raporta c_compile:true si TOTUSI nimic bazat pe ninja nu rula -> ~30 min pierdute.
-#     Acest test de 2 secunde prinde exact acel caz.
-if env >/dev/null 2>&1; then echo "ENV_APPLET=1"; else echo "ENV_APPLET=0"; fi
-if [ -x "$B/ninja" ] && [ -x "$B/samu" ]; then
-  # samu trebuie sa poata spawn-ui un subproces simplu.
-  # ATENTIE: samu scrie .ninja_log in DIRECTORUL CURENT -> rulam intr-unul scriibil,
-  # altfel esueaza cu "Read-only file system" si raportam fals un spawn rupt.
-  mkdir -p __TMP__/.sptest 2>/dev/null
-  # build.ninja trebuie sa declare o TINTA (build), nu doar o regula: altfel samu raspunde
-  # "unknown target" si raportam fals un spawn rupt.
-  printf 'rule r\n  command = /system/bin/sh -c "echo SPAWN_OK"\n  description = t\nbuild out: r\n' > __TMP__/.sptest/build.ninja 2>/dev/null
-  if (cd __TMP__/.sptest && $B/samu out >/dev/null 2>&1); then echo "SAMU_SPAWN=1"; else echo "SAMU_SPAWN=0"; fi
-  rm -rf __TMP__/.sptest 2>/dev/null
-  # ninja din prefix: daca nu poate spawn-ui, e rupt (wrapper-ul nostru -> samu, deci ar trebui 1)
-  if $B/ninja --version >/dev/null 2>&1; then echo "NINJA_RUNS=1"; else echo "NINJA_RUNS=0"; fi
-else echo "SAMU_SPAWN=0"; echo "NINJA_RUNS=0"; fi
-# 9. CMAKE REAL (obstacolele 4+5): configureaza + compileaza un proiect C++ minim
-#    Asta prinde: SHELL mort in make, PREFIX nesetat, -lc++_shared, libm bionic.
-if $B/cmake --version >/dev/null 2>&1; then
-  mkdir -p $T/cm/src && cd $T/cm/src
-  printf 'cmake_minimum_required(VERSION 3.16)\nproject(t CXX)\nadd_executable(t m.cpp)\ntarget_link_libraries(t m)\n' > CMakeLists.txt
-  printf '#include <iostream>\n#include <cmath>\nint main(){std::cout<<(int)(std::log2(8.0));return 0;}\n' > m.cpp
-  # ★ profile cmake: PREFIX e obligatoriu (cmake citeste $ENV{PREFIX}/include/android/api-level.h)
-  #   si filtrăm liniile de diagnostic "[adb] ..." care altfel ajung IN script si il rup.
-  export PREFIX="$P"
-  $B/python3.14 $TC profile cmake 2>/dev/null | grep -v '^\[adb\]' > $T/cm/prof.sh
-  if sh $T/cm/prof.sh . . >/dev/null 2>&1; then
-    if $B/make -j4 >/dev/null 2>&1 && [ -x ./t ]; then
-      echo "CMAKE_BUILD=1"
-    else echo "CMAKE_BUILD=0"; fi
-  else echo "CMAKE_BUILD=0"; fi
-else echo "CMAKE_BUILD=0"; fi
-rm -rf $T
-"""
-    script = (script.replace("__BIN__", BIN).replace("__LIB__", ROOT + "/usr/lib")
-                    .replace("__PREFIX__", ROOT + "/usr").replace("__API__", str(api))
-                    .replace("__BIONIC__", BIONIC_LIB).replace("__TC__", os.path.join(os.path.dirname(os.path.abspath(__file__)), "toolchain.py"))
-                    .replace("__TMP__", F + "/tmp"))
-    try:
-        out = _sh(script, 60)
-        for line in out.split("\n"):
-            if "=" in line and line.split("=")[0].strip().isupper():
-                k, v = line.split("=", 1)
-                r[k.strip().lower()] = (v.strip() == "1")
-    except Exception as e:
-        r["error"] = str(e)[:120]
-    return r
-
+    r = dict(selftest())
+    out = {}
+    for k in ("c_compile_link", "cxx_stl", "python_extension", "fortran_compile", "rust", "cargo",
+              "cmake", "ninja", "make", "pkg_config", "lld", "setuptools", "pybind11", "cython",
+              "ram_liber_mb", "lipsa", "verdict", "detalii"):
+        if k in r:
+            out[k] = r[k]
+    out["api"] = _device_api()
+    out["nota"] = ("preflight == selftest (compilare+linkare reala, in procesul aplicatiei); "
+                   "varianta veche pe script shell era perimata si raporta fals totul")
+    return out
 
 def doctor():
     """Health check RAPID, fara subprocess (anti-blocaj).
@@ -655,16 +582,18 @@ def _stable_libs():
         os.makedirs(d, exist_ok=True)
     except Exception:
         return d
-    for name in ("libc++_shared.so",):
+    for name in ("libc++_shared.so", "libpython3.14.so"):
         tgt = d + "/" + name
         if os.path.exists(tgt) and os.path.getsize(tgt) > 100000:
             continue
         try:
             import shutil as _sh
-            src = _native_dir() + "/" + name
-            if os.path.exists(src):
-                _sh.copyfile(src, tgt)
-                os.chmod(tgt, 0o755)
+            # surse posibile: nativeLibraryDir (libc++_shared) sau deps/lib (libpython3.14)
+            for src in (_native_dir() + "/" + name, DEPS + "/" + name):
+                if os.path.exists(src):
+                    _sh.copyfile(src, tgt)
+                    os.chmod(tgt, 0o755)
+                    break
         except Exception:
             pass
     return d
@@ -2199,6 +2128,12 @@ def env_vars():
                 + " -Wl,-rpath," + _stable_libs()
                 + " -Wl,-rpath," + DEPS + "/lib"
                 + " -Wl,-rpath," + _native_dir()
+                # ★ FAZA 4m: C++ se leaga IMPLICIT cu libc++ (raportat in testul din UI: agentul
+                # primea "undefined symbol __gxx_personality_v0" si trebuia sa adauge manual
+                # -lc++_shared). Punem si calea stabila files/libs (contine libc++_shared.so si
+                # libpython3.14.so), ca linkarea C++ si a extensiilor Python sa mearga din prima.
+                + " -L" + _stable_libs()
+                + " -lc++_shared"
                 + (" -L" + _atom if _atom else "")
                 # ★ -lm -ldl EXPLICIT: pe bionic functiile de math/log/fmod sunt in libm si,
                 # cu --no-undefined, orice modul care le foloseste are nevoie de ele la link

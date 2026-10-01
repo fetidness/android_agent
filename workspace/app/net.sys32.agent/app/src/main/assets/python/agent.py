@@ -1110,7 +1110,7 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "to see each step - a failure must stay isolated and visible. Small steps are GOOD for reliability; the "
   "only waste is running them one request at a time. "
   "STOPPING CRITERION (a real failure from the numpy build): before you call a task done, state to yourself WHAT the finish line is (e.g. `python -c \"import numpy\"` exits 0 and prints the version). The task is NOT done because a tool printed OK - it is done when the FINAL verification returns the result that was asked for. After EVERY step that reports success, check the EFFECT on disk (does the file exist? does the command run?), not the status message. If a tool says OK but the effect is missing, treat it as a FAILURE and investigate the tool. NEVER end a turn with \"I did X, next comes Y\" when the operator asked for Y: finish Y. A half-done task reported as progress is worse than an honest \"I am blocked on Z\". " +
-  "SHELL-OWNED RESOURCES: the toolchain in /data/local/tmp belongs to uid 2000 (shell). As an app you can READ its files (after `chmod -R a+rX`) but you CANNOT execute them - run anything that needs it through `adbsh`/`/run_su`. A `status` that looks green from the shell perspective does not mean YOU can use it. " +
+  "UID 2000 (adbsh) - CE POATE SI CE NU: shell-ul are puteri privilegiate (pm grant/revoke, appops, settings, dumpsys, input, screencap, run-as, logcat) si poate scrie in /data/local/tmp, dar NU POATE CITI filesDir-ul aplicatiei (mod 700, alt proprietar): toolchain-ul din APK ramane EXCLUSIV al aplicatiei, nu-l cauta din adbsh. In /data/local/tmp pot exista wrapper-e VECHI (clang/cython) care arata spre cai de APK demultate - ignorale; compilarea se face cu tool-ul toolchain (in procesul aplicatiei), nu prin shell. " +
   "CODE DENSITY (the code you send is billed on EVERY later request): the `code`/`cmd` field of a tool call "
   "stays in the context forever and is re-sent each round. So write the SHORTEST code that does the job: no "
   "decorative comments (only the one required label line), no re-printing data you already printed, no "
@@ -2564,7 +2564,11 @@ def run_toolchain_tool(a):
                      + (["-shared", "-fPIC"] if shared else [])
                      + [srcf, "-o", out]
                      + (a.get("flags") or "").split()
-                     + (e.get("LDFLAGS") or "").split())
+                     + (e.get("LDFLAGS") or "").split()
+                     # ★ extensie Python: daca sursa include Python.h, linkam automat libpython
+                     # (raportat in testul din UI: "unable to find library -lpython3.14" /
+                     # "undefined symbol: PyModule_Create2" - agentul trebuia sa ghiceasca flag-ul)
+                     + (["-lpython3.14"] if (shared and "Python.h" in open(srcf, encoding="utf-8", errors="ignore").read()) else []))
             p = subprocess.run(cargs, capture_output=True, text=True, env=e, cwd=F + "/tmp",
                                timeout=int(a.get("timeout", 600) or 600), stdin=subprocess.DEVNULL)
             res = (p.stdout or "") + (p.stderr or "")

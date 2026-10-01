@@ -3434,3 +3434,29 @@ pyext end-to-end), dar a pierdut zeci de pasi pe 3 probleme reale:
    era deja pregatita, dar agentul nu stia. **Fix:** regula (3d) in prompt: pentru Rust se foloseste
    cargo; nu se pierde timp cu `rustc` direct. Plus regula (3e): binarele ELF din files/tmp sunt
    executabile direct (dovedit), scripturile nu (foloseste lansatoarele ELF).
+
+## Etapa 69 - OPTIMIZARI DIN TESTUL "verificare completa toolchain" (`.assets_v227`)
+
+Sesiune noua: 41 de pasi / ~5.7k tokeni (fata de 185/~20k la testul anterior) - deci fix-urile din
+Etapa 68 isi fac efectul. Au ramas 3 probleme reale, toate reparate:
+
+1. **`preflight` raporta TOTUL false** (`c_compile: false, cxx_compile: false, cmake: false...`) in
+   timp ce `doctor`/`selftest` erau verzi - agentul a pierdut pasi verificand cine are dreptate.
+   Cauza: preflight era un SCRIPT SHELL bazat pe aranjamentul VECHI (toolchain/bin/python3.14,
+   ROOT/usr/lib, samu, git, LD_PRELOAD) - dupa mutarea toolchain-ului in APK si a libs in deps/*.a
+   nu mai functiona nimic din el. **Fix:** preflight deleaga acum la `selftest` (compilare+linkare
+   REALA in procesul aplicatiei) + `api` + nota. Dovada: preflight -> c/cxx/pyext/fortran/cmake/
+   rust = True, `lipsa: []`, identic cu selftest.
+2. **C++ nu se lega fara `-lc++_shared`** (agentul: "undefined symbol __gxx_personality_v0" si a
+   adaugat flag-ul manual). **Fix:** LDFLAGS include acum `-L files/libs` + `-lc++_shared`.
+   Dovada: `toolchain action=compile` pe un C++ cu STL, fara nici un flag suplimentar:
+   COMPILE_OK + RUN rc=0 `CXX_DEFAULT=9`.
+3. **Extensiile Python cereau flag-uri ghicite** ("unable to find library -lpython3.14" /
+   "undefined symbol: PyModule_Create2"). **Fix:** `_stable_libs()` asigura si
+   `files/libs/libpython3.14.so` (lipsa din LDFLAGS e acum acoperita de `-L files/libs`), iar
+   `action=compile` adauga AUTOMAT `-lpython3.14` cand sursa include `Python.h` si iesirea e .so.
+   Dovada: extensie Python.h compilata fara flag-uri -> `IMPORT OK dublu(21) = 42`.
+4. **Promptul continea o afirmatie perimata** ("the toolchain in /data/local/tmp belongs to uid 2000
+   ... you cannot execute them") - acum spune realitatea: uid 2000 NU poate citi filesDir (mod 700,
+   alt proprietar), toolchain-ul e EXCLUSIV al aplicatiei, iar in /data/local/tmp pot exista
+   wrapper-e VECHI care arata spre cai de APK demultate (de ignorat).
