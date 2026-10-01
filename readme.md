@@ -3142,3 +3142,27 @@ Plus: `agent.py` noteaza explicit ca `LD_LIBRARY_PATH` trebuie **PREPEND**, nici
 (agentul a descoperit singur ca inlocuirea pierde calea nativeLibraryDir -> segfault).
 
 **Rezultat pe `.assets_v210`: `selftest` -> `rust=True`, `cargo=True`, `ram_liber_mb=4485`.**
+
+---
+
+## Etapa 56 - FAZA 4d: REPARATII DEFINITIVE DIN CONVERSATIA AGENTULUI (`.assets_v212`)
+
+Am citit toata conversatia agentului (context.json) si am reparat tot ce a raportat ca rupt:
+
+1. **Fortran/flang era REAL rupt** ("unknown argument: '-c'"): wrapperul pasa flag-uri de driver
+   (`-c`, `-o`) catre `flang-bin -fc1`, care nu le accepta. Acum wrapperul le TRADUCE (scoate
+   `-c`, pune `-emit-obj`, muta rezultatul la `-o`). Dovedit pe device: `flang -c t.f90` -> rc=0,
+   obiect produs.
+2. **binutils (ar/ranlib/nm/strip/readelf/objdump)** nu aveau lansatoare in `files/tmp` ->
+   cmake/autotools cadeau cu "Permission denied" (fals negativ raportat de agent). Acum
+   `_ensure_launchers()` le creeaza; `toolchain_env.sh` exporta caile din `files/tmp`.
+3. **Executia binarilor compilati** (capcana mare descoperita de agent): procesul app NU poate
+   executa un ELF proaspat compilat (SELinux `data_file_type`; Android 10+). Calea care merge:
+   `/apex/com.android.runtime/bin/linker64 <binar> [args]`. Regula e acum in promptul agentului
+   (3b), ca sa nu mai raporteze "build rupt" din cauza asta.
+4. **ADB require autorizare** ("TimeoutError la AUTH / dialogul Allow USB debugging"): mesajul de
+   eroare al `adbsh` spune acum explicit ce sa faca operatorul (reactiveaza USB debugging +
+   "Always allow from this computer"), in loc de un text opac.
+
+**Rezultat pe `.assets_v212`: `selftest` -> cmake=True, rust=True, cargo=True, fortran=True,
+`lipsa: []`.**

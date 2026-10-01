@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-01 (reparatii definitive din conversatia agentului - `.assets_v212`)
+
+- Fortran/flang: wrapperul traduce acum flag-urile de driver (`-c` -> `-emit-obj`) - flang
+  compileaza pe device (dovedit).
+- binutils (ar/ranlib/nm/strip/readelf/objdump) primite ca lansatoare in `files/tmp` (cmake nu
+  mai da fals negativ).
+- Rularea binarilor compilati: documentat `/apex/com.android.runtime/bin/linker64 <binar>` +
+  regula in promptul agentului.
+- `adbsh`: mesaj de eroare cu instructiuni cand adbd cere autorizare (dialogul Allow).
+- `selftest` -> cmake=True, rust=True, cargo=True, fortran=True, lipsa=[].
+
 ### 2026-09-30 (TEST E2E DIN UI + reparatii toolchain)
 
 - Test end-to-end: task din interfata -> agentul compileaza/verifica pe device (33 pasi).

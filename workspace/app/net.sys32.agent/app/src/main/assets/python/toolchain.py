@@ -496,12 +496,15 @@ def _write_env_file():
         "export PATH={D}/bin:{P}/bin:/system/bin\n"
         "export CC={P}/bin/clang-21\n"
         "export CXX={P}/bin/clang-21++\n"
-        "export AR={P}/bin/llvm-ar\n"
-        "export RANLIB={P}/bin/llvm-ranlib\n"
-        "export NM={P}/bin/llvm-nm\n"
-        "export STRIP={P}/bin/llvm-strip\n"
-        "export READELF={P}/bin/llvm-readelf\n"
-        "export OBJDUMP={P}/bin/llvm-objdump\n"
+        # ★ CAPCANA (raportata de testul E2E din UI): binutils trebuie predate ca LANSATOARELE
+        # din files/tmp (nume fara sufix, executabile de procesul app) - NU calea din
+        # toolchain/bin, pe care untrusted_app nu o poate executa (fals negativ la cmake).
+        "export AR={F}/tmp/ar\n"
+        "export RANLIB={F}/tmp/ranlib\n"
+        "export NM={F}/tmp/nm\n"
+        "export STRIP={F}/tmp/strip\n"
+        "export READELF={F}/tmp/readelf\n"
+        "export OBJDUMP={F}/tmp/objdump\n"
         "export CC_EXTRA=\"--target=aarch64-linux-android{api} --sysroot={P}/sysroot\"\n"
         "export CFLAGS=\"-fPIC -O2 --target=aarch64-linux-android{api} --sysroot={P}/sysroot -I{P}/sysroot/usr/include -I{P}/pyinc -I{D}/include -I{D}/include/libxml2\"\n"
         "export CXXFLAGS=\"$CFLAGS\"\n"
@@ -990,6 +993,28 @@ def _ensure_launchers():
             made.append("cmake")
         except Exception:
             pass
+    # ★ binutils (ar/ranlib/nm/strip/readelf/objdump): cmake si autotools le cauta dupa NUME
+    # in PATH, iar untrusted_app nu poate executa din toolchain/bin -> lansatoare in files/tmp.
+    # (Capcana raportata de testul E2E: cmake/ar cadeau cu "Permission denied".)
+    for _nm, _so in (("ar", "libllvmar_exec.so"), ("ranlib", "libllvmranlib_exec.so"),
+                     ("nm", "libllvmnm_exec.so"), ("strip", "libllvmstrip_exec.so"),
+                     ("readelf", "libllvmreadelf_exec.so"), ("objdump", "libllvmobjdump_exec.so")):
+        if nat and os.path.exists(nat + "/" + _so):
+            _p = F + "/tmp/" + _nm
+            try:
+                _st = False
+                if os.path.islink(_p):
+                    try:
+                        _st = not os.path.exists(os.readlink(_p))
+                    except Exception:
+                        _st = True
+                if os.path.lexists(_p) and (not os.path.islink(_p) or _st):
+                    os.remove(_p)
+                if not os.path.lexists(_p):
+                    os.symlink(nat + "/" + _so, _p)
+                made.append(_nm)
+            except Exception:
+                pass
     # ★ patchelf (numpy/meson-python): meson-python rescrie RPATH-urile modulelor
     # construite si cheama `patchelf`; fara el build-ul pica la final cu
     # "FileNotFoundError: [Errno 2] No such file or directory: 'patchelf'".
@@ -1061,10 +1086,29 @@ def _ensure_launchers():
         # (2) link cu clang (care stie sysroot/LDFLAGS) + runtime-urile Fortran.
         _body = ('#!/system/bin/sh\n'
                  'CS="%s"; R="%s"; SL="%s"\n'
+                 # ★ CAPCANA (raportata de testul E2E): `-fc1` NU accepta flag-uri de driver
+                 # (`-c` -> "error: unknown argument: '-c'"). Trebuie traduse: scoatem -c/-o,
+                 # punem -emit-obj si mutam rezultatul la -o.
                  'case " $* " in\n'
                  '  *" -c "*|*" -S "*|*" -E "*)\n'
-                 '    exec "$CS/flang-bin" -fc1 -triple aarch64-linux-android35 '
-                 '"$@" -I"$CS/pyinc" ;;\n'
+                 '    OUT=""; SRC=""\n'
+                 '    while [ $# -gt 0 ]; do\n'
+                 '      case "$1" in\n'
+                 '        -c|-S|-E) shift ;;\n'
+                 '        -o) OUT="$2"; shift 2 ;;\n'
+                 '        *.f|*.f90|*.f95|*.for|*.F|*.F90|*.F95) SRC="$1"; shift ;;\n'
+                 '        *) shift ;;\n'
+                 '      esac\n'
+                 '    done\n'
+                 '    [ -n "$SRC" ] || { echo "flang: lipsește sursa Fortran"; exit 1; }\n'
+                 '    D="$(cd "$(dirname "$SRC")" && pwd)"; B="$(basename "$SRC")"\n'
+                 '    ( cd "$D" && "$CS/flang-bin" -fc1 -triple aarch64-linux-android35 '
+                 '-emit-obj "$B" -I"$CS/pyinc" ) || exit 1\n'
+                 '    O="$D/${B%%.*}.o"\n'
+                 '    [ -f "$O" ] || O="$D/${B%%.*}"\n'
+                 '    [ -f "$O" ] || { echo "flang: nu a produs .o pentru $SRC"; exit 1; }\n'
+                 '    if [ -n "$OUT" ]; then cp "$O" "$OUT"; else cp "$O" "./${B%%.*}.o"; fi\n'
+                 '    exit 0 ;;\n'
                  'esac\n'
                  'OUT=""; OBJS=""; SRCS=""\n'
                  'while [ $# -gt 0 ]; do\n'
