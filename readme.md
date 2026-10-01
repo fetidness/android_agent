@@ -3265,3 +3265,17 @@ si de context, toate reparate:
 4. **Build pe /sdcard** (noexec) -> binarul nu se putea mapa, apoi copiere manuala in files/tmp
    (2 pasi pierduti). Regula (3c) in prompt: se compileaza in `files/tmp`/workspace, NICIODATA
    pe /storage; iar `env` afiseaza deja bucla completa de build+rulare.
+
+## Etapa 62 - SELFTEST AUTO-DOCUMENTAT (`.assets_v218`)
+
+Dupa optimizari, testul "verifica toolchain complet" a rulat in **4 pasi / ~850 tokeni** (inainte:
+40 de pasi / ~7k tokeni) - 1 apel de tool, verdict corect. Dar raportul agentului continea doua
+inexactitati pe care le INVENTA (selftest-ul nu spunea ce implementari sunt instalate):
+"libstdc++" (de fapt **libc++**) si "gfortran-style" (de fapt **FLANG**).
+
+Fix: `selftest()` intoarce acum si `detalii` - harta cu ce este instalat CONCRET:
+clang 21.1.8 + libc++ (NU libstdc++), FLANG 21.1.8 (NU gfortran), rustc/cargo 1.98.1 + maturin
+1.15.0, cmake 3.31.6/ninja/make 4.4.1/meson/scikit-build-core/setuptools/cython/pybind11,
+perl 5.42.0, unde sunt binarele, cum se ruleaza ELF-ul (linker64/adbsh) si ca build-dir-ul e
+files/tmp (nu /sdcard). Regula (0) din prompt cere agentului sa foloseasca numele reale din
+`detalii` in rapoarte.

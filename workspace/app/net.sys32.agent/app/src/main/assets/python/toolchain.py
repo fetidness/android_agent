@@ -2605,6 +2605,17 @@ def selftest():
     r["ok"] = sorted([k for k in _bools if r[k]])
     r["lipsa"] = sorted([k for k in _bools if not r[k]])
     r["timpi_s"] = tm
+    # ★ ce este INSTALAT concret: fara asta agentul inventa nume (libstdc++/gfortran) in rapoarte
+    r["detalii"] = {
+        "c_cxx": "clang 21.1.8 + libc++ (LLVM; NU libstdc++)",
+        "fortran": "FLANG 21.1.8 (LLVM; NU gfortran)",
+        "rust": "rustc/cargo 1.98.1 + maturin 1.15.0 (backend Rust pentru pip)",
+        "build_systems": "cmake 3.31.6, ninja, make 4.4.1, meson, scikit-build-core, setuptools, cython, pybind11",
+        "perl": "perl 5.42.0",
+        "binare": "ELF in lib-ul APK (lib*_exec.so) + symlink in files/tmp si files/toolchain/bin",
+        "rulare_elf": "/apex/com.android.runtime/bin/linker64 <binar> sau adbsh (exec direct interzis)",
+        "build_dir": "files/tmp (nu /sdcard: noexec)",
+    }
     if r.get("python_extension") and r.get("cxx_stl"):
         r["verdict"] = ("TOOLCHAIN COMPLET pentru pip: extensii C si C++ compilate+linkate pe "
                         "device" + (" | ATENTIE (nu sunt capabilitati): "

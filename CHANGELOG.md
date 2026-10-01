@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-01 (selftest auto-documentat - `.assets_v218`)
+
+- `selftest()` intoarce `detalii`: clang 21.1.8 + libc++ (NU libstdc++), FLANG (NU gfortran),
+  rustc/cargo 1.98.1 + maturin 1.15.0, cmake/ninja/make/meson/scikit-build-core/setuptools/
+  cython/pybind11, perl 5.42.0, binare+rulare ELF (linker64), build-dir files/tmp.
+- Regula (0) din prompt: rapoartele folosesc numele reale din `detalii`.
+- Confirmat: dupa optimizari, "verifica toolchain complet" = 4 pasi / ~850 tokeni (inainte 40/~7k).
+
 ### 2026-10-01 (optimizari pe baza conversatiei - `.assets_v217`)
 
 - `toolchain action=env`: 7417 -> 2418 caractere (-67%), cu exemple copy-paste pentru C/C++/
