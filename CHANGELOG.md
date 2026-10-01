@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-01 (FAZA 4j: numpy compileaza pe device - `.assets_v223`)
+
+- `shwrap`: rezolva argv[0] prin PATH (meson il chema cu nume simplu -> "cython.sh: No such file").
+  Reconstruit static cu NDK; verificat `cython -V` din orice cwd.
+- launcher-e noi: `cython3`, `cython-3`, `f2py`, `pip`, `pip3`.
+- `env` propriu (shwrap + env.sh): toybox env de pe Android executa gresit comenzile meson
+  ("env: exec -m: No such file or directory") -> numpy pica la codegen. Pattern `[A-Za-z_]*=*`
+  pentru ca calea APK contine `==`.
+- rezultat: numpy 2.5.3 instalat pe device in 174 s (meson-python, ninja, clang, Cython 3.3.0,
+  OpenBLAS 0.3.29); det([[1,2],[3,4]]) = -2.0 si dupa update de APK. orjson 3.12.0 reinstalat OK.
+
 ### 2026-10-01 (FIX CRITIC: pachetele pip mureau la update-ul de APK - `.assets_v220`)
 
 - Cauza: MainActivity salva `site-packages` in `site_packages_keep` dar NU il restaura niciodata ->

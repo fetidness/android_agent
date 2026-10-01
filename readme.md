@@ -3326,3 +3326,29 @@ fata de cele din APK), apoi depozitul se goleste.
 cade la sanity-check cu `[Errno 13] Permission denied` pe binarul de test compilat in `files/tmp`
 (acelasi motiv SELinux: exec din datele aplicatiei). Cbor2/orjson se pot reinstala oricand cu pip
 (se compileaza pe device).
+
+## Etapa 65 - FAZA 4j: NUMPY COMPILAT PE DEVICE (`.assets_v223`)
+
+Dupa fix-urile din Etapa 63-64, numpy a fost atacat sistematic; au mai fost necesare 3 fix-uri:
+
+1. **`meson` nu gasea Cython** ("Unknown compiler(s): [['cython'], ['cython3']]"). Cauza reala
+   (din meson-log): `Detecting compiler via: cython -V -> 127`,
+   `/system/bin/sh: cython.sh: No such file or directory`. Meson cheama launcher-ul cu NUME SIMPLU
+   (gasit prin PATH), iar `shwrap` derivaba `<argv[0]>.sh` **relativ** la cwd-ul apelantului.
+   **Fix in `build/shim/shwrap.c`:** daca argv[0] nu contine '/', se rezolva prin PATH (primul
+   entry cu X_OK) si abia apoi se deriva scriptul din calea ABSOLUTA (+ fallback filesDir/tmp).
+   Reconstruit cu NDK: `aarch64-linux-android35-clang -O2 -static -o libshwrap_exec.so`.
+   Verificat: `cython -V` cu nume simplu din orice cwd -> rc=0.
+2. **`cython3` lipsea** -> adaugat launcher-ele `cython3`/`cython-3` (meson cauta exact aceste nume).
+3. **`env` de pe Android (toybox) executa gresit comenzile lui meson**:
+   `env PYTHONPATH=... libpyexec.so -m code_generators.generate_umath` ->
+   `env: exec -m: No such file or directory` (rc=127), deci numpy cadea la primul pas de codegen.
+   **Fix:** launcher `env` propriu (`env.sh` + symlink la libshwrap_exec.so) primul in PATH, cu
+   parsare corecta a `NAME=VALUE` (atentie: calea APK contine `==`, deci pattern-ul de nume e
+   `[A-Za-z_]*=*`, nu `*=*`).
+
+**REZULTAT (dovada pe device, `.assets_v223`):** `pip install numpy` -> **numpy 2.5.3** rc=0 in
+174 s (meson-python + ninja + clang + Cython 3.3.0 + OpenBLAS 0.3.29 detectat prin pkg-config);
+`import numpy` -> `numpy.arange(6).reshape(2,3).sum()` = 15; dupa un update de APK:
+`numpy.linalg.det([[1,2],[3,4]])` = -2.0000000000000004 (numpy a SUPRAVIETUIT update-ului -
+validarea fix-ului critic de site-packages). orjson 3.12.0 s-a reinstalat (36 s) si functioneaza.

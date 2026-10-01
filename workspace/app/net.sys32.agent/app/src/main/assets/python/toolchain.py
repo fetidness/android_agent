@@ -1230,7 +1230,44 @@ def _ensure_launchers():
         # Raportat de agent: "cython: Permission denied" pentru ca files/tmp/cython era un SCRIPT
         # in filesDir, iar untrusted_app nu poate executa scripturi de acolo (doar ELF/symlink-ELF).
         _sw2 = nat + "/libshwrap_exec.so" if nat else ""
-        for name, mod in (("cython", "cython"), ("f2py", "numpy.f2py"), ("pip", "pip")):
+        # ★ FAZA 4j: `env` PROPRIU. meson isi impacheteaza comenzile custom ca
+        #   `env PYTHONPATH=... <python> -m modul`, iar toybox env de pe Android executa gresit
+        #   ("env: exec -m: No such file or directory", rc=127) -> build-ul numpy pica la primul
+        #   pas de codegen. Punem un env corect primul in PATH (files/tmp e primul in PATH).
+        try:
+            _envsh = F + "/tmp/env.sh"
+            _envbody = ("#!/system/bin/sh\n"
+                        "# env propriu (toybox env executa gresit comenzile meson).\n"
+                        "# Atentie: calea APK contine '==' (~~xqic99_7GfT6epcvQxafJg==), deci NU\n"
+                        "# putem testa generic '*=*' - numele trebuie sa inceapa cu litera/_ (ca la sh).\n"
+                        "while [ $# -gt 0 ]; do\n"
+                        "  case \"$1\" in\n"
+                        "    -i) shift ;;\n"
+                        "    -u) shift 2 ;;\n"
+                        "    [A-Za-z_]*=*) export \"$1\"; shift ;;\n"
+                        "    -*) shift ;;\n"
+                        "    *) exec \"$@\" ;;\n"
+                        "  esac\n"
+                        "done\n"
+                        "exit 125\n")
+            if (not os.path.exists(_envsh)) or open(_envsh).read() != _envbody:
+                open(_envsh, "w").write(_envbody)
+            os.chmod(_envsh, 0o755)
+            _ep = F + "/tmp/env"
+            if _sw2 and os.path.exists(_sw2):
+                if os.path.lexists(_ep):
+                    os.remove(_ep)
+                os.symlink(_sw2, _ep)
+            else:
+                if os.path.lexists(_ep):
+                    os.remove(_ep)
+                open(_ep, "w").write(_envbody)
+                os.chmod(_ep, 0o755)
+            made.append("env")
+        except Exception:
+            pass
+        for name, mod in (("cython", "cython"), ("cython3", "cython"), ("cython-3", "cython"),
+                          ("f2py", "numpy.f2py"), ("pip", "pip"), ("pip3", "pip")):
             p = F + "/tmp/" + name
             ps = F + "/tmp/" + name + ".sh"
             try:

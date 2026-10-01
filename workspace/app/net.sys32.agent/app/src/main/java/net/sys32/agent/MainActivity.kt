@@ -690,7 +690,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v220")
+        val stamp = File(filesDir, ".assets_v223")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -735,11 +735,9 @@ class MainActivity : AppCompatActivity() {
             if (newSp.exists() && kept != null && kept.isNotEmpty()) {
                 keepDir.copyRecursively(newSp, overwrite = true)
                 keepDir.deleteRecursively()
-                Log.i("sys32", "site-packages restaurate din site_packages_keep")
             }
-        } catch (e: Exception) {
-            Log.w("sys32", "restaurare site-packages: " + e.message)
-        }
+        } catch (_: Exception) {}
+
         // ★ tmp pentru pip/setuptools (scriu fisiere temporare de build acolo)
         try { File(filesDir, "tmp").mkdirs() } catch (_: Exception) {}
         // punem la loc memoria salvata (daca exista); altfel ramane cea din APK
