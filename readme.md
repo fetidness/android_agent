@@ -3191,3 +3191,15 @@ Alte doua reparatii din acelasi test:
 Nota de mediu (confirmata de agent): `run-as net.sys32.agent sh -c ...` vede si executa
 filesDir-ul; procesul app, in schimb, doar CITESTE (exec interzis) - de aceea binarul produs se
 ruleaza cu `/apex/com.android.runtime/bin/linker64 <binar>`.
+
+## Etapa 58 - FAZA 4f: SELFTEST FARA FALS NEGATIV LA CMAKE (`.assets_v214`)
+
+Al treilea test din UI: agentul a raportat toolchain-ul **functional complet** (C, C++, Fortran,
+Rust, extensii Python, cmake - toate compileaza SI ruleaza), ramanea doar un fals negativ:
+`selftest` -> `lipsa: ["cmake"]` cu `llvm-ar: Permission denied`.
+
+Cauza: `selftest()` nu chema `_ensure_launchers()`, deci testul cmake folosea
+`toolchain/bin/llvm-ar` (cale neexecutabila in sandbox-ul app-ului). Fix: `selftest()` creeaza
+lansatoarele intai, iar fallback-ul din `_SHIM` prefera lansatorul ELF din `files/tmp`.
+
+**Rezultat pe `.assets_v214`: `selftest` -> toate capabilitatile True, `lipsa: []`.**

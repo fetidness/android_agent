@@ -1978,8 +1978,11 @@ def env_vars():
                         os.symlink(NAT + "/" + _so, _t)
             except Exception:
                 pass
+            _lt = F + "/tmp/" + _n
             if os.path.exists(_t):
                 _SHIM[_n] = _t
+            elif os.path.exists(_lt):
+                _SHIM[_n] = _lt           # lansator ELF din files/tmp (executabil ca app)
             else:
                 _SHIM[_n] = BIN + "/llvm-" + _n
         # ★ P5: clang-21++ NU exista in bin/ (doar clang++ -> clang-21) -> cale moarta
@@ -2323,6 +2326,13 @@ def selftest():
     Returneaza un dict cu TRUE/FALSE per capabilitate + timpi + ce lipseste.
     """
     api = _device_api()
+    # ★ CAPCANA (raportata de testul E2E din UI): fara lansatoarele din files/tmp, testul cmake
+    # cadea pe `toolchain/bin/llvm-ar` (neexecutabil in sandbox-ul app-ului) -> "llvm-ar:
+    # Permission denied" -> fals negativ `cmake: false`, desi cmake merge perfect.
+    try:
+        _ensure_launchers()
+    except Exception:
+        pass
     tgt = ["--target=aarch64-linux-android%d" % api, "--sysroot=" + ROOT + "/sysroot"]
     ld = []
     for _d in _rt_link_dirs():
