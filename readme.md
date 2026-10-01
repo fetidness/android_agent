@@ -3352,3 +3352,14 @@ Dupa fix-urile din Etapa 63-64, numpy a fost atacat sistematic; au mai fost nece
 `import numpy` -> `numpy.arange(6).reshape(2,3).sum()` = 15; dupa un update de APK:
 `numpy.linalg.det([[1,2],[3,4]])` = -2.0000000000000004 (numpy a SUPRAVIETUIT update-ului -
 validarea fix-ului critic de site-packages). orjson 3.12.0 s-a reinstalat (36 s) si functioneaza.
+
+### Etapa 65b - pachete pierdute la update-urile de APK, refacute
+
+Dupa fix-ul de site-packages (Etapa 64) si fix-urile de la numpy (Etapa 65), pachetele pierdute in
+timpul testelor au fost reinstalate pe device cu `pip_install` (toate compileaza nativ):
+
+- numpy 2.5.3 (174 s, meson-python + ninja + Cython + OpenBLAS)
+- orjson 3.12.0 (Rust/maturin), cbor2 6.1.4 (Rust/setuptools-rust, 67 s - necesita `setuptools-rust`)
+- Pillow 12.3.0 (26 s), cffi 2.1.1, apsw 3.53.4.0 (107 s), zstandard 0.25.0, lz4 4.4.5,
+  msgpack 1.2.3, regex 2026.9.29, simplejson 4.1.2
+- ramas neinstalat: kiwisolver (doar pt. matplotlib) - build-ul lui cade pe toolchain-ul curent

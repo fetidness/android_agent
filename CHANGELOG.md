@@ -9,6 +9,12 @@
 
 ---
 
+### 2026-10-01 (pachete refacute dupa fix-ul de site-packages)
+
+- Reinstalate pe device: numpy 2.5.3, orjson 3.12.0, cbor2 6.1.4 (necesita setuptools-rust),
+  Pillow 12.3.0, cffi 2.1.1, apsw 3.53.4.0, zstandard, lz4, msgpack, regex, simplejson.
+- Neinstalat: kiwisolver (build eșuat; folosit doar de matplotlib).
+
 ### 2026-10-01 (FAZA 4j: numpy compileaza pe device - `.assets_v223`)
 
 - `shwrap`: rezolva argv[0] prin PATH (meson il chema cu nume simplu -> "cython.sh: No such file").
