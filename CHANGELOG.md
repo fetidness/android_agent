@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-01 (optimizari din testul uid-2000 + toolchain - `.assets_v226`)
+
+- adb_client: demultiplexare corecta shell-v2 (`_demux_shellv2`) - header-ele de substream
+  (stdout/stderr/exit) nu mai ajung in output ("gunoi binar" raportat in doua sesiuni).
+- `toolchain action=compile`/`run`: compilare IN PROCESUL APLICATIEI (nu prin adbsh, care nu poate
+  citi filesDir) + rulare automata a binarului. Dovada: C -> HELLO_FROM_COMPILE, C++ -> CPP=5.
+- prompt: regula (3d) Rust prin cargo (nu rustc direct), regula (3e) exec ELF direct / scripturi.
 ### 2026-10-01 (fix adbsh: nu mai executa nimic - `.assets_v225`)
 
 - Cauza: `run_adbsh_tool` prefixa comenzile cu `. <filesDir>/toolchain_env.sh` (fisier app-privat,

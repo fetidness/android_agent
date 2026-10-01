@@ -3408,3 +3408,29 @@ socket bytes binari reziduali, pe care tool-ul ii returna apoi ca "output" pentr
 
 **Dovada:** `run_adbsh_tool('id')` -> `uid=2000(shell) gid=2000(shell) ...`;
 `run_adbsh_tool('echo TEST_ADBSH')` -> `TEST_ADBSH`; `ls /data/local/tmp | head -3` -> listare reala.
+
+## Etapa 68 - OPTIMIZARI DIN TESTUL "uid 2000 + toolchain complet" (`.assets_v226`)
+
+Sesiune de 185 de pasi (~20k tokeni). Agentul a REUSIT pana la urma (a dovedit uid 2000, C/C++/Rust/
+pyext end-to-end), dar a pierdut zeci de pasi pe 3 probleme reale:
+
+1. **„gunoi binar" in output-urile de shell** (`\x01\x0b\x00\x00\x00`, `\x02...`,
+   `\x03\x01\x00\x00\x00\x01`). Cauza: `adb_client._shell_locked` presupunea ca fiecare pachet
+   A_WRTE contine EXACT un header de substream shell-v2 (`d[0] in (1,2) -> d[5:]`). adbd poate pune
+   mai multe substream-uri (stdout+stderr+exit) in ACELASI pachet sau poate sparge unul pe doua:
+   atunci header-ele interioare ajungeau in textul vazut de agent (de aici si concluziile lui
+   gresite ca "tool-ul returneaza mereu acelasi blob"). **Fix:** acumulam bytes brut si demultiplexam
+   fluxul complet (`_demux_shellv2`: 1 byte stream + 4 bytes LE length + payload; 1=stdout, 2=stderr,
+   3=exit; cadre rupte pastreaza ce s-a primit).
+   Dovada: `echo OUT_OK; echo ERR_LINE 1>&2; ls /nope 2>&1; exit 3` -> output curat, zero bytes de
+   framing (inainte: header-e + cadrul de exit).
+2. **`toolchain action=compile` era rupt** ("clang: inaccessible or not found", ~20 de pasi pierduti):
+   rula prin `adbsh` (uid 2000), care NU poate citi filesDir (toolchain-ul e al aplicatiei).
+   **Fix:** compilarea se face acum IN PROCESUL APLICATIEI, cu env-ul complet din `env_vars()`
+   (CC/CXX/CFLAGS/LDFLAGS), output implicit in `files/tmp`, iar binarul e RUNAT imediat (direct, cu
+   fallback pe `linker64`). Dovada: C -> COMPILE_OK + `HELLO_FROM_COMPILE`; C++ (STL) -> `CPP=5`.
+3. **Rust prin `rustc` direct** a consumat ~50 de pasi (linkerul implicit `cc` nu se rezolva in
+   mediul spawn-uit de rustc). Calea care merge (cargo + linker-ul din `files/cargo/config.toml`)
+   era deja pregatita, dar agentul nu stia. **Fix:** regula (3d) in prompt: pentru Rust se foloseste
+   cargo; nu se pierde timp cu `rustc` direct. Plus regula (3e): binarele ELF din files/tmp sunt
+   executabile direct (dovedit), scripturile nu (foloseste lansatoarele ELF).

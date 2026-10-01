@@ -201,6 +201,35 @@ def shared(host="127.0.0.1", port=None, auto=True):
     return _SHARED
 
 
+def _demux_shellv2(buf):
+    """Demultiplexeaza fluxul `shell,v2,raw`.
+
+    Formatul: o secventa de [1 byte stream][4 bytes little-endian length][payload], unde
+    stream 1 = stdout, 2 = stderr, 3 = exit code (0 = stdin, ignorat).
+    Intr-un singur pachet A_WRTE pot veni MAI multe astfel de cadre, iar un cadru poate fi spart
+    pe doua pachete - de aceea parsarea se face pe fluxul complet, nu pe pachet (vechea varianta
+    presupunea un singur header per pachet si lasa header-ele interioare in output: agentul vedea
+    "\x01\x0b\x00\x00\x00", "\x02...", "\x03\x01\x00\x00\x00\x01" ca 'gunoi binar').
+    Daca datele nu incep cu un header valid, se intoarce brut (compatibilitate).
+    """
+    i = 0
+    n = len(buf)
+    parts = []
+    while i + 5 <= n:
+        sid = buf[i]
+        ln = int.from_bytes(buf[i + 1:i + 5], "little")
+        if sid not in (0, 1, 2, 3) or ln > (64 << 20):
+            return buf if not parts else b"".join(parts)
+        if i + 5 + ln > n:
+            if sid in (1, 2):
+                parts.append(buf[i + 5:])
+            break
+        if sid in (1, 2):
+            parts.append(buf[i + 5:i + 5 + ln])
+        i += 5 + ln
+    return b"".join(parts)
+
+
 def close_shared():
     """Inchide conexiunea partajata (la iesirea din proces, nu intre comenzi)."""
     global _SHARED
@@ -462,7 +491,14 @@ class Adb:
         if _r0:
             self._drain()
         self._send(A_OPEN, lid, 0, ("shell,v2,raw:"+cmd).encode()+b"\0")
-        out=b""; end=time.time()+timeout; closed=False; timed_out=False; foreign=0
+        # ★ FAZA 4l: acumulam BYTES BRUTI si demultiplexam la final.
+        # Vechea varianta presupunea ca fiecare pachet A_WRTE are EXACT un header de substream
+        # (`d[0] in (1,2) and len(d)>5 -> d[5:]`). adbd poate pune insa mai multe substream-uri
+        # intr-un singur pachet (stdout+stderr+exit code) sau poate sparge unul pe doua pachete:
+        # atunci header-ele interioare ajungeau in output si agentul vedea "gunoi binar"
+        # (\x01\x0b\x00\x00\x00, \x02..., \x03\x01\x00\x00\x00\x01) - exact simptomul raportat
+        # in doua sesiuni de test din UI.
+        raw=b""; end=time.time()+timeout; closed=False; timed_out=False; foreign=0
         try:
             while time.time()<end:
                 try: c,a0,a1,d = self._recv(max(1,int(end-time.time())))
@@ -485,8 +521,7 @@ class Adb:
                 if c == A_OKAY: pass
                 elif c == A_WRTE:
                     if d:
-                        if d[0] in (1,2) and len(d)>5: out += d[5:]
-                        else: out += d
+                        raw += d
                     try: self._send(A_OKAY, a1, a0)       # reply with the ids SWAPPED (adbd's id first)
                     except Exception: break
                 elif c == A_CLSE:
@@ -525,10 +560,8 @@ class Adb:
                 pass
             try: self.s.settimeout(8)
             except Exception: pass
+        out = _demux_shellv2(raw)
         txt = out.decode(errors="replace")
-        # ★ curat artefactele protocolului shell_v2 (ex. "\x03\x01\x00\x00\x00\x00"
-        # ramase la finalul fiecarui raspuns) - altfel agentul vede "output amestecat"
-        txt = txt.replace("\x03\x01\x00\x00\x00\x00", "").rstrip("\x00")
         if timed_out and not txt.strip():
             txt = "[adb] comanda a depasit %ss (procesul poate continua in fundal)" % int(timeout)
         return txt

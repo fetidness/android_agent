@@ -1094,7 +1094,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
+ " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: foloseste `toolchain`/cargo sau `$TC/bin/cargo build --release` - in `files/cargo/config.toml` linker-ul e deja setat (cc-rust) si build-ul merge (dovedit). NU te lupta cu `rustc` invocat direct: linkerul lui implicit `cc` nu se rezolva in mediul spawn-uit de rustc (pierzi zeci de pasi; cargo e calea corecta). (3e) EXEC: binarele ELF compilate de toolchain SUNT executabile direct din files/tmp (dovedit rc=0), iar varianta sigura e `/apex/com.android.runtime/bin/linker64 <binar>`. SCRIPTURILE shell din filesDir NU se executa (Permission denied) - pentru scripturi foloseste lansatoarele ELF (libshwrap_exec.so + <nume>.sh). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -2542,31 +2542,65 @@ def run_toolchain_tool(a):
         return res
     if action == "compile":
         srcf = (a.get("source") or "").strip()
-        out = (a.get("out") or "/data/local/tmp/out.bin").strip()
-        # /sdcard e montat noexec: mut binarul in /data/local/tmp daca e acolo
+        # ★ FAZA 4l: compilam IN PROCESUL APLICATIEI, nu prin adbsh (uid 2000).
+        # Shell-ul uid=2000 NU poate citi filesDir (toolchain-ul e al aplicatiei) -> vechea
+        # varianta murea cu "clang: inaccessible or not found" si agentul pierdea ~20 de pasi
+        # incercand manual (raportat in testul din UI "testeaza uid 2000 si acces complet tool chain").
+        out = (a.get("out") or (F + "/tmp/out.bin")).strip()
         if out.startswith("/sdcard") or out.startswith("/storage"):
-            out = "/data/local/tmp/" + os.path.basename(out)
+            out = F + "/tmp/" + os.path.basename(out)   # /sdcard e NOEXEC
         if not srcf: return "lipseste 'source'"
+        if not os.path.isabs(srcf):
+            srcf = F + "/tmp/" + srcf
         cpp = srcf.endswith((".cpp", ".cc", ".cxx"))
-        # aleg compilatorul prin SHELL (app-ul nu vede /data/local/tmp)
-        cc = "clang++" if cpp else "clang"
-        flags = (a.get("flags") or "").strip()
-        # .so => shared library; altfel executabil
         shared = out.endswith(".so")
-        mode = "-shared -fPIC" if shared else ""
-        # RULARE PRIN SHELL (uid=2000): app-ul NU poate executa din /data/local/tmp
-        full = (_toolchain_exports()
-                + "cd /data/local/tmp && %s %s -O2 '%s' -o '%s' %s && echo COMPILE_OK"
-                % (cc, mode, srcf, out, flags))
-        r = run_adbsh_tool(full, int(a.get("timeout", 600) or 600))
-        if "COMPILE_OK" in r and not shared:
-            rr = run_adbsh_tool("export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; '%s'" % (ROOT + "/usr/lib", out), 120)
-            return r + "\n--- OUTPUT BINAR ---\n" + rr
-        return r
+        try:
+            e = _env()
+            cc = ((e.get("CXX") if cpp else e.get("CC")) or "").split()[0]
+            if not cc:
+                cc = F + "/tmp/clang++" if cpp else F + "/tmp/clang"
+            cargs = ([cc]
+                     + (e.get("CXXFLAGS") if cpp else e.get("CFLAGS") or e.get("CFLAGS") or "").split()
+                     + (["-shared", "-fPIC"] if shared else [])
+                     + [srcf, "-o", out]
+                     + (a.get("flags") or "").split()
+                     + (e.get("LDFLAGS") or "").split())
+            p = subprocess.run(cargs, capture_output=True, text=True, env=e, cwd=F + "/tmp",
+                               timeout=int(a.get("timeout", 600) or 600), stdin=subprocess.DEVNULL)
+            res = (p.stdout or "") + (p.stderr or "")
+            if p.returncode != 0 or not os.path.exists(out):
+                return "COMPILE FAIL (rc=%s)\n%s" % (p.returncode, res.strip()[-1500:])
+            msg = "COMPILE_OK\n%s\n%s (%s bytes)" % (res.strip()[-400:], out, os.path.getsize(out))
+            if not shared:
+                try:
+                    q = subprocess.run([out], capture_output=True, text=True, env=e, timeout=120,
+                                       stdin=subprocess.DEVNULL)
+                    run = (q.stdout or "") + (q.stderr or "")
+                except Exception:
+                    q = subprocess.run(["/apex/com.android.runtime/bin/linker64", out],
+                                       capture_output=True, text=True, env=e, timeout=120,
+                                       stdin=subprocess.DEVNULL)
+                    run = (q.stdout or "") + (q.stderr or "")
+                msg += "\n--- RUN (rc=%s) ---\n%s" % (q.returncode, run.strip()[-800:])
+            return msg
+        except Exception as ex:
+            import traceback as _tb
+            return "COMPILE error: %r\n%s" % (ex, _tb.format_exc()[-600:])
     if action == "run":
         exe = (a.get("source") or a.get("package") or "").strip()
         if not exe: return "lipseste 'source' (calea binarului)"
-        return run_adbsh_tool("export LD_LIBRARY_PATH=%s:$LD_LIBRARY_PATH; '%s'" % (ROOT + "/usr/lib", exe), 120)
+        try:
+            e = _env()
+            try:
+                p = subprocess.run([exe], capture_output=True, text=True, env=e, timeout=300,
+                                   stdin=subprocess.DEVNULL)
+            except Exception:
+                p = subprocess.run(["/apex/com.android.runtime/bin/linker64", exe],
+                                   capture_output=True, text=True, env=e, timeout=300,
+                                   stdin=subprocess.DEVNULL)
+            return "rc=%s\n%s" % (p.returncode, ((p.stdout or "") + (p.stderr or "")).strip()[-1500:])
+        except Exception as ex:
+            return "run error: %r" % (ex,)
     return "actiune necunoscuta: " + action
 
 
