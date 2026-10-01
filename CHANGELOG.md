@@ -9,6 +9,15 @@
 
 ---
 
+### 2026-10-01 (binarele sunt si in `toolchain/bin` - `.assets_v215`)
+
+- Agentul a raportat fals "lipseste cmake" (cauta in `toolchain/bin`, unde erau doar symlink-uri
+  `llvm-*` neexecutabile). Fix: symlink-uri ELF catre nativeLibraryDir pentru toate uneltele, in
+  `files/tmp` SI `files/toolchain/bin` (cmake, ninja, make, perl, clang, ar, llvm-ar, rustc,
+  cargo, maturin, patchelf, ld.lld, cc-rust...).
+- Dovedit: `toolchain/bin/cmake --version` -> cmake 3.31.6; `selftest` -> toate True, lipsa=[].
+- Regula (3a) in prompt: unde sunt binarele + cum se verifica o capabilitate (toolchain action=env).
+
 ### 2026-10-01 (selftest fara fals negativ la cmake - `.assets_v214`)
 
 - `selftest()` chema `toolchain/bin/llvm-ar` (neexecutabil din sandbox-ul app-ului) -> raporta

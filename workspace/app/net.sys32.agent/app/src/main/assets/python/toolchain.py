@@ -1015,6 +1015,58 @@ def _ensure_launchers():
                 made.append(_nm)
             except Exception:
                 pass
+    # ★ FAZA 4g: si in toolchain/bin (unde caută oamenii/agentul) trebuie sa existe NUME REALE
+    # de executabile, NU symlink-uri catre NDK-ul neexecutabil. Un symlink catre un ELF din
+    # nativeLibraryDir este executabil si din filesDir (SELinux judeca TINTA, nu link-ul), deci
+    # punem acolo cmake/ninja/make/perl + binutils. Fara asta: "toolchain/bin nu are cmake".
+    _BINSHIM = (("cmake", "libcmake_exec.so"), ("ninja", "libninja_exec.so"),
+                ("make", "libmake_exec.so"), ("gmake", "libmake_exec.so"),
+                ("perl", "libperl_exec.so"), ("ar", "libllvmar_exec.so"),
+                ("ranlib", "libllvmranlib_exec.so"), ("nm", "libllvmnm_exec.so"),
+                ("strip", "libllvmstrip_exec.so"), ("clang", "libclang_exec.so"),
+                ("clang++", "libclang_exec.so"), ("pkg-config", "libpkgconf_exec.so"),
+                ("maturin", "libmaturin_exec.so"), ("rustc", "librustc_exec.so"),
+                ("cargo", "libcargo_exec.so"), ("flang", "libflang_exec.so"),
+                ("patchelf", "libpatchelf_exec.so"), ("ld.lld", "liblld_exec.so"),
+                # aliasuri llvm-* (numele pe care le cheama cmake/autotools: "llvm-ar: Permission denied")
+                ("llvm-ar", "libllvmar_exec.so"), ("llvm-ranlib", "libllvmranlib_exec.so"),
+                ("llvm-nm", "libllvmnm_exec.so"), ("llvm-strip", "libllvmstrip_exec.so"),
+                ("llvm-readelf", "libllvmreadelf_exec.so"),
+                ("llvm-objdump", "libllvmobjdump_exec.so"))
+    try:
+        os.makedirs(BIN, exist_ok=True)
+    except Exception:
+        pass
+    for _nm, _so in _BINSHIM:
+        if not (nat and os.path.exists(nat + "/" + _so)):
+            continue
+        for _d in (BIN,):
+            _p = _d + "/" + _nm
+            try:
+                _ok = False
+                if os.path.islink(_p):
+                    try:
+                        _ok = os.readlink(_p) == nat + "/" + _so
+                    except Exception:
+                        _ok = False
+                if not _ok:
+                    if os.path.lexists(_p):
+                        os.remove(_p)
+                    os.symlink(nat + "/" + _so, _p)
+            except Exception:
+                pass
+    # ★ wrapper-ele SCRIPT trebuie sa fie si ele in toolchain/bin (agentul le caută acolo):
+    # se pun ca symlink la lansatorul ELF (altfel: script neexecutabil de untrusted_app).
+    for _nm, _so in (("cc-rust", "libccrust_exec.so"),):
+        if nat and os.path.exists(nat + "/" + _so):
+            for _d in (BIN, F + "/tmp"):
+                _p = _d + "/" + _nm
+                try:
+                    if os.path.lexists(_p):
+                        os.remove(_p)
+                    os.symlink(nat + "/" + _so, _p)
+                except Exception:
+                    pass
     # ★ patchelf (numpy/meson-python): meson-python rescrie RPATH-urile modulelor
     # construite si cheama `patchelf`; fara el build-ul pica la final cu
     # "FileNotFoundError: [Errno 2] No such file or directory: 'patchelf'".

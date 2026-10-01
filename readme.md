@@ -3203,3 +3203,22 @@ Cauza: `selftest()` nu chema `_ensure_launchers()`, deci testul cmake folosea
 lansatoarele intai, iar fallback-ul din `_SHIM` prefera lansatorul ELF din `files/tmp`.
 
 **Rezultat pe `.assets_v214`: `selftest` -> toate capabilitatile True, `lipsa: []`.**
+
+## Etapa 59 - FAZA 4g: BINARELE SUNT SI IN `toolchain/bin` (`.assets_v215`)
+
+Al patrulea test din UI: agentul a raportat "**lipseste cmake, binarul pur si simplu nu exista**"
+- pentru ca a cautat in `files/toolchain/bin/` (unde erau doar symlink-uri `llvm-*` catre NDK-ul
+neexecutabil) si nu in `files/tmp/`. cmake EXISTA de fapt ca `jniLibs/libcmake_exec.so` cu
+symlink in `files/tmp/cmake`.
+
+Fix: `_ensure_launchers()` scrie acum symlink-uri ELF (catre nativeLibraryDir, deci executabile
+si din filesDir - SELinux judeca TINTA) pentru TOATE uneltele, in AMBELE locuri:
+`files/tmp/` si `files/toolchain/bin/` - cmake, ninja, make, perl, clang, clang++, ar, llvm-ar,
+ranlib, nm, strip, readelf, objdump, pkg-config, rustc, cargo, maturin, patchelf, ld.lld, cc-rust.
+
+Dovedit pe device: `toolchain/bin/cmake --version` -> rc=0, `cmake version 3.31.6`;
+`selftest` -> cmake=True, rust=True, cargo=True, fortran=True, `lipsa: []`.
+
+Plus regula (3a) in promptul agentului: binarele sunt ELF in lib-ul APK-ului + symlink-uri in
+`files/tmp` si `files/toolchain/bin`; o unealta "lipsa" se verifica cu `toolchain action=env`
+(PATH-ul returnat), nu cu `ls`.
