@@ -3303,3 +3303,26 @@ si a scos 5 defecte reale:
    flang; adaugat si `pip`. Verificat: `cython --version` -> rc=0 "Cython version 3.3.0".
 6. **`-latomic` nu se rezolva** la compilare+linkare intr-un singur pas: calea
    `lib/clang/21/lib/linux` (libatomic/compiler-rt statice) e acum si in CFLAGS, nu doar in LDFLAGS.
+
+## Etapa 64 - FIX CRITIC: PACHETELE PIP MUREAU LA UPDATE-UL DE APK (`.assets_v220`)
+
+Gasit verificand conversatia agentului: in `files/pyhome/lib/python3.14/site-packages` lipseau
+numpy, cbor2, orjson (instalate anterior cu pip), in timp ce lxml/cython/pybind11 erau prezente.
+Motive: cele prezente sunt LIVRATE IN ASSETS, cele lipsa fusesera instalate cu pip pe device.
+
+**Cauza (MainActivity.kt, ~linia 700):** la fiecare re-extragere de assets, codul SALVA corect
+`site-packages` in `files/site_packages_keep`... dar **nu-l punea niciodata la loc** dupa
+re-extragere (comentariul promitea protectie, codul de restaurare lipsea). Deci fiecare
+`adb install -r` stergea toate pachetele compilate de agent (ore de munca).
+
+**Fix:** dupa `copyDir("python", dest)` se restaureaza `site_packages_keep` peste noul
+`site-packages` (`copyRecursively(overwrite=true)` - versiunile instalate de agent au prioritate
+fata de cele din APK), apoi depozitul se goleste.
+
+**Dovada (test real end-to-end):** `pip install six` -> import OK; rebuild APK v220 + `adb install -r`
++ repornire -> `six-1.17.0.dist-info`/`six.py` inca in site-packages, `import six` OK 1.17.0.
+
+**Ramas de rezolvat (raportat, nefixat):** numpy nu se poate reinstala - build-ul meson-python
+cade la sanity-check cu `[Errno 13] Permission denied` pe binarul de test compilat in `files/tmp`
+(acelasi motiv SELinux: exec din datele aplicatiei). Cbor2/orjson se pot reinstala oricand cu pip
+(se compileaza pe device).

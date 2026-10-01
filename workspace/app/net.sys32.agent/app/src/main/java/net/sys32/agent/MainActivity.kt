@@ -690,7 +690,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v216")
+        val stamp = File(filesDir, ".assets_v220")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -724,6 +724,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
         copyDir("python", dest)
+        // ★ FIX CRITIC (gasit 2026-10-01 verificand conversatia agentului): mai sus SALVAM
+        // site-packages in keepDir, dar NU-L PUNEM NICIODATA LA LOC -> la fiecare update de APK
+        // dispareau TOATE pachetele instalate cu pip (numpy, cbor2, orjson...; supravietuiau doar
+        // cele livrate in assets: lxml/cython/pybind11). Restauram acum, cu overwrite=true, ca
+        // versiunile instalate de agent sa aiba prioritate fata de cele din APK.
+        try {
+            val newSp = File(filesDir, "pyhome/lib/python3.14/site-packages")
+            val kept = keepDir.listFiles()
+            if (newSp.exists() && kept != null && kept.isNotEmpty()) {
+                keepDir.copyRecursively(newSp, overwrite = true)
+                keepDir.deleteRecursively()
+                Log.i("sys32", "site-packages restaurate din site_packages_keep")
+            }
+        } catch (e: Exception) {
+            Log.w("sys32", "restaurare site-packages: " + e.message)
+        }
         // ★ tmp pentru pip/setuptools (scriu fisiere temporare de build acolo)
         try { File(filesDir, "tmp").mkdirs() } catch (_: Exception) {}
         // punem la loc memoria salvata (daca exista); altfel ramane cea din APK

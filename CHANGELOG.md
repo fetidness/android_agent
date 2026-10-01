@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-01 (FIX CRITIC: pachetele pip mureau la update-ul de APK - `.assets_v220`)
+
+- Cauza: MainActivity salva `site-packages` in `site_packages_keep` dar NU il restaura niciodata ->
+  fiecare `adb install -r` stergea pachetele instalate cu pip (numpy, cbor2, orjson...).
+- Fix: restaurare cu overwrite=true dupa re-extragerea assets (pachetele agentului au prioritate).
+- Dovada: `pip install six` + rebuild/install APK -> six inca prezent si importabil.
+- Neinchis: numpy (meson-python sanity-check exec -> Errno 13 Permission denied in files/tmp).
+
 ### 2026-10-01 (FAZA 4i: 5 bug-uri reale din "fa test complet toolchain" - `.assets_v219`)
 
 - pip: in-process -> SUBPROCES (cauza reala a `KeyError('prefix')`); env complet + stdlib_extra primul.
