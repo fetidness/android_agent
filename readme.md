@@ -3363,3 +3363,25 @@ timpul testelor au fost reinstalate pe device cu `pip_install` (toate compileaza
 - Pillow 12.3.0 (26 s), cffi 2.1.1, apsw 3.53.4.0 (107 s), zstandard 0.25.0, lz4 4.4.5,
   msgpack 1.2.3, regex 2026.9.29, simplejson 4.1.2
 - ramas neinstalat: kiwisolver (doar pt. matplotlib) - build-ul lui cade pe toolchain-ul curent
+
+## Etapa 66 - TEST E2E UI + RPATH STABIL (`.assets_v224`)
+
+Test E2E din interfata aplicatiei (task scris in UI, executat autonom de agent):
+
+**Task:** "instaleaza cu toolchain pip_install pachetul wrapt si verifica importul si versiunea lui"
+**Rezultat:** 6 pasi, 25.0 s, `tok ↑26.8k ↓916`, hit 99%. Agentul a instalat wrapt (exit 0 - deci
+calea `pip_install` reparata in Etapa 63 functioneaza din UI), apoi a raportat singur:
+- **numpy 2.5.3** cu `reshape(3,4)`, `sum()=66`, `T.shape=(4,3)`, `dot` si **BLAS: openblas**
+  (deci numpy compilat in Etapa 65 se leaga corect la OpenBLAS);
+- module importabile: lxml, numpy, cython, pybind11, wrapt, yaml, setuptools - toate True;
+- capcana gasita de el: dupa un update de APK, calea `nativeLibraryDir` se schimba
+  (`/data/app/~~hash==/pkg-.../lib/arm64`), deci **binarele compilate inainte de update nu-si mai
+  gaseau libc++_shared.so**.
+
+**Fix (pornit de la raportul lui):** rpath-urile nu mai arata doar catre nativeLibraryDir (cale
+volatila), ci catre o cale STABILA: `files/libs` (unde `_stable_libs()` copiaza `libc++_shared.so`
+din APK), plus `deps/lib`. Verificat cu un ciclu real: binar C++ compilat -> `RPATH_OK=12`;
+**update de APK** (cale noua de nativeLibraryDir) -> **acelasi binar ruleaza** -> `RPATH_OK=12`.
+
+Note de testare UI: acest ROM nu traduce `%s` in `input text`, iar parantezele sparg shell-ul;
+textul se tasteaza cuvant cu cuvant + `input keyevent 62` (spatiu).

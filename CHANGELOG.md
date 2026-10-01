@@ -9,6 +9,16 @@
 
 ---
 
+### 2026-10-01 (E2E UI + rpath stabil - `.assets_v224`)
+
+- E2E din UI: task "instaleaza cu pip_install pachetul wrapt..." -> 6 pasi, 25 s, tok ↑26.8k ↓916,
+  hit 99%; wrapt instalat (exit 0), numpy 2.5.3 verificat de agent (BLAS: openblas).
+- Agentul a raportat: dupa update de APK, binarul compilat anterior nu-si gaseste libc++_shared
+  (rpath catre nativeLibraryDir = cale volatila).
+- Fix: `_stable_libs()` (files/libs, copie stabila de libc++_shared.so) + rpath stabil in LDFLAGS.
+  Verificat: binar compilat inainte de update ruleaza si dupa ("RPATH_OK=12").
+- Reteta testare UI pe acest ROM: text cuvant cu cuvant + `input keyevent 62` (`%s` nu e tradus).
+
 ### 2026-10-01 (pachete refacute dupa fix-ul de site-packages)
 
 - Reinstalate pe device: numpy 2.5.3, orjson 3.12.0, cbor2 6.1.4 (necesita setuptools-rust),

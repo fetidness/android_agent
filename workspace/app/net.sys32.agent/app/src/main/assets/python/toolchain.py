@@ -642,6 +642,34 @@ def sanitize_ld_library_path(value):
     return ":".join(out)
 
 
+def _stable_libs():
+    """Dir STABIL de runtime (nu depinde de hash-ul instalarii APK).
+
+    ★ Raportat de agent in testul E2E: binarul C++/Fortran compilat INAINTE de un update de APK
+    murea cu "library libc++_shared.so not found", pentru ca rpath-ul arata catre nativeLibraryDir,
+    iar acel path (/data/app/~~hash==/pkg-.../lib/arm64) se schimba la fiecare instalare.
+    Aici tinem o copie stabila (files/libs), iar rpath-ul binarilor arata aici.
+    """
+    d = F + "/libs"
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        return d
+    for name in ("libc++_shared.so",):
+        tgt = d + "/" + name
+        if os.path.exists(tgt) and os.path.getsize(tgt) > 100000:
+            continue
+        try:
+            import shutil as _sh
+            src = _native_dir() + "/" + name
+            if os.path.exists(src):
+                _sh.copyfile(src, tgt)
+                os.chmod(tgt, 0o755)
+        except Exception:
+            pass
+    return d
+
+
 def _rt_ld_path():
     """LD_LIBRARY_PATH corect la RULARE (fara stub-uri de link):
     nativeLibraryDir (libpython3.14.so real + libc++_shared.so) : deps/lib
@@ -2164,10 +2192,13 @@ def env_vars():
                 + " -L" + ROOT + "/lib/clang/21/lib/linux"
                 # ★ CAPCANA raportata de agent ("CANNOT LINK EXECUTABLE t_f90: library
                 # libc++_shared.so not found"): binarul proaspat construit nu-si gaseste libc++_shared
-                # la RULARE (LD_LIBRARY_PATH nu-l are mereu). RPATH-ul fix (nativeLibraryDir din APK)
-                # rezolva definitiv, fara sa depinda de env-ul celui care ruleaza binarul.
-                + " -Wl,-rpath," + _native_dir()
+                # la RULARE. ★ SI: rpath-ul catre nativeLibraryDir devine INVALID dupa fiecare
+                # update de APK (calea /data/app/~~hash==/... se schimba) -> binarele vechi mor.
+                # De aceea rpath-ul indica o cale STABILA: files/libs (unde copiem libc++_shared.so
+                # + libpython), plus deps/lib. Asa un binar compilat azi ruleaza si dupa update.
+                + " -Wl,-rpath," + _stable_libs()
                 + " -Wl,-rpath," + DEPS + "/lib"
+                + " -Wl,-rpath," + _native_dir()
                 + (" -L" + _atom if _atom else "")
                 # ★ -lm -ldl EXPLICIT: pe bionic functiile de math/log/fmod sunt in libm si,
                 # cu --no-undefined, orice modul care le foloseste are nevoie de ele la link
