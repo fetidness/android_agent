@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-01 (optimizari pe baza conversatiei - `.assets_v217`)
+
+- `toolchain action=env`: 7417 -> 2418 caractere (-67%), cu exemple copy-paste pentru C/C++/
+  extensie Python/Fortran/Rust/cmake + regula de build-dir + comanda linker64.
+- `multi` cu kind necunoscut: mesaj explicit (inainte executa body-ul ca bash -> "sh: all: ...").
+- Prompt (3c): se compileaza in files/tmp/workspace, nu pe /sdcard (noexec -> nu se poate mapa).
+- CFLAGS/LDFLAGS: `-resource-dir` + `-L.../clang/21/lib/linux` (libatomic/compiler-rt statice).
+
 ### 2026-10-01 (bug real in `pip_install` - ordinea PYTHONPATH - `.assets_v216`)
 
 - Agentul a izolat: `toolchain action=pip_install` -> `exit 1 in 0s` / `KeyError('prefix')`.

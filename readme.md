@@ -3245,3 +3245,23 @@ Plus doua capcane raportate de agent, reparate in CFLAGS/LDFLAGS (se aplica si i
   files/tmp isi calcula resource-dir la `/lib/lib/clang/21/...` -> "cannot open"/"stddef.h not found";
 - **`-L<TC>/lib/clang/21/lib/linux`** in LDFLAGS: acolo stau `libatomic.a`/`libclang_rt.*.a`
   (statice), fara ele `-latomic` nu se rezolva.
+
+## Etapa 61 - OPTIMIZARE PE BAZA CONVERSATIEI (`.assets_v217`)
+
+Reanaliza conversatiei (agent nou, de la 0, 40 de pasi, ~7k tokeni) a scos 4 pierderi de timp
+si de context, toate reparate:
+
+1. **`toolchain action=env` intorcea ~7,4 KB** de `export`-uri (cel mai mare mesaj din context,
+   re-trimis la fiecare pas). Acum: **2418 caractere** (-67%) cu PATH/CC/CXX/AR/CFLAGS/LDFLAGS/
+   PKG_CONFIG_PATH + **exemple gata de copiat** (C, C++, extensie Python, Fortran, Rust, cmake),
+   comanda de rulare (linker64) si regula de build-dir. Export-urile complete raman in
+   `files/toolchain_env.sh`.
+2. **Agentul ghicea flag-uri** si pierdea pasi (`-latomic` x2, `--target`, `-resource-dir`).
+   Acum exemplele din `env` sunt literale copy-paste, iar `-resource-dir` si
+   `-L<TC>/lib/clang/21/lib/linux` (libatomic/compiler-rt statice) sunt deja in CFLAGS/LDFLAGS.
+3. **`multi` cu `kind` necunoscut rula body-ul ca bash** -> `sh: all: inaccessible or not found`
+   (in conversatie: `[1] env (toolchain) --- sh: all: ...`). Acum: mesaj explicit care spune sa
+   puna codul in `body` cu `kind=python`.
+4. **Build pe /sdcard** (noexec) -> binarul nu se putea mapa, apoi copiere manuala in files/tmp
+   (2 pasi pierduti). Regula (3c) in prompt: se compileaza in `files/tmp`/workspace, NICIODATA
+   pe /storage; iar `env` afiseaza deja bucla completa de build+rulare.

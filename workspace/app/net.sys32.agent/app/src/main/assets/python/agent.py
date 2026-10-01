@@ -1094,7 +1094,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (STL), a Python.h extension and Fortran ON THIS DEVICE in ~5s and returns `ok`/`lipsa` (what is missing: cmake/rust/perl). Quote its verdict instead of guessing or probing PyPI by hand. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
+ " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (STL), a Python.h extension and Fortran ON THIS DEVICE in ~5s and returns `ok`/`lipsa` (what is missing: cmake/rust/perl). Quote its verdict instead of guessing or probing PyPI by hand. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1937,6 +1937,11 @@ def run_multi_tool(ops):
         head = "--- [" + str(k) + "] " + nm + " (" + kind + ") ---"
         if not body.strip():
             out.append(head + "\n(empty body - skipped)"); continue
+        if kind not in ("python", "bash"):
+            out.append(head + "\n(kind necunoscut %r - pune codul in body cu kind=python, sau "
+                       "kind=bash pentru shell; uneltele native (toolchain/android) se cheama "
+                       "din COD python)" % kind)
+            continue
         try:
             r = run_tool(body) if kind == "python" else run_bash_tool(body)
             r = (r or "").rstrip()
@@ -2105,8 +2110,25 @@ def run_toolchain_tool(a):
                     elif _act == "profile":
                         print(_mod.profile(_extra or "cmake"))
                     elif _act == "env":
-                        for _k, _v in _mod.env_vars().items():
-                            print('export %s="%s"' % (_k, _v))
+                        # ★ OPTIMIZARE (analiza conversatiei): dump-ul complet de exports era
+                        # ~7.4 KB (cel mai mare mesaj din context) si se re-trimitea la fiecare
+                        # pas. Acum: pe scurt + EXEMPLE gata de copiat (agentul pierdea pasi
+                        # ghicind flag-uri: -latomic, --target, -resource-dir) + build-dir corect.
+                        _e = _mod.env_vars()
+                        _P = _mod.ROOT
+                        print("[toolchain env] prefix=%s  (exports complete: %s/toolchain_env.sh)" % (_P, _mod.F))
+                        for _k in ("PATH", "CC", "CXX", "AR", "CFLAGS", "LDFLAGS", "PKG_CONFIG_PATH"):
+                            if _e.get(_k):
+                                print("%s=%s" % (_k, _e[_k]))
+                        print("EXEMPLE GATA DE COPIAT (fara ghicit de flag-uri):")
+                        print("  C:       $CC s.c -o s_bin $LDFLAGS")
+                        print("  C++:     $CXX -std=c++17 s.cpp -o s_bin $LDFLAGS")
+                        print("  pyext:   $CC -shared -fPIC m.c -o m.so $LDFLAGS -lpython3.14")
+                        print("  Fortran: %s/bin/flang t.f90 -o t_bin" % _P)
+                        print("  Rust:    %s/bin/cargo build --release" % _P)
+                        print("  cmake:   %s/bin/cmake -G Ninja -S . -B b && %s/bin/ninja -C b" % (_P, _P))
+                        print("  RULARE:  /apex/com.android.runtime/bin/linker64 <binar>  (exec direct din filesDir e INTERZIS)")
+                        print("  BUILD DIR: files/tmp sau workspace-ul app-ului; /sdcard e NOEXEC.")
                     elif _act == "env-file":
                         _mod._write_env_file(); print("fisier: %s/env.sh" % _mod.ROOT)
 
