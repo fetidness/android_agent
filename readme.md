@@ -3460,3 +3460,39 @@ Etapa 68 isi fac efectul. Au ramas 3 probleme reale, toate reparate:
    ... you cannot execute them") - acum spune realitatea: uid 2000 NU poate citi filesDir (mod 700,
    alt proprietar), toolchain-ul e EXCLUSIV al aplicatiei, iar in /data/local/tmp pot exista
    wrapper-e VECHI care arata spre cai de APK demultate (de ignorat).
+
+## Etapa 70 - FIX MAJOR: `adbsh` (uid 2000) - AUTH_SIGNATURE, nu RSAPUBLICKEY (`.assets_v228`)
+
+Testul din UI "nu merge uid 2000?" a expus cauza reala, dupa doua sesiuni in care agentul a
+raportat corect ca `adbsh` nu raspunde:
+
+**Simptom:** clientul se conecta la adbd (`[adb] TCP conectat`), trimitea RSAPUBLICKEY si apoi
+AȘTEPTA la nesfarsit -> `TimeoutError` (sau, prin tool, mesajul de "protocol desync").
+**Cauza:** cand adbd are DEJA cheia in lista lui autorizata, el NU raspunde la RSAPUBLICKEY (nu are
+ce sa afiseze in dialog) - așteapta dovada ca ai cheia PRIVATA, adica `AUTH_SIGNATURE`. Ordinea
+veche (RSAPUBLICKEY primul, cu un comentariu "verificat pe device" din alt context) nu era corecta
+pentru acest caz.
+**Fix:** pe AUTH_TOKEN semnam token-ul (RSA PKCS#1 v1.5 / SHA1, exact ca `adb_auth_sign` din AOSP)
+si trimitem `AUTH_SIGNATURE`; RSAPUBLICKEY rămâne fallback (pentru chei neautorizate, unde adbd
+chiar afiseaza dialogul). Plus: mesaj explicit cand adbd tot nu raspunde (instructiuni pentru
+dialogul Allow) si `shared()` nu mai pastreaza in cache o conexiune rupta.
+
+**Dovada:** `[adb] AUTH -> AUTH_SIGNATURE (256 bytes)` -> `✓ AUTORIZAT` in 0.1s;
+`id` -> `uid=2000(shell) gid=2000(shell) ...`; `echo ADB_OK` -> `ADB_OK`; `getprop
+ro.build.version.sdk` -> `36`.
+
+**Cheia:** aplicatia foloseste acum cheia ADB deja autorizata a operatorului (copiata in
+`files/adbkey`/`adbkey.pub`), deci nu mai e nevoie de niciun dialog pe telefon.
+
+## Etapa 71 - Fortran si capcane de rulare (`.assets_v228`)
+
+- **Fortran**: agentul a pierdut pasi cu `toolchain/bin/flang` ("gcc frontend command failed").
+  Driverul brut NU merge (cheama un `gcc` inexistent); calea corecta e wrapperul
+  `files/tmp/flang` (lansator ELF -> flang.sh -> `flang-bin -fc1`). Exemplul din `toolchain env`
+  arata acum wrapperul. Dovada: rc=0 si RUN -> `210`.
+- Regula noua (3f) in prompt: `linker64` cere cale ABSOLUTA; un `.so` compilat nu se poate importa
+  din `/sdcard` (namespace de linker) - se copiaza in `files/libs`/`files/tmp`; Fortran doar prin
+  wrapper; daca adbsh cere autorizare, nu se insista la infinit (se folosesc uneltele native).
+- Lectie de proces: la editarea promptului (text lung intr-un singur string Python) ghilimelele
+  duble din text sparg literalul - s-a intamplat de doua ori; acum se folosesc doar backtick/ghilimele
+  simple in textele inserate, iar `py_compile` se ruleaza INAINTE de push pe device.

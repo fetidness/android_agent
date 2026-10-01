@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-01 (adbsh reparat definitiv: AUTH_SIGNATURE; Fortran pe wrapper - `.assets_v228`)
+
+- adbsh/uid2000: adbd ignoră RSAPUBLICKEY când cheia e deja autorizată -> acum semnăm token-ul
+  (`AUTH_SIGNATURE`, RSA PKCS#1v1.5/SHA1) întâi; dovedit: `id` -> uid=2000(shell) în 0.1s.
+- mesaj explicit când adbd nu răspunde (instrucțiuni Allow) + `shared()` nu mai cachează conexiuni rupte.
+- app folosește cheia ADB deja autorizată a operatorului (files/adbkey) -> fără dialog.
+- Fortran: doar wrapperul `files/tmp/flang` (driverul brut eȘUEAZĂ); env afișează calea corectă.
+- prompt (3f): linker64 cale absolută, .so în files/libs pentru import, Fortran pe wrapper,
+  nu insista pe adbsh când cere autorizare.
+- proces: py_compile ÎNAINTE de push (un edit cu ghilimele duble a spart agent.py pe device).
+
 ### 2026-10-01 (preflight reparat, C++ libc++ implicit, pyext automat - `.assets_v227`)
 
 - preflight: deleaga la selftest (varianta pe script shell folosea caile vechi -> raporta totul fals).

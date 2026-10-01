@@ -195,9 +195,19 @@ def shared(host="127.0.0.1", port=None, auto=True):
         except Exception:
             _SHARED = None
     if _SHARED is None:
-        _SHARED = Adb(host=host, port=port)
+        _obj = Adb(host=host, port=port)
         if auto:
-            _SHARED.connect()
+            try:
+                _obj.connect()
+            except Exception:
+                # ★ nu pastra in cache o conexiune rupta: altfel TOATE apelurile urmatoare
+                # refoloseau acelasi obiect si dadeau acelasi timeout (raportat: "adbsh nu merge")
+                try:
+                    _obj.close()
+                except Exception:
+                    pass
+                raise
+        _SHARED = _obj
     return _SHARED
 
 
@@ -337,44 +347,54 @@ class Adb:
         self._send(A_CNXN, A_VERSION, 256*1024, b"host::features=shell_v2,cmd,stat_v2\0")
         _auth_left = 3          # ★ anti-bucla: adbd retrimite AUTH_TOKEN daca semnatura e rea
         while True:
-            cmd,a0,a1,d = self._recv(10)
+            # ★ FIX (testul din UI: "adbsh nu merge, uid 2000"): cand cheia aplicatiei nu e
+            # autorizata, adbd AFISEAZA DIALOGUL si nu raspunde -> _recv iesea in timeout si
+            # agentul primea doar "TimeoutError" sec. Acum = aprobare in asteptare, cu instructiuni.
+            try:
+                cmd,a0,a1,d = self._recv(10)
+            except socket.timeout:
+                raise RuntimeError(
+                    "adbd asteapta APROBAREA cheii aplicatiei: accepta dialogul 'Allow USB "
+                    "debugging' pe telefon (daca nu apare: Developer options -> dezactiveaza si "
+                    "reactiveaza USB debugging sau Wireless debugging, apoi Allow cu 'Always allow'; "
+                    "de pe PC se poate si 'adb tcpip 5555')")
             if cmd == A_CNXN:
                 self.banner = d.decode(errors="replace").split("\0")[0]
                 print("[adb] ✓ AUTORIZAT:", self.banner[:70], flush=True); return True
             elif cmd == A_AUTH and a0 == AUTH_TOKEN:
-                # ★ ORDINEA CORECTA (protocol ADB):
-                #   1. daca avem cheia privata si cheia e DEJA autorizata ->
-                #      trimitem AUTH_SIGNATURE (dovada ca avem cheia privata).
-                #      adbd raspunde IMEDIAT cu CNXN.
-                #   2. daca nu avem cheie privata SAU semnarea esueaza ->
-                #      trimitem AUTH_RSAPUBLICKEY (adbd afiseaza dialogul Allow).
-                # Fara pasul 1, un adbd care are deja cheia in user_keys NU
-                # raspunde la RSAPUBLICKEY -> timeout (bug real).
-                # ★ ORDINEA CARE MERGE (verificat pe device):
-                # 1. RSAPUBLICKEY cu cheia in formatul ANDROID_PUBKEY (524 bytes,
-                #    ca a cheii adb standard) -> adbd o valideaza si autorizeaza.
-                #    (Cheia in formatul vechi de 267 B -> "Invalid base64 key".)
-                # 2. fallback: SIGNATURE (pentru adbd care au deja cheia salvata)
-                # ★ ORDINEA CORECTA (fix dupa blocajul "adbsh timeout" din teste):
+                # ★ FAZA 4n - ORDINEA CARE MERGE (verificat pe device, 2026-10-01):
                 # adbd trimite AUTH_TOKEN si ASTEAPTA o dovada. Sunt doua cai:
-                #   (1) AUTH_SIGNATURE  - daca cheia privata e deja in user_keys: adbd
-                #       verifica semnatura si raspunde CNXN IMEDIAT, fara dialog.
-                #   (2) AUTH_RSAPUBLICKEY - daca NU e autorizata: adbd afiseaza dialogul
-                #       "Allow USB debugging".
-                # Vechiul cod incerca (2) PRIMUL si (1) doar in `except`. Pe acest device
-                # cheia e deja in user_keys, deci adbd NU raspunde deloc la (2):
-                # ramanea in timeout si adbsh parea mort. Acum incercam (1) PRIMUL.
-                # ★ FIX (verificat pe device): RSAPUBLICKEY PRIMUL.
-                # adbd accepta RSAPUBLICKEY INSTANT (raspunde CNXN), in timp ce
-                # SIGNATURE e respinsa cand cheia nu e in lista persistenta.
-                pub = open(PUBC,"rb").read().strip()+b"\0"
-                print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
-                self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
+                #   (1) AUTH_SIGNATURE   - semnam token-ul cu cheia privata (RSA PKCS#1v1.5/SHA1,
+                #       exact ca adb_auth_sign din AOSP). Merge INSTANT cand cheia publica e deja
+                #       in lista adbd (user_keys) - fara dialog, fara timeout.
+                #   (2) AUTH_RSAPUBLICKEY - trimitem cheia publica ca adbd sa afiseze dialogul
+                #       "Allow USB debugging". Pe acest device adbd NU raspunde la (2) cand cheia
+                #       e deja autorizata: ramane mut -> timeout (simptomul "adbsh nu merge, uid
+                #       2000" din testele din UI).
+                # De aceea: (1) PRIMUL, (2) doar ca a doua incercare.
+                _n_auth = getattr(self, "_auth_tries", 0)
+                self._auth_tries = _n_auth + 1
+                if _n_auth == 0:
+                    try:
+                        _sig = _rsa_sign_token(d)
+                        self._send(A_AUTH, AUTH_SIGNATURE, 0, _sig)
+                        print("[adb] AUTH -> AUTH_SIGNATURE (%d bytes)" % len(_sig), flush=True)
+                        continue
+                    except Exception as _e:
+                        print("[adb] semnare indisponibila (%s) -> RSAPUBLICKEY" % str(_e)[:60], flush=True)
+                try:
+                    pub = open(PUBC, "rb").read().strip() + b"\0"
+                except Exception:
+                    pub = b""
+                if pub:
+                    print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
+                    self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
                 _auth_left -= 1
                 if _auth_left <= 0:
-                    raise RuntimeError("adbd a respins autorizarea (3 incercari) - "
-                                       "accepta dialogul 'Allow USB debugging' pe telefon "
-                                       "sau ruleaza: adb tcpip 1234 de pe PC")
+                    raise RuntimeError(
+                        "adbd nu a acceptat autorizarea (semnatura + cheie publica). Pe telefon: "
+                        "Developer options -> dezactiveaza si reactiveaza Wireless debugging / USB "
+                        "debugging si apasa Allow (cu 'Always allow'); de pe PC: adb tcpip 5555")
             else:
                 raise RuntimeError("neasteptat %#x a0=%d" % (cmd,a0))
     def _drain(self):
