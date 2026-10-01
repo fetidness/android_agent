@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-01 (executia in domeniul app-ului - lansatori ELF - `.assets_v213`)
+
+- `untrusted_app` nu poate executa scripturile din filesDir -> wrapper-ele `cc-rust`/`flang` erau
+  moarte in fluxul normal al app-ului. Inlocuite cu lansatori ELF in jniLibs
+  (`libccrust_exec.so`, `libshwrap_exec.so`).
+- `setuptools` reinstalat automat daca lipseste (`_ensure_setuptools`, cu marker).
+- `CMAKE_ROOT` documentat pentru apeluri directe de cmake.
+
 ### 2026-10-01 (reparatii definitive din conversatia agentului - `.assets_v212`)
 
 - Fortran/flang: wrapperul traduce acum flag-urile de driver (`-c` -> `-emit-obj`) - flang

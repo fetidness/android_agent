@@ -1138,12 +1138,26 @@ def _ensure_launchers():
                  '$OBJS $FORTO -o "$OUT" -L"$SL" -L"$R/sysroot/usr/lib/aarch64-linux-android/35" '
                  '-lFortranRuntime -lFortranDecimal -lc++_shared -lm\n'
                  % (F + "/tmp", ROOT, _sl, nat))
+        # ★ FAZA 4e: launcher ELF, nu script. untrusted_app NU poate executa scriptul din
+        # filesDir; `libshwrap_exec.so` (jniLibs) executa `sh <nume>.sh "$@"`, iar scriptul
+        # scris in files/tmp/flang.sh poate fi CITIT de app (doar exec direct e interzis).
+        _sw = nat + "/libshwrap_exec.so"
         for name in ("flang", "flang-new", "flang-21"):
             p = F + "/tmp/" + name
+            ps = F + "/tmp/" + name + ".sh"
             try:
-                if os.path.lexists(p): os.remove(p)
-                open(p, "w").write(_body)
-                os.chmod(p, 0o755)
+                if (not os.path.exists(ps)) or open(ps).read() != _body:
+                    open(ps, "w").write(_body)
+                os.chmod(ps, 0o755)
+                if os.path.exists(_sw):
+                    if os.path.lexists(p):
+                        os.remove(p)
+                    os.symlink(_sw, p)
+                else:
+                    if os.path.lexists(p):
+                        os.remove(p)
+                    open(p, "w").write(_body)
+                    os.chmod(p, 0o755)
                 made.append(name)
             except Exception:
                 pass
@@ -1541,6 +1555,51 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
 '''
 
 
+def _ensure_setuptools():
+    """★ setuptools TREBUIE sa fie instalat: cu PIP_NO_BUILD_ISOLATION=1 (setat in env_vars),
+    backendul de build ruleaza in procesul nostru si importa setuptools; daca a fost sters de
+    vreun pip anterior, TOATE build-urile clasice cad. Raportat de testul E2E din UI
+    ("setuptools - singurul care chiar lipseste"). Il reinstalam o data, cu marker.
+    """
+    try:
+        import setuptools  # noqa: F401
+        return True
+    except Exception:
+        pass
+    _mk = F + "/pyhome/lib/python3.14/site-packages/.setuptools_tried"
+    if os.path.exists(_mk):
+        return False
+    try:
+        open(_mk, "w").write("1")
+    except Exception:
+        pass
+    try:
+        _py = _py_exec()
+        # ★ NU chemam env_vars() aici (ne cheama ELE pe noi -> recursiune); luam minimul necesar
+        env = dict(os.environ)
+        try:
+            env["LD_LIBRARY_PATH"] = _rt_ld_path()
+            env["PATH"] = F + "/tmp:" + env.get("PATH", "")
+            env["PYTHONHOME"] = F + "/pyhome"
+            env["PYTHONPATH"] = (F + "/pyhome/lib/stdlib_extra.zip:" + F + "/pyhome/lib/python3.14:"
+                                 + F + "/pyhome/lib/pysitepkg.zip")
+            env["TMPDIR"] = F + "/tmp"
+            env["SSL_CERT_FILE"] = env["CURL_CA_BUNDLE"] = _ca_bundle()
+            env["PIP_NO_BUILD_ISOLATION"] = "1"
+        except Exception:
+            pass
+        subprocess.run([_py, "-m", "pip", "install", "--no-cache-dir", "-q", "setuptools"],
+                       capture_output=True, text=True, timeout=900, env=env,
+                       stdin=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        import setuptools  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _ensure_maturin():
     """★ FAZA 5: pachete Python cu backend `maturin` (orjson, cramjam, pydantic-core...).
 
@@ -1695,19 +1754,44 @@ def _ensure_rust():
     # pe device), deci singura cale sigura e ca `cc`-ul insusi sa adauge --target/--sysroot.
     # Scriptul e executabil pentru ca e interpretat de /system/bin/sh (nu exec direct).
     try:
+        # ★ FAZA 4e: lansator ELF (nu script!). untrusted_app NU poate executa fisiere din
+        # filesDir (Android 10+ W^X) - deci scriptul shell de aici NU putea fi rulat de app,
+        # doar prin `sh <script>`. `libccrust_exec.so` (in jniLibs) executa clang-ul cu
+        # --target/--sysroot si merge in orice context.
+        _elf = nat + "/libccrust_exec.so"
+        if os.path.exists(_elf):
+            for _nm in ("cc-rust", "cc", "c++"):
+                _p = F + "/tmp/" + _nm
+                try:
+                    if os.path.lexists(_p):
+                        os.remove(_p)
+                    os.symlink(_elf, _p)
+                except Exception:
+                    pass
         _cc = F + "/tmp/cc-rust"
-        # ★ clang-ul din APK nu-si gaseste headerele BUILTIN (float.h, stddef.h...) pentru ca
-        # binarul e redenumit (libclang_exec.so) -> fara -resource-dir: "fatal error: 'float.h'
-        # file not found" (l-a oprit pe zstd-sys, dependinta de maturin).
-        _res = ROOT + "/lib/clang/21"
-        _resf = (" -resource-dir=" + _res) if os.path.isdir(_res + "/include") else ""
-        _body = ('#!/system/bin/sh\n'
-                 'exec ' + F + '/tmp/clang' + _resf + ' --target=aarch64-linux-android' + str(_device_api())
-                 + ' --sysroot=' + ROOT + '/sysroot "$@"\n')
-        _old = open(_cc).read() if os.path.exists(_cc) else None
-        if _old != _body:
-            open(_cc, "w").write(_body)
-        os.chmod(_cc, 0o755)
+        if not os.path.lexists(_cc):
+            _body = ('#!/system/bin/sh\n'
+                     'exec ' + F + '/tmp/clang --target=aarch64-linux-android' + str(_device_api())
+                     + ' --sysroot=' + ROOT + '/sysroot "$@"\n')
+            try:
+                open(_cc, "w").write(_body)
+                os.chmod(_cc, 0o755)
+            except Exception:
+                pass
+        _cc = F + "/tmp/cc-rust"
+        if not os.path.lexists(_cc):
+            # fallback (fara launcher ELF in APK): script shell + -resource-dir
+            _res = ROOT + "/lib/clang/21"
+            _resf = (" -resource-dir=" + _res) if os.path.isdir(_res + "/include") else ""
+            _body = ('#!/system/bin/sh\n'
+                     'exec ' + F + '/tmp/clang' + _resf + ' --target=aarch64-linux-android'
+                     + str(_device_api()) + ' --sysroot=' + ROOT + '/sysroot "$@"\n')
+            try:
+                open(_cc, "w").write(_body)
+                os.chmod(_cc, 0o755)
+                made.append("cc-rust")
+            except Exception:
+                pass
     except Exception:
         pass
     # config cargo: linker-ul nostru + sysroot-ul de device. ★ `target-applies-to-host` e
@@ -1786,6 +1870,7 @@ def env_vars():
     home = F + "/home"
     pipcache = home + "/.cache/pip"
     _ensure_launchers()
+    _ensure_setuptools()         # ★ pip fara izolare are nevoie de setuptools in proces
     _ensure_rust()                # ★ FAZA 4: rustc/cargo + librustc_driver/libLLVM/std
     _ensure_maturin()             # ★ FAZA 5: maturin (backend pentru orjson/cramjam/...)
     _ensure_python_pc()

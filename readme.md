@@ -3166,3 +3166,28 @@ Am citit toata conversatia agentului (context.json) si am reparat tot ce a rapor
 
 **Rezultat pe `.assets_v212`: `selftest` -> cmake=True, rust=True, cargo=True, fortran=True,
 `lipsa: []`.**
+
+---
+
+## Etapa 57 - FAZA 4e: EXECUTIA IN DOMENIUL APP-ULUI (lansatori ELF) - `.assets_v213`
+
+Al doilea test din UI a aratat exact ce lipsea: `untrusted_app` (procesul real al agentului)
+**NU poate executa fisiere din filesDir** (Android 10+, W^X) - deci toate WRAPPER-ELE SCRIPT
+(`cc-rust`, `flang`) functionau doar cand erau chemate prin `run-as`/shell, nu in fluxul normal
+al app-ului. Dovedit de agent: "fortran - PermissionError(13)".
+
+Fix definitiv: lansatori **ELF** in `jniLibs` (executabile din nativeLibraryDir, in ORICE context):
+- `libccrust_exec.so` (build/shim/ccrust.c): executa clang-ul din ACELASI director cu
+  `--target/--sysroot/-resource-dir` - inlocuieste scriptul `cc-rust` (si creeaza `cc`, `c++`);
+- `libshwrap_exec.so` (build/shim/shwrap.c): executa `/system/bin/sh <nume>.sh "$@"` pentru
+  wrapper-ele script (flang/flang-new/flang-21 → `files/tmp/flang.sh`).
+
+Alte doua reparatii din acelasi test:
+- **`setuptools` fusese sters** din site-packages (pip cu `--no-build-isolation` il importa
+  direct) -> `_ensure_setuptools()` il reinstaleaza o data (cu marker), la primul env.
+- `CMAKE_ROOT` trebuie setat la `toolchain/cmake` pentru apelurile directe de `cmake`
+  (selftest-ul il foloseste deja; agentul a confirmat ca e nevoie in shell-ul lui).
+
+Nota de mediu (confirmata de agent): `run-as net.sys32.agent sh -c ...` vede si executa
+filesDir-ul; procesul app, in schimb, doar CITESTE (exec interzis) - de aceea binarul produs se
+ruleaza cu `/apex/com.android.runtime/bin/linker64 <binar>`.
