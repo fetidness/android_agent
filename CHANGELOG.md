@@ -3,9 +3,19 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `19d2083`.
+> Ultimul commit inclus: `9ffae1a`.
 
-**Total: 186 commituri in 12 zile** (19 sep -> 30 sep).
+**Total: 190 commituri in 12 zile** (19 sep -> 1 oct).
+
+---
+
+### 2026-10-01 (selftest fara fals negativ la cmake - `.assets_v214`)
+
+- `selftest()` chema `toolchain/bin/llvm-ar` (neexecutabil din sandbox-ul app-ului) -> raporta
+  fals `cmake: false`, desi cmake real functioneaza (confirmat de agent: configure+build+run).
+  Acum `selftest()` creeaza lansatoarele din `files/tmp` inainte de teste si le prefera pe ele.
+- Al treilea test din UI a confirmat: C, C++, Fortran, Rust, extensii Python, cmake+ninja -
+  toate compileaza SI ruleaza pe device.
 
 ---
 
