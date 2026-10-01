@@ -3385,3 +3385,26 @@ din APK), plus `deps/lib`. Verificat cu un ciclu real: binar C++ compilat -> `RP
 
 Note de testare UI: acest ROM nu traduce `%s` in `input text`, iar parantezele sparg shell-ul;
 textul se tasteaza cuvant cu cuvant + `input keyevent 62` (spatiu).
+
+## Etapa 67 - FIX: `adbsh` NU EXECUTA NIMIC (uid 2000) - `.assets_v225`
+
+Sesiune noua de test din UI ("verifica uid 2000 apoi test complet toolchain"): agentul a raportat
+corect ca `bash`/`smart` ruleaza ca uid 10322 (app-ul, normal) dar **`adbsh` nu executa nimic**:
+intorcea mereu acelasi blob binar `\x03\x01\x00\x00\x00\x01`.
+
+**Diagnostic (reprodus cu probe):** clientul ADB pur-Python era perfect functional
+(`adb_client.shared().shell('id')` -> `uid=2000(shell)`, autorizat pe portul 5555, adbd cu
+`service.adb.tcp.port=5555`). Vinovatul era `run_adbsh_tool()`, care prefixa FIECARE comanda cu
+`. /data/data/net.sys32.agent/files/toolchain_env.sh` - un fisier **APP-PRIVATE**, pe care shell-ul
+uid=2000 NU il poate citi ("Permission denied"). Acea eroare desincroniza protocolul si lasa in
+socket bytes binari reziduali, pe care tool-ul ii returna apoi ca "output" pentru TOATE comenzile.
+
+**Fix (2 parti):**
+1. scos prefixarea cu toolchain_env.sh - n-avea oricum sens: toolchain-ul e al aplicatiei
+   (binarele stau in nativeLibraryDir, neexecutabile de shell);
+2. garda anti-desync in `run_adbsh_tool`: daca payload-ul (dupa marker) contine doar bytes de
+   control, se reconecteaza si se reincearca o data; daca reapare, se raporteaza explicit
+   "desync de protocol (raspuns binar): comanda NU a fost confirmata" in loc sa intoarca blob-ul.
+
+**Dovada:** `run_adbsh_tool('id')` -> `uid=2000(shell) gid=2000(shell) ...`;
+`run_adbsh_tool('echo TEST_ADBSH')` -> `TEST_ADBSH`; `ls /data/local/tmp | head -3` -> listare reala.

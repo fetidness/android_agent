@@ -1827,14 +1827,13 @@ def run_adbsh_tool(cmd, timeout=20):
     dsc = "adbsh: " + cmd[:60]
     to = max(5, min(int(timeout), 3600))
 
-    # prefix: mediu toolchain (daca exista) + PATH-ul wrapper-elor de compilare
+    # ★ FIX (raportat de agent: "adbsh nu executa nimic, intoarce mereu \x03\x01\x00\x00\x00\x01"):
+    # NU mai sursam toolchain_env.sh aici. Acel fisier e in filesDir (APP-PRIVATE): shell-ul
+    # uid=2000 NU il poate citi -> "Permission denied" + protocol desync (răspuns binar rezidual).
+    # Orice output binar rezidual facea ca TOATE comenzile adbsh sa intoarca blob-ul acela.
+    # Toolchain-ul e al aplicatiei (binarele sunt in nativeLibraryDir, neexecutabile de shell),
+    # deci prefixarea nu aducea oricum nimic util in shell-ul adbd.
     _wrapped = cmd
-    try:
-        if os.path.exists("/data/data/net.sys32.agent/files/toolchain_env.sh"):
-            _wrapped = (". /data/data/net.sys32.agent/files/toolchain_env.sh >/dev/null 2>&1; "
-                        "") + cmd
-    except Exception:
-        pass
 
     def _run():
         # bucla de retry: daca raspunsul e gol/neconfirmat, o singura reincercare dupa
@@ -1858,6 +1857,20 @@ def run_adbsh_tool(cmd, timeout=20):
                 return "adbsh error: " + _m
             if mk in out:
                 out = out.replace(mk + "\n", "", 1).replace(mk, "", 1)
+                # ★ FAZA 4k: desync de protocol. Cand răspunsul conține doar bytes de control
+                # (ex. "\x03\x01\x00\x00\x00\x01" - rezultatul desincronizarii pe un fisier
+                # app-private), NU-l returna ca output real: reconecteaza si reincearca o data.
+                if out and not any((c.isprintable() or c in "\n\r\t") for c in out):
+                    last = out
+                    if attempt == 1:
+                        try:
+                            _ADBCLI.force_reconnect()
+                            _t.sleep(0.2)
+                        except Exception:
+                            pass
+                        continue
+                    return ("[adb] desync de protocol (raspuns binar): comanda NU a fost confirmata: "
+                            + cmd[:60])
                 return out
             last = out
             # marker lipsa = raspuns strain sau gol: reconectam o data si reincercam

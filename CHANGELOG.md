@@ -9,6 +9,15 @@
 
 ---
 
+### 2026-10-01 (fix adbsh: nu mai executa nimic - `.assets_v225`)
+
+- Cauza: `run_adbsh_tool` prefixa comenzile cu `. <filesDir>/toolchain_env.sh` (fisier app-privat,
+  necitibil de uid=2000) -> "Permission denied" + desync de protocol -> TOATE comenzile adbsh
+  returnau blob-ul binar `\x03\x01\x00\x00\x00\x01`.
+- Fix: scos prefixul (inutil: toolchain-ul e al aplicatiei) + garda anti-desync (reconectare,
+  o reincercare, apoi raportare explicita in loc de output binar).
+- Dovada: `run_adbsh_tool('id')` -> uid=2000(shell); `echo`/`ls` reale.
+
 ### 2026-10-01 (E2E UI + rpath stabil - `.assets_v224`)
 
 - E2E din UI: task "instaleaza cu pip_install pachetul wrapt..." -> 6 pasi, 25 s, tok ↑26.8k ↓916,
