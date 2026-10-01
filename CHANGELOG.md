@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-01 (fix crash: tempfile pe /sdcard omora agentul - `.assets_v229`)
+
+- cauza: `py()` -> `tempfile.TemporaryFile(dir=WORK)` (/sdcard, FUSE) -> excepție neprinsa -> proces mort.
+- fix: fallback in lant WORK -> files/tmp -> tmp implicit -> BytesIO + `_raise_fd_limit()`;
+  garda pe `call_tool` (excepția devine rezultat de tool, agentul continua).
+- dovedit cu fd-uri epuizate (64): codul ruleaza in continuare.
+
 ### 2026-10-01 (adbsh reparat definitiv: AUTH_SIGNATURE; Fortran pe wrapper - `.assets_v228`)
 
 - adbsh/uid2000: adbd ignoră RSAPUBLICKEY când cheia e deja autorizată -> acum semnăm token-ul

@@ -3496,3 +3496,25 @@ ro.build.version.sdk` -> `36`.
 - Lectie de proces: la editarea promptului (text lung intr-un singur string Python) ghilimelele
   duble din text sparg literalul - s-a intamplat de doua ori; acum se folosesc doar backtick/ghilimele
   simple in textele inserate, iar `py_compile` se ruleaza INAINTE de push pe device.
+
+## Etapa 72 - FIX CRASH: agentul murea la `tempfile.TemporaryFile(dir=WORK)` (`.assets_v229`)
+
+Operatorul a raportat un crash. Traceback-ul din UI: `agent.py` -> `call_tool` -> `run_tool` ->
+`py()` -> linia 1477 `tempfile.TemporaryFile(dir=WORK)` -> `tempfile._mkstemp_inner` ->
+excepție propagata pana in bucla principala -> **procesul agentului murea** (taskul se pierdea).
+
+Diagnostic: WORK (workspace-ul de pe /sdcard) e deținut de alt uid (`u0_a293`, mod 2770, grup
+media_rw) - accesul functioneaza de obicei, dar pe FUSE o operație de tempfile poate cadea
+tranzitoriu (fd-uri/epuizare, hiccup FUSE). Verificat pe device: scrierea normala si
+TemporaryFile merg acum, deci a fost un esec TRANZITORIU - exact tipul de eroare care nu trebuie
+sa omoare niciodata procesul.
+
+**Fix (2 straturi):**
+1. `py()` nu mai depinde de un singur loc: incearca `tempfile.TemporaryFile(dir=WORK)`, apoi
+   `files/tmp`, apoi tempfile-ul implicit, iar in ultima instanta `io.BytesIO()` - codul se executa
+   ORICUM (bufferul LIVE nu e critic). Plus `_raise_fd_limit()` (ridica soft-ul RLIMIT_NOFILE la hard).
+2. Garda in bucla principala: orice excepție din `call_tool` devine un REZULTAT de tool
+   (`[tool error] ...` + traceback) pe care agentul il vede si continua - nu mai omoara procesul.
+
+**Dovada (test cu fd-uri epuizate intentionat):** limita coborata la 64, 58 fd-uri ocupate ->
+`py()` a rulat codul: `COD_RULAT_CHIAR_SI_CU_FD_EPUIZAT`; in regim normal: `42`.

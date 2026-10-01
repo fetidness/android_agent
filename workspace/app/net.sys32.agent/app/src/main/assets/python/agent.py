@@ -1471,10 +1471,44 @@ def py_capture(argv, timeout=600):
     out="".join(buf)
     return out or "(no output)"
 
+def _raise_fd_limit():
+    """Ridica plafonul de descriptori (soft -> hard) o singura data.
+
+    ★ Dupa ore de rulare, aplicatia atinge limita implicita (Android: ~1024 fd-uri) si
+    tempfile/subprocess incep sa cada cu EMFILE ("Too many open files") - un astfel de esec a
+    produs crash-ul raportat de operator (linia _mkstemp_inner din traceback).
+    """
+    try:
+        import resource as _res
+        soft, hard = _res.getrlimit(_res.RLIMIT_NOFILE)
+        if soft < hard:
+            _res.setrlimit(_res.RLIMIT_NOFILE, (hard, hard))
+        return soft, hard
+    except Exception:
+        return None
+
+
 def py(c,cwd):
     """Runs the code in its own process group. Ctrl+C kills ONLY this
     tool (SIGKILL on the group), then re-raises the signal to the task loop."""
-    o=tempfile.TemporaryFile(dir=WORK)
+    # ★ FAZA 4o (crash raportat de operator: traceback la tempfile.TemporaryFile(dir=WORK)):
+    # pe /sdcard (FUSE) + proces de lunga durata, _mkstemp_inner poate cadea (fd-uri epuizate,
+    # hiccup FUSE). Inainte, orice eroare aici OMORA agentul. Acum: fallback in lant si, in cel
+    # mai rau caz, continuam fara buffer-ul LIVE (executia codului nu depinde de el).
+    try:
+        _raise_fd_limit()
+    except Exception:
+        pass
+    o = None
+    _F = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .../files (agent.py e in files/python)
+    for _td in (WORK, _F + "/tmp", None):
+        try:
+            o = tempfile.TemporaryFile(dir=_td) if _td else tempfile.TemporaryFile()
+            break
+        except Exception:
+            o = None
+    if o is None:
+        o = io.BytesIO()
     # ★ FIX CRASH -11: `libpyexec.so -c <cod>` RE-INCARCA agent.py (sys.executable
     # e libpyexec.so, care la import ruleaza bucla principala) -> SIGSEGV instant.
     # Solutie: scriu codul intr-un fisier si il rulez ca SCRIPT (fara -c).
@@ -3129,7 +3163,19 @@ if __name__ == "__main__":
                     if _clean: print(OF+"   "+N+C+_clean+N)
                 for c in m["tool_calls"]:
                     code=json.loads(c["function"]["arguments"] or "{}").get("code","")
-                    o=call_tool(c)          # compact: only the summary; the CUT output is what gets sent to the model
+                    # ★ FAZA 4o (crash raportat de operator): orice exceptie aici (ex. tempfile pe
+                    # /sdcard cand fd-urile sunt epuizate) OMORA procesul agentului. Acum eroarea
+                    # devine un rezultat de tool, agentul o vede si continua.
+                    try:
+                        o=call_tool(c)
+                    except Exception as _ex:
+                        import traceback as _tb
+                        o=("[tool error] %s: %s\n%s" % (type(_ex).__name__, str(_ex)[:300],
+                                                         _tb.format_exc()[-800:]))
+                        try:
+                            print(R+"   [tool error] "+type(_ex).__name__+": "+str(_ex)[:140]+N)
+                        except Exception:
+                            pass
                     M.append({"role":"tool","tool_call_id":c["id"],"content":o});compact_history();save_ctx();ctx_warn()
             else:
                 print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render((m.get("content") or "").strip())+"\n")
