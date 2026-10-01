@@ -2091,7 +2091,11 @@ def env_vars():
     # ★ N9: libc++_shared.so REAL trebuie gasibil la RUNTIME (numpy.fft, scipy.special),
     # altfel "cannot locate symbol"/"library libc++_shared.so not found".
     _sdk_lib = ROOT + "/sysroot/usr/lib/aarch64-linux-android/35"
+    # ★ CAPCANA (raportata de agent): clang apelat prin symlinkul din files/tmp isi calculeaza
+    # gresit resource-dir (/lib/lib/clang/21/...) -> "cannot open" / "'stddef.h' file not found".
+    # Il fixam EXPLICIT in CFLAGS (se aplica si in cmake, care foloseste acest string).
     _cflags = ("-fPIC -O2 --target=aarch64-linux-android35 --sysroot=" + ROOT + "/sysroot "
+               "-resource-dir=" + ROOT + "/lib/clang/21 "
                "-I" + ROOT + "/sysroot/usr/include -I" + _cxxinc + "/c++/v1 "
                "-I" + ROOT + "/pyinc "
                "-I" + DEPS + "/include -I" + DEPS + "/include/libxml2")
@@ -2101,6 +2105,9 @@ def env_vars():
     # (stub-uri de link). Fara el: "cannot open crtend_android.o" / "unable to find -lc".
     _atom = _atomic_dir()
     _ldflags = ("-L" + _sdk_lib + " -L" + DEPS + "/lib -L" + apexsdk
+                # ★ libatomic/libclang_rt sunt STATICE, in lib/clang/21/lib/linux (agentul:
+                # "-latomic" nu se rezolva fara aceasta cale)
+                + " -L" + ROOT + "/lib/clang/21/lib/linux"
                 + (" -L" + _atom if _atom else "")
                 # ★ -lm -ldl EXPLICIT: pe bionic functiile de math/log/fmod sunt in libm si,
                 # cu --no-undefined, orice modul care le foloseste are nevoie de ele la link

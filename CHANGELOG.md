@@ -9,6 +9,16 @@
 
 ---
 
+### 2026-10-01 (bug real in `pip_install` - ordinea PYTHONPATH - `.assets_v216`)
+
+- Agentul a izolat: `toolchain action=pip_install` -> `exit 1 in 0s` / `KeyError('prefix')`.
+  Cauza: zip-urile injectate in `sys.path` in ordinea gresita (`pysitepkg.zip` inaintea
+  `stdlib_extra.zip`) -> `zipfile._path` lipseste -> `importlib.metadata` cade inainte de build.
+  Fix: `stdlib_extra.zip` PRIMUL, in toate cele 3 locuri.
+- Dovada: `pip install --force-reinstall MarkupSafe` -> rc=0 in 15s, import OK.
+- CFLAGS/LDFLAGS: `-resource-dir=<TC>/lib/clang/21` (clang prin symlink isi calcula gresit
+  resource-dir) + `-L<TC>/lib/clang/21/lib/linux` (libatomic/compiler-rt statice).
+
 ### 2026-10-01 (binarele sunt si in `toolchain/bin` - `.assets_v215`)
 
 - Agentul a raportat fals "lipseste cmake" (cauta in `toolchain/bin`, unde erau doar symlink-uri

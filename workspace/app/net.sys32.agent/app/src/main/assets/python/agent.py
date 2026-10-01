@@ -2061,8 +2061,10 @@ def run_toolchain_tool(a):
         if not e.get("CC"):
             e["CC"] = BIN + "/clang-21"
         e["PYTHONHOME"] = F + "/pyhome"
-        e["PYTHONPATH"] = (F + "/pyhome/lib/pysitepkg.zip:" + F +
-                           "/pyhome/lib/stdlib_extra.zip:" + here)
+        # ★ ORDINEA CONTEAZA (bug raportat de agent): stdlib_extra.zip PRIMUL - are zipfile._path
+        # de care depinde importlib.metadata (pip); altfel: KeyError('prefix'), exit 1 in 0s.
+        e["PYTHONPATH"] = (F + "/pyhome/lib/stdlib_extra.zip:" + F +
+                           "/pyhome/lib/pysitepkg.zip:" + here)
         e["LD_LIBRARY_PATH"] = _clean_ld(e.get("LD_LIBRARY_PATH", ""))
         e["TMPDIR"] = F + "/tmp"
         try:
@@ -2229,8 +2231,8 @@ def run_toolchain_tool(a):
         # Env-ul complet (CC/LDSHARED/CFLAGS/sysroot/libxml2) vine din _env().
         try:
             _e = _env()
-            _e["PYTHONPATH"] = (F + "/pyhome/lib/pysitepkg.zip:" + F +
-                                "/pyhome/lib/stdlib_extra.zip:" + here)
+            _e["PYTHONPATH"] = (F + "/pyhome/lib/stdlib_extra.zip:" + F +
+                                "/pyhome/lib/pysitepkg.zip:" + here)
             # ★ -S + sitecustomize: garanteaza ca zip-urile (pip!) sunt in sys.path
             # chiar daca PYTHONPATH nu ajunge la subproces.
             _t0 = time.time()
@@ -2243,7 +2245,7 @@ def run_toolchain_tool(a):
                      "sys.path[:0]=[r'%s',r'%s'];"
                      "from pip._internal.cli.main import main as _m;"
                      "sys.exit(_m(['install','--no-cache-dir','--disable-pip-version-check',%s%r]))"
-                     % (_zp, _ze, _noiso and "'--no-build-isolation'," or "", pkg))
+                     % (_ze, _zp, _noiso and "'--no-build-isolation'," or "", pkg))
             # ★ FIX CRASH -11 (28 sept): pe Android `sys.executable` = libpyexec.so, iar un
             # subproces `libpyexec.so <script>` murea instant (SIGSEGV) pentru ca
             # LD_LIBRARY_PATH continea directorul de STUB-uri NDK (sysroot) -> libc stubbed.

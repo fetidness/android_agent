@@ -3222,3 +3222,26 @@ Dovedit pe device: `toolchain/bin/cmake --version` -> rc=0, `cmake version 3.31.
 Plus regula (3a) in promptul agentului: binarele sunt ELF in lib-ul APK-ului + symlink-uri in
 `files/tmp` si `files/toolchain/bin`; o unealta "lipsa" se verifica cu `toolchain action=env`
 (PATH-ul returnat), nu cu `ls`.
+
+## Etapa 60 - FAZA 4h: BUG REAL IN `pip_install` (ORDINEA PYTHONPATH) - `.assets_v216`
+
+Al cincilea test din UI (sesiune luata de la 0): agentul a izolat singur un bug REAL al tool-ului:
+
+**Simptom:** orice `toolchain action=pip_install` (lxml, MarkupSafe) -> `exit 1 in 0s` /
+`KeyError('prefix')`.
+**Cauza:** calea de pip a tool-ului injecta zip-urile in `sys.path` in ordinea GRESITA
+(`pysitepkg.zip` INAINTEA `stdlib_extra.zip`). Pachetul `zipfile/` din stdlib n-are subpachetul
+`_path` (e doar in `stdlib_extra.zip`), deci `importlib.metadata` (folosit de pip) cadea inainte
+sa inceapa build-ul. **`stdlib_extra.zip` trebuie sa fie PRIMUL.**
+**Fix:** ordinea corecta in toate cele 3 locuri (PYTHONPATH in `_env()`, in actiunea
+`pip_install`, si in injectarea `sys.path[:0]`).
+
+**Dovada pe `.assets_v216`:** `pip install --force-reinstall MarkupSafe` -> rc=0 in 15s,
+wheel construit pe device, `import markupsafe` -> OK 3.0.3; `selftest` -> cmake/rust/cargo/fotran
+toate True, `lipsa: []`.
+
+Plus doua capcane raportate de agent, reparate in CFLAGS/LDFLAGS (se aplica si in cmake):
+- **`-resource-dir=<TC>/lib/clang/21`** explicit in CFLAGS: clang apelat prin symlinkul din
+  files/tmp isi calcula resource-dir la `/lib/lib/clang/21/...` -> "cannot open"/"stddef.h not found";
+- **`-L<TC>/lib/clang/21/lib/linux`** in LDFLAGS: acolo stau `libatomic.a`/`libclang_rt.*.a`
+  (statice), fara ele `-latomic` nu se rezolva.
