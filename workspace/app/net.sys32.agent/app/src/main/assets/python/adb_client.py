@@ -399,7 +399,9 @@ class Adb:
                     raise RuntimeError(
                         "adbd nu a acceptat autorizarea (semnatura + cheie publica). Pe telefon: "
                         "Developer options -> dezactiveaza si reactiveaza Wireless debugging / USB "
-                        "debugging si apasa Allow (cu 'Always allow'); de pe PC: adb tcpip 5555")
+                        "debugging si apasa Allow (cu 'Always allow'); de pe PC: adb tcpip 5555. "
+                        "SAU (fara dialog): copiaza cheia deja autorizata a operatorului in "
+                        "files/op_adbkey + files/op_adbkey.pub - semnatura e acceptata instant.")
             else:
                 raise RuntimeError("neasteptat %#x a0=%d" % (cmd,a0))
     def _drain(self):
