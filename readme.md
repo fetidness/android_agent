@@ -3636,3 +3636,20 @@ contin deja `-L .../lib/clang/21/lib/linux` (pentru -latomic).
 Singura frecare rǎmasǎ: typo-uri in scripturile de test ale agentului (string neinchis, `import
 time` lipsa, flag-uri scrise de mana in loc de env). Regula noua (3l) in prompt. v237 = v235 +
 aceasta regula (comportament identic al toolchain-ului).
+
+## Etapa 79 - pornire CURATA in UI: fara linii de diagnostic (`.assets_v238`, `.assets_v239`)
+
+Cerut de operator: sub notificarea de pornire sa nu apara linii de diagnostic, doar erorile.
+
+- **v238:** scos `[pas2] PATH aplicat` (agent.py; varianta de EROARE ramane) si cele 6 mesaje
+  `[toolchain] ...` informative din toolchain.py (libc++_shared, CA bundle, pip activat, libc++
+  extras). Diagnosticul complet poate fi reactivat oricand cu `AGENT_VERBOSE=1`.
+- **v239:** scos si `[key] cheie gasita - pornesc agentul.` + `[key] pornesc agentul...` /
+  `[key] cheia salvata in ...` (MainActivity.kt). Raman vizibile DOAR erorile - de exemplu
+  "LIPSA CHEIA DeepSeek API" cu instructiunile de lipire a cheii.
+
+Verificat pe device (screenshot dupa fiecare instalare): ecran gol + prompt `message the agent...`.
+
+Nota de proces: un `sed` pe MainActivity.kt a schimbat markerul `.assets_vNN` - markerul trebuie
+incrementat la ORICE modificare de assets/surse, altfel aplicatia nu re-extrage materialele la
+update (regula 1 din lista de siguranta).
