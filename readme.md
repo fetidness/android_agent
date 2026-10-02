@@ -3697,3 +3697,20 @@ Dovada pe device: `pip install numpy` → metadata **rc=0** in 155 s, "Would ins
 Nota de proces: `temp/` e gitignored (probele nu intra in git), dar `tools/probe_run.sh` da - si
 a fost actualizat sa foloseasca ACELASI PYTHONPATH ca agentul (site-packages inainte de zip),
 altfel probele vad alt mediu decat agentul si diagnoza e inselatoare.
+
+## Etapa 82 - binarele LLVM moarte din assets (`.assets_v242`)
+
+`assets/toolchain/bin/` continea **192 MB de binare LLVM reale** (clang-21 80 MB, lld 47 MB,
+llvm-*) copiate in filesDir la instalare. In filesDir ele NU pot fi EXECUTATE (W^X, Android 10+),
+deci erau simultan moarte si o capcana: agentul le chema (`toolchain/bin/clang-21`) si primea
+"Permission denied" (raportat in E2E), apoi pierdea pasi diagnosticand.
+
+- `_fix_dead_binaries()`: la fiecare pornire, numele cunoscute (clang/clang-21/clang++/clang-cpp/
+  clang-format/ld.lld/lld/llvm-ar/ar/llvm-ranlib/ranlib/llvm-nm/nm/llvm-strip/strip/llvm-objcopy/
+  llvm-readelf/objdump/...) sunt transformate in SYMLINK-uri catre ELF-urile din lib-ul APK-ului
+  (SELinux judeca tinta, deci un symlink e executabil). Cele fara echivalent (ex. llvm-objdump) sunt
+  STERSE: un "not found" e mai cinstit decat un "Permission denied" pe un binar care nu poate rula.
+- Assets: `assets/toolchain/bin/` STERS (192 MB) - numele sunt recreate ca symlink-uri la pornire.
+  APK-ul scade dramatic.
+- Dovada pe device: 20 binare reparate; `toolchain/bin/clang-21 --version` -> rc=0, "clang version
+  21.1.8".

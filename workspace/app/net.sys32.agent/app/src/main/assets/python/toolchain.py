@@ -1357,6 +1357,14 @@ def _ensure_launchers():
                 made.append(name)
             except Exception:
                 pass
+    # ★ FAZA 4v: ultimul pas - inlocuieste binarele REALE (neexecutabile) cu symlink-uri catre
+    # ELF-urile din lib-ul APK-ului (si sterge-le pe cele fara echivalent).
+    try:
+        _nfix = _fix_dead_binaries()
+        if _nfix:
+            made.append("fixate:%d" % _nfix)
+    except Exception:
+        pass
     return made
 
 
@@ -1816,6 +1824,71 @@ def _repair_build_backends(verbose=False):
             pass
     return {"ok": not [b for b in broken if b[0] not in fixed],
             "reparate": fixed, "rupte": [p for p, m in broken]}
+
+
+def _force_symlink_launcher(dst, target):
+    """★ FAZA 4v: un FISIER REAL in filesDir NU se poate executa (W^X, Android 10+) - dar un
+    SYMLINK catre nativeLibraryDir se executa (SELinux judeca tinta). Raportat in E2E:
+    `toolchain/bin/clang-21: Permission denied` (era copia reala de 80 MB din assets) si de acolo
+    au urmat pasi pierduti. Aici inlocuim orice fisier real cu symlink-ul corect.
+    """
+    try:
+        if os.path.islink(dst):
+            cur = os.readlink(dst)
+            if os.path.abspath(cur) == os.path.abspath(target):
+                return False
+            os.remove(dst)
+        elif os.path.exists(dst):
+            os.remove(dst)
+        os.symlink(target, dst)
+        return True
+    except Exception:
+        return False
+
+
+def _fix_dead_binaries():
+    """Inlocuieste binarele REALE (neexecutabile) din files/tmp si files/toolchain/bin cu
+    symlink-uri catre ELF-urile din lib-ul APK-ului. Intoarce cate au fost reparate."""
+    nat_dir = _native_dir() or ""
+    if not nat_dir:
+        return 0
+    pairs = [("clang", "libclang_exec.so"), ("clang-21", "libclang_exec.so"),
+             ("clang++", "libclang_exec.so"), ("clang-21++", "libclang_exec.so"),
+             ("clang-cpp", "libclang_exec.so"), ("clang-format", "libclang_exec.so"),
+             ("ld.lld", "liblld_exec.so"), ("lld", "liblld_exec.so"),
+             ("llvm-ar", "libllvmar_exec.so"), ("ar", "libllvmar_exec.so"),
+             ("llvm-ranlib", "libllvmranlib_exec.so"), ("ranlib", "libllvmranlib_exec.so"),
+             ("llvm-nm", "libllvmnm_exec.so"), ("nm", "libllvmnm_exec.so"),
+             ("llvm-strip", "libllvmstrip_exec.so"), ("strip", "libllvmstrip_exec.so"),
+             ("llvm-objcopy", "libllvmobjcopy_exec.so"), ("llvm-readelf", "libllvmreadelf_exec.so"),
+             ("llvm-objdump", "libllvmobjdump_exec.so"), ("llvm-addr2line", "libllvmaddr2line_exec.so"),
+             ("llvm-cxxfilt", "libllvmcxxfilt_exec.so"), ("llvm-size", "libllvmsize_exec.so"),
+             ("llvm-strings", "libllvmstrings_exec.so"), ("llvm-as", "libllvmas_exec.so"),
+             ("llvm-config", "libllvmconfig_exec.so")
+             ]
+    n = 0
+    for name, lib in pairs:
+        tgt = nat_dir + "/" + lib
+        for d in (F + "/tmp", BIN):
+            try:
+                os.makedirs(d, exist_ok=True)
+            except Exception:
+                continue
+            if os.path.exists(tgt):
+                if _force_symlink_launcher(d + "/" + name, tgt):
+                    n += 1
+            else:
+                # fara lib echivalent: STERGEM fisierul real mort (un "not found" e mai cinstit
+                # decat "Permission denied" pe un binar care nu poate rula niciodata)
+                _p = d + "/" + name
+                try:
+                    if os.path.isfile(_p) and not os.path.islink(_p):
+                        if os.path.getsize(_p) > 4096:
+                            os.remove(_p)
+                            n += 1
+                except Exception:
+                    pass
+    return n
 
 def _ensure_setuptools():
     """★ setuptools TREBUIE sa fie instalat: cu PIP_NO_BUILD_ISOLATION=1 (setat in env_vars),

@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-02 (eliminate binarele LLVM moarte din assets; symlink-uri executabile - `.assets_v242`)
+
+- `_fix_dead_binaries()`: fisier REAL in filesDir = neexecutabil (W^X) -> symlink catre lib-ul
+  APK-ului; cele fara echivalent sunt sterse (raportat: "toolchain/bin/clang-21: Permission denied").
+- assets/toolchain/bin/ sters (192 MB) - numele sunt recreate ca symlink-uri la pornire.
+- dovada: 20 binare reparate, `clang-21 --version` rc=0.
+
 ### 2026-10-02 (mesonpy stub din zip rupea numpy; reparatie reale de backend - `.assets_v241`)
 
 - `_repair_build_backends()`: verifica si reinstaleaza CURAT meson-python + ninja (stub-ul din
