@@ -3078,7 +3078,9 @@ if __name__ == "__main__":
         # ★ FIX CRITIC: fara stub-urile NDK (sysroot) in LD_LIBRARY_PATH - altfel
         # orice proces copil (pip/build backend/setuptools) moare cu SIGSEGV (-11).
         os.environ["LD_LIBRARY_PATH"] = _clean_ld(":".join(_partsS))
-        print("[pas2] PATH aplicat: " + os.environ.get("PATH","")[:80])
+        # ★ (cerut de operator): linia de diagnostic NU se mai afiseaza in UI la pornire.
+        if os.environ.get("AGENT_VERBOSE"):
+            print("[pas2] PATH aplicat: " + os.environ.get("PATH","")[:80])
     except Exception as _eS:
         print("[pas2] EROARE: %r" % (_eS,))
     # ★ P3/P10: colectori de stare acumulata (backup-uri + loguri), la fiecare pornire

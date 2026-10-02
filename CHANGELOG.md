@@ -9,6 +9,12 @@
 
 ---
 
+### 2026-10-02 (UI curat la pornire - `.assets_v238` (neinstalat: device deconectat))
+
+- `[pas2] PATH aplicat` si cele 6 mesaje `[toolchain] ...` informative de la pornire NU se mai
+  afiseaza in UI (cerut de operator). Raman vizibile doar erorile; diagnosticul complet se poate
+  reactiva cu AGENT_VERBOSE=1.
+
 ### 2026-10-02 (runda 3 E2E de la zero: 56 intrari / 6,2k tokeni, zero erori - `.assets_v237`)
 
 - verificat: `files/cargo/config` deprecat nu mai exista (Rust cu build.rs merge), LDFLAGS contine

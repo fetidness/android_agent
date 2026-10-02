@@ -393,14 +393,16 @@ print("NEEDCXX " + " ".join(need))
         line = [l for l in out.split("\n") if l.startswith("NEEDCXX")]
         files = line[0].split(" ", 1)[1].split() if line and len(line[0].split(" ", 1)) > 1 else []
         if not files:
-            print("[toolchain] libc++_shared: nimic de adaugat")
+            if os.environ.get("AGENT_VERBOSE"):
+                print("[toolchain] libc++_shared: nimic de adaugat")
             return
         bat = "L=%s; PE=%s/patchelf; " % (ROOT + "/usr/lib", BIN)
         bat += "; ".join('"$PE" --add-needed libc++_shared.so "%s" 2>/dev/null' % f for f in files)
         bat += "; echo CXXDONE"
         out2 = _sh("export LD_LIBRARY_PATH=$L:$LD_LIBRARY_PATH; " + bat, 900)
         if "CXXDONE" in out2:
-            print("[toolchain] libc++_shared adaugat pe %d .so" % len(files))
+            if os.environ.get("AGENT_VERBOSE"):
+                print("[toolchain] libc++_shared adaugat pe %d .so" % len(files))
     except Exception as e:
         print("[toolchain] libcxx err:", e)
 
@@ -483,7 +485,8 @@ echo "CA_WRITTEN=$sz"
     try:
         out = _sh(script, 180)
         if "CA_WRITTEN" in out or "CA_EXISTS" in out:
-            print("[toolchain] CA bundle pregatit (SSL_CERT_FILE)")
+            if os.environ.get("AGENT_VERBOSE"):
+                print("[toolchain] CA bundle pregatit (SSL_CERT_FILE)")
     except Exception as e:
         print("[toolchain] CA err:", e)
 
@@ -853,7 +856,8 @@ def _ensure_libcxx():
                 n = len(z.namelist())
                 z.extractall(inc)
             if os.path.exists(marker):
-                print("[toolchain] libc++ complet extras (%d fisiere)" % n)
+                if os.environ.get("AGENT_VERBOSE"):
+                    print("[toolchain] libc++ complet extras (%d fisiere)" % n)
                 return inc
         except Exception:
             pass
@@ -862,7 +866,8 @@ def _ensure_libcxx():
             subprocess.run(["/system/bin/unzip", "-o", "-q", p, "-d", inc],
                            capture_output=True, timeout=180)
             if os.path.exists(marker):
-                print("[toolchain] libc++ extras cu unzip")
+                if os.environ.get("AGENT_VERBOSE"):
+                    print("[toolchain] libc++ extras cu unzip")
                 return inc
         except Exception:
             pass
@@ -2459,7 +2464,8 @@ def _enable_pip():
         r = subprocess.run([py, "-m", "ensurepip", "--upgrade"],
                            capture_output=True, text=True, timeout=300, env=env)
         if r.returncode == 0:
-            print("[toolchain] pip activat")
+            if os.environ.get("AGENT_VERBOSE"):
+                print("[toolchain] pip activat")
     except Exception:
         pass
 
