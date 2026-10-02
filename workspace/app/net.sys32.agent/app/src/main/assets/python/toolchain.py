@@ -1247,27 +1247,57 @@ def _ensure_launchers():
             os.chmod(_pysh, 0o755)
             for _nm in ("python3", "python"):
                 _pp = F + "/tmp/" + _nm
+                _pp2 = F + "/tmp/" + _nm + ".sh"
+                # ★ scriem SI <nume>.sh (shwrap il executa) - fara el, symlink-ul ar rula
+                # libpyexec.so direct, fara PYTHONHOME/PYTHONPATH (pip: "No module named pip")
+                if (not os.path.exists(_pp2)) or open(_pp2).read() != _pybody:
+                    open(_pp2, "w").write(_pybody)
+                os.chmod(_pp2, 0o755)
                 if _sw2 and os.path.exists(_sw2):
+                    _cur = os.readlink(_pp) if os.path.islink(_pp) else ""
+                    if _cur != _sw2:
+                        if os.path.lexists(_pp):
+                            os.remove(_pp)
+                        os.symlink(_sw2, _pp)
+                else:
                     if os.path.lexists(_pp):
                         os.remove(_pp)
-                    os.symlink(_sw2, _pp)
-                else:
-                    _pp2 = F + "/tmp/" + _nm + ".sh"
-                    open(_pp2, "w").write(_pybody)
-                    os.chmod(_pp2, 0o755)
+                    open(_pp, "w").write(_pybody)
+                    os.chmod(_pp, 0o755)
                 made.append(_nm)
         except Exception:
             pass
-        # ★ cargo: config GLOBAL (CARGO_HOME/config.toml) - altfel build-urile Rust pornite din alt
-        # cwd (ex. /storage) nu gasesc linker-ul cc-rust si cad cu "linking with cc failed: exit 127".
+        # ★ cargo: LINKER GATA FACUT (linkwrap.sh) + config GLOBAL (CARGO_HOME/config.toml).
+        # Istoric: cc-rust (ELF) executa "clang" prin PATH, iar rustc ii da un mediu minimal ->
+        # "cc-rust: exec clang: No such file or directory" / "linking with cc failed: exit 127"
+        # (repetat in 3 sesiuni de test, inclusiv dupa ce agentul a descoperit singur reteta).
+        # Scriptul de mai jos foloseste CĂI ABSOLUTE catre clang + toate flagurile necesare.
         try:
-            _ch = F + "/cargo"
-            os.makedirs(_ch, exist_ok=True)
-            _ccfg = F + "/cargo/config.toml"
-            _body = ("[target.aarch64-linux-android]\n"
-                     "linker = \"%s/tmp/cc-rust\"\n" % F)
-            if (not os.path.exists(_ccfg)) or open(_ccfg).read() != _body:
-                open(_ccfg, "w").write(_body)
+            _lw = F + "/tmp/linkwrap.sh"
+            _api = _device_api()
+            _lwbody = ("#!/system/bin/sh\n"
+                       "# linker pentru rustc/cargo - cai absolute (rustc da un mediu minimal)\n"
+                       "exec %s/libclang_exec.so --target=aarch64-linux-android%s \\\n"
+                       "  --sysroot=%s/sysroot -resource-dir=%s/lib/clang/21 -B%s/tmp \\\n"
+                       "  -L%s/sysroot/usr/lib/aarch64-linux-android/%s -L%s/deps/lib -L%s/libs \\\n"
+                       "  -L%s/lib/clang/21/lib/linux \"$@\"\n"
+                       % (nat, _api, ROOT, ROOT, F, ROOT, _api, DEPS, F, ROOT))
+            if (not os.path.exists(_lw)) or open(_lw).read() != _lwbody:
+                open(_lw, "w").write(_lwbody)
+            os.chmod(_lw, 0o755)
+            _body = ("[build]\ntarget = \"aarch64-linux-android\"\n\n"
+                     "[target.aarch64-linux-android]\n"
+                     "linker = \"%s/tmp/linkwrap.sh\"\n"
+                     "rustflags = [\"-C\", \"link-arg=-Wl,-rpath,%s\", \"-C\", \"link-arg=-Wl,-rpath,%s/deps/lib\"]\n"
+                     % (F, _stable_libs(), DEPS))
+            for _ccfg in (F + "/cargo/config.toml", F + "/cargo/.cargo/config.toml",
+                          F + "/cargo/config"):
+                try:
+                    os.makedirs(os.path.dirname(_ccfg), exist_ok=True)
+                    if (not os.path.exists(_ccfg)) or open(_ccfg).read() != _body:
+                        open(_ccfg, "w").write(_body)
+                except Exception:
+                    pass
         except Exception:
             pass
 
