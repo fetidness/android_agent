@@ -441,6 +441,9 @@ def _write_env_file():
         # fara ele: 4 incercari pierdute in testul E2E cu CMakeDetermineSystem.cmake / CMAKE_ROOT.
         "export PREFIX={P}/sysroot/usr\n"
         "export CMAKE_ROOT={P}/cmake\n"
+        # ★ FAZA 4t: PREFIX e DEJA corect - nu-l suprascrie cu {P} (2 teste E2E au pierdut
+        # pasi cu CMakeDetermineSystem.cmake: file failed to open).
+        "# PREFIX/CMAKE_ROOT sunt deja corecte; NU le suprascrie cu {P} (=toolchain, NU sysroot/usr)\n"
         "export TMPDIR={F}/tmp\n"
         "export HOME={F}/home\n"
         "export PIP_CACHE_DIR=$HOME/.cache/pip\n"

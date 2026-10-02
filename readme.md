@@ -3598,3 +3598,24 @@ OpenSSL static, dlopen, pkg-config, meson, `precompile`): 162 intrari / ~19,5k t
 7. (3j) Cython/pybind11 nu sunt binare: `python3 -m cython`, respectiv headerele din
    `site-packages/pybind11/include`; launcher-ele de module se scriu acum si in `toolchain/bin`
    (agentul a listat bin/ si a raportat fals ca lipsesc).
+
+## Etapa 77 - runda 2 de optimizari din E2E (memoria stearsa, v234 -> v235)
+
+Rularea pe v234 a dat 152 intrari / ~12,8k tokeni (fata de 162/19,5k si 271/130k). Doua probleme
+reale, ambele cu cauza gasita si reparata:
+
+1. **Rust cu dependinte care au build.rs pica** (agentul a reconfirmat gresit "limita de executie").
+   Cauza reala: `files/cargo/config` (fisierul DEPRECAT, preferat de cargo) ramasese de la o
+   instalare veche cu `linker = cc-rust`; linkerul cc-rust produce un build-script pe care
+   kernelul il refuza la exec ("Permission denied"), iar linkwrap.sh produce un PIE normal care
+   ruleaza. Curatarea o faceam doar in `_ensure_launchers()`, dar build-urile Rust pornesc prin
+   `bash` (nu cheama functia) -> configul vechi supravietuia. Fix: `_cleanup_stale_cargo_config()`
+   apelat la pornirea agentului. Dovada: crate cu `quote` -> rc=0 (inainte Permission denied).
+2. **pip_install pica pe pachete noi** (cmarkgfm, msgpack, ujson: "BackendUnavailable: Cannot
+   import setuptools.build_meta"). Cauza: `_pip_main` lansa pip cu `sys.executable` si un
+   PYTHONPATH cu `pysitepkg.zip` INAINTEA `site-packages` -> build-backend-ul pip importa
+   setuptoolsul din arhiva. Fix: interpretor = lansatorul auto-suficient `files/tmp/python3` si
+   PYTHONPATH in ordinea dovedita (stdlib_extra, python3.14, site-packages, pysitepkg.zip).
+   Dovada: `toolchain action=pip_install msgpack` -> exit 0 in 4s.
+3. Garda binar: prag mult mai conservator (a doua oara a declansat fals pe ~1.8KB de text).
+4. env: nota ca PREFIX/CMAKE_ROOT sunt deja corecte si NU trebuie suprascrise.

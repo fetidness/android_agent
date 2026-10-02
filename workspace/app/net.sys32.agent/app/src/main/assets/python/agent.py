@@ -714,6 +714,27 @@ def phrase_op(op=""):
     if verb in ("runs","reads","writes","deletes","searches","uses","works"): return ph+" "+keep[0]
     return ph
 
+def _cleanup_stale_cargo_config():
+    """★ FAZA 4t: sterge configul cargo DEPRECAT (`config`, `.cargo/config`) daca exista.
+
+    Cargo prefera `config` in locul lui `config.toml`: un `config` vechi (cu linker=cc-rust)
+    ramas de la o instalare anterioara face ca ORICE crate cu build.rs sa pice cu
+    "could not execute process build-script-build: Permission denied" (raportat in 2 teste E2E;
+    agentul a concluzionat gresit ca e o limita de executie). Curatarea o faceam doar in
+    _ensure_launchers(), dar build-urile Rust pornesc prin `bash`, care nu o cheama.
+    """
+    for _p in ("/cargo/config", "/cargo/.cargo/config", "/cargo/.cargo/config.toml"):
+        try:
+            _f = F + _p
+            if os.path.exists(_f):
+                os.remove(_f)
+        except Exception:
+            pass
+
+
+_cleanup_stale_cargo_config()
+
+
 def brief(code):
     """The EXACT short English description of a step, derived from its own code: the same function feeds
     the live line while the step runs and the final line when it is over, so they always agree."""
@@ -916,7 +937,11 @@ def _binary_guard(o):
         # testul E2E: agentul a pierdut 6 pasi ocolind garda ca sa citeasca `id`/grupuri.
         ctrl = sum(1 for ch in sample
                    if (ord(ch) < 9 or (13 < ord(ch) < 32) or ord(ch) == 127) and ord(ch) != 27)
-        isbin = ("\x00" in sample) or (ctrl > max(24, len(sample) // 4))
+        printable = sum(1 for ch in sample if 31 < ord(ch) < 127 or ch in "\n\t\r")
+        # ★ FAZA 4t: prag mult mai conservator - a doua oara a declansat fals pe ~1.8KB de text
+        # (un raport Fortran). Cere NUL sau (foarte multi octeti de control SI putin text normal).
+        isbin = ("\x00" in sample) or (ctrl > max(40, len(sample) // 3)
+                                       and printable < len(sample) // 2)
     if not isbin:
         return o
     import hashlib as _h
@@ -2415,12 +2440,22 @@ def run_toolchain_tool(a):
                          "sys.exit(_m(%r))" % (_ze0, _zp0, _wh, list(args)))
                 _pe_env = dict(_env())
                 _pe_env["PYTHONHOME"] = F + "/pyhome"
-                _pe_env["PYTHONPATH"] = "%s/stdlib_extra.zip:%s/pysitepkg.zip:%s" % (
-                    F + "/pyhome/lib", F + "/pyhome/lib", F + "/python")
+                # ★ FAZA 4t: ORDINEA dovedita (site-packages INAINTE de pysitepkg.zip) si
+                # interpretorul = lansatorul auto-suficient. Inainte: sys.executable +
+                # pysitepkg.zip inaintea site-packages -> build-backend-ul pip lua setuptoolsul
+                # DIN ARHIVA si cadea cu "BackendUnavailable: Cannot import setuptools.build_meta"
+                # (3 pachete: cmarkgfm, msgpack, ujson - raportat in testul E2E).
+                _pe_env["PYTHONPATH"] = ("%s/stdlib_extra.zip:%s/python3.14:%s/python3.14/site-packages:"
+                                         "%s/pysitepkg.zip:%s") % (
+                    F + "/pyhome/lib", F + "/pyhome/lib", F + "/pyhome/lib",
+                    F + "/pyhome/lib", F + "/python")
+                _pe_py = F + "/tmp/python3"
+                if not os.path.exists(_pe_py):
+                    _pe_py = sys.executable
                 _pe_env["TMPDIR"] = F + "/tmp"
                 _pe_env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
                 try:
-                    _p = subprocess.run([sys.executable, "-c", _code], capture_output=True,
+                    _p = subprocess.run([_pe_py, "-c", _code], capture_output=True,
                                         text=True, timeout=3600, env=_pe_env, cwd=F + "/tmp",
                                         stdin=subprocess.DEVNULL)
                     return int(_p.returncode), ((_p.stdout or "") + (_p.stderr or ""))
@@ -2455,7 +2490,8 @@ def run_toolchain_tool(a):
                 except Exception as ex:
                     return 1, "[nu pot scrie _pipx.py] %r" % (ex,)
                 try:
-                    _rp = _sp.run([sys.executable, _sf] + list(args), capture_output=True,
+                    _rp = _sp.run([(F + "/tmp/python3" if os.path.exists(F + "/tmp/python3")
+                                    else sys.executable), _sf] + list(args), capture_output=True,
                                   text=True, timeout=3600, env=_e, stdin=_sp.DEVNULL)
                     return _rp.returncode, (getattr(_rp, "stdout", "") or "") + (getattr(_rp, "stderr", "") or "")
                 except Exception as ex:

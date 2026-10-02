@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-02 (runda 2 E2E: Rust build.rs + pip build-backend reparate - `.assets_v235`)
+
+- `_cleanup_stale_cargo_config()` la pornire: sterge `files/cargo/config` (deprecat, preferat de
+  cargo) care pastra `linker=cc-rust` -> "build-script-build: Permission denied" la orice crate cu
+  build.rs. Dovada: crate cu quote -> rc=0.
+- pip: interpretor `files/tmp/python3` + PYTHONPATH cu site-packages inaintea pysitepkg.zip ->
+  dispare "BackendUnavailable: Cannot import setuptools.build_meta" (cmarkgfm/msgpack/ujson).
+  Dovada: pip_install msgpack -> exit 0.
+- garda binar: prag conservator (fals pozitiv pe 1.8KB de text).
+- env: nota sa nu suprascrie PREFIX/CMAKE_ROOT.
+
 ### 2026-10-02 (test E2E cu memoria stearsa; 6 fixuri + o concluzie gresita a agentului - `.assets_v234`)
 
 - Fortran in action=compile prin wrapper (inainte "gcc frontend command failed").
