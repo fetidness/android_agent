@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-02 (verificarea sesiunii oprite: meson era tot clang-21 mort; reguli anti-drum-gresit - `.assets_v243`)
+
+- meson: sanity check eșua pentru ca $CC = toolchain/bin/clang-21 era binarul real neexecutabil
+  (fixat in v242). Dovada: meson setup rc=0 in 5s, ninja rc=0, binar ruleaza (MESON_OK 1.414).
+- regula (3o): comanda care reuseste separat -> suspecteaza mediul tau, nu biblioteca.
+- regula (3p): temporare in $TMPDIR, nu /tmp sau /sdcard.
+
 ### 2026-10-02 (eliminate binarele LLVM moarte din assets; symlink-uri executabile - `.assets_v242`)
 
 - `_fix_dead_binaries()`: fisier REAL in filesDir = neexecutabil (W^X) -> symlink catre lib-ul

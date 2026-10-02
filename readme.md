@@ -3714,3 +3714,20 @@ deci erau simultan moarte si o capcana: agentul le chema (`toolchain/bin/clang-2
   APK-ul scade dramatic.
 - Dovada pe device: 20 binare reparate; `toolchain/bin/clang-21 --version` -> rc=0, "clang version
   21.1.8".
+
+## Etapa 83 - verificarea rularii oprite de operator (`.assets_v243`)
+
+Sesiunea raportata avea 297 intrari / ~18,8k tokeni. Doua lucruri, de natura diferita:
+
+1. **drum greșit auto-provocat** (cffi): ~20 de pasi incercand sa explice un esec care era de fapt
+   din mediul sesiunii (env poluat / __pycache__ / cwd). Agentul a ajuns singur la concluzia corecta
+   ("CFFI funcționează; eșecul de dinainte era din sesiunea mea cu env poluat") - dar tarziu.
+   Regula noua (3o): daca o comanda rulata separat reuseste, suspecteaza mediul tau si ruleaza
+   testul intr-un subproces curat, inainte de a sapa in biblioteca.
+2. **problema reala**: meson nu putea rula sanity check-ul ("Permission denied:
+   .../sanity_check_for_c.exe"). Cauza: meson foloseste `$CC` = `<toolchain>/bin/clang-21`, care
+   era FISIERUL REAL de 80 MB (neexecutabil) - reparat in v242 prin `_fix_dead_binaries()`.
+   Reproductie proprie: un sanity check identic compileaza (mode 0777) si ruleaza.
+   Dovada dupa fix: `meson setup` rc=0 in 5s (sanity check rulat), `ninja` rc=0, binarul ruleaza ->
+   MESON_OK 1.414.
+3. Regula (3p): fisierele temporare in $TMPDIR (files/tmp), nu in /tmp sau /sdcard (noexec).
