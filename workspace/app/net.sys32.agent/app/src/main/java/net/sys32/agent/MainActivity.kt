@@ -690,7 +690,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v238")
+        val stamp = File(filesDir, ".assets_v239")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -826,7 +826,8 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        runOnUiThread { appendAnsi(GREEN + "[key] cheie gasita - pornesc agentul." + NRM + "\n") }
+        // ★ (cerut de operator): fara linia de diagnostic "[key] cheie gasita" la pornire -
+        // pe ecran raman doar ERORILE (ex. "LIPSA CHEIA DeepSeek API").
         startPythonProcess(k)
     }
 
@@ -1016,8 +1017,8 @@ pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStorageP
             // rezerva in HOME (agent.py o cauta si acolo)
             try { File(filesDir, "home/key.txt").writeText(key.trim() + "\n") } catch (_: Exception) {}
             // sterge ecoul cheii din ecran (nu lasam cheia vizibila in scrollback)
-            appendAnsi(GREEN + "\n[key] cheia salvata in " + f.absolutePath + NRM + "\n")
-            appendAnsi(GREEN + "[key] pornesc agentul..." + NRM + "\n\n")
+            // (liniile de diagnostic "[key] cheia salvata/pornesc agentul" au fost scoase;
+            //  feedbackul e schimbarea hint-ului de input)
             awaitingKey = false
             input.hint = "message the agent..."
             startPythonProcess(key.trim())

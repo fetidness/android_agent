@@ -9,6 +9,12 @@
 
 ---
 
+### 2026-10-02 (pornire complet curata in UI - `.assets_v239`)
+
+- scoase si liniile "[key] cheie gasita - pornesc agentul." si "[key] pornesc agentul..." /
+  "[key] cheia salvata in ..." (cerut de operator). Pe ecran raman DOAR erorile (ex.
+  "LIPSA CHEIA DeepSeek API"). Verificat pe device: ecran gol + prompt la pornire.
+
 ### 2026-10-02 (UI curat la pornire - `.assets_v238` (neinstalat: device deconectat))
 
 - `[pas2] PATH aplicat` si cele 6 mesaje `[toolchain] ...` informative de la pornire NU se mai
