@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-01 (adbsh stabil: op_adbkey; helper probe in git - `.assets_v231`)
+
+- adb_client: prefera `files/op_adbkey` (cheia autorizata a operatorului) fata de `files/adbkey`
+  (pe care adb_setup o regenereaza) -> AUTH_SIGNATURE acceptata instant (0.0s, uid=2000).
+- mesaj de eroare extins cu varianta op_adbkey.
+- `tools/probe_run.sh` (+ temp/mk.sh) in git: versiunea veche s-a pierdut la curatenia din temp/.
+- baterie post-v230: selftest lipsa=[], python3 minimal OK (+numpy), compile C/C++ rulate, pip 14s.
+
 ### 2026-10-01 (optimizari din E2E-ul de 121k tokeni - `.assets_v230`)
 
 - `files/tmp/python3`/`python`: lansatoare auto-suficiente (PYTHONHOME/PYTHONPATH/TMPDIR/LD_LIBRARY_PATH)

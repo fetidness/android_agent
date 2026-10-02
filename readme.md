@@ -3548,3 +3548,24 @@ acum. Cauzele reale, toate reparate:
 
 Total: 5 fix-uri de cod + 2 de prompt/env. Verificat pe device: compile C/C++ cu rulare
 (`C_OK 1.414214`, `CXX_OK 11`), numpy 2.5.3 reinstalat, cargo din orice cwd.
+
+## Etapa 74 - `adbsh` stabil: cheia operatorului (`op_adbkey`) + helper de probe (`.assets_v231`)
+
+Dupa reinstall, `adbsh` a picat din nou: `AUTH_SIGNATURE` a fost RESPINSA si a cazut pe
+RSAPUBLICKEY (dialog -> timeout). Cauza: `adb_setup.py` isi REGENEREA cheia in `files/adbkey`
+(comportament corect pentru un device nou), iar cheia noua nu e autorizata de adbd.
+
+**Fix:** clientul prefera acum cheia operatorului, tinuta intr-un nume pe care setup-ul nu-l atinge:
+`files/op_adbkey` + `files/op_adbkey.pub` (fallback pe `files/adbkey`). Dovada pe device:
+`AUTH -> AUTH_SIGNATURE (256 bytes)` -> `✓ AUTORIZAT` in **0.0s**; `id` -> `uid=2000(shell)`;
+`getprop ro.build.version.sdk` -> 36; `ls /data/local/tmp` -> listare reala.
+Mesajul de eroare spune acum si varianta cu `op_adbkey`.
+
+**Helper recreat:** `tools/probe_run.sh` (+ `temp/mk.sh` ca symlink) - rula in probe pe device ca
+aplicatia, cu mediul corect; versiunea veche traia doar in temp/ si s-a pierdut la curatenie, acum
+e in git.
+
+**Baterie de verificare post-v230 (dupa reinstall):** selftest `lipsa=[]` (C/C++/pyext/Rust/cargo/
+Fortran/cmake toate True, RAM 3953MB); `python3` cu env MINIMAL -> `PY3_OK 3.14.7` + numpy 2.5.3
+importabil; `action=compile` C -> `C=4.000000`, C++ -> `CPP_OK` (ambele rulate); pip (extensie C)
+-> rc=0 in 14s.

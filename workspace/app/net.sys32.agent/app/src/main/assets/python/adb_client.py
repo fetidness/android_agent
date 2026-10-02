@@ -12,7 +12,12 @@ import threading
 _SOCK_LOCK = threading.RLock()
 
 F = "/data/data/net.sys32.agent/files"
-KEY = F + "/adbkey"; PUBC = F + "/adbkey.pub"
+# ★ FAZA 4q: preferam cheia OPERATORULUI (op_adbkey), deja autorizata pe device: adb_setup.py
+# poate regenera files/adbkey, iar o cheie noua nu e autorizata -> adbd cere dialog si adbsh
+# da timeout. Cu op_adbkey, autentificarea prin AUTH_SIGNATURE merge din prima.
+_OPK = F + "/op_adbkey"; _OPP = F + "/op_adbkey.pub"
+KEY = _OPK if os.path.exists(_OPK) else F + "/adbkey"
+PUBC = _OPP if os.path.exists(_OPP) else F + "/adbkey.pub"
 LIBCRYPT = F + "/libs/libcrypto.so"
 
 def _ensure_libs():
