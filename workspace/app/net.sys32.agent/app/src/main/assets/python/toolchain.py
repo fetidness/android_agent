@@ -1365,6 +1365,13 @@ def _ensure_launchers():
             made.append("fixate:%d" % _nfix)
     except Exception:
         pass
+    # ★ FAZA 4y: clang/clang++ cu flag-uri auto-completate (ultimul pas, dupa fixarea symlink-urilor)
+    try:
+        _ncc = _ensure_cc_wrappers()
+        if _ncc:
+            made.append("cc-wrap:%d" % _ncc)
+    except Exception:
+        pass
     return made
 
 
@@ -1905,6 +1912,44 @@ def _fix_dead_binaries():
                             n += 1
                 except Exception:
                     pass
+    return n
+
+
+def _ensure_cc_wrappers():
+    """★ FAZA 4y: `clang`/`clang++` injecteaza SINGURE flag-urile toolchain-ului cand lipsesc.
+
+    Raportat in 3 sesiuni E2E: agentul scrie `$CC t_c.c -o t_c_bin $LDFLAGS` (fara $CFLAGS) ->
+    "fatal error: 'stdio.h' file not found" sau "-latomic not found", apoi pierde pasi adaugand
+    flag-uri manual. Lansatorul devine shwrap -> `<nume>.sh` care completeaza
+    --target/--sysroot/-resource-dir/-I/-L DOAR daca nu sunt deja in linia de comanda.
+    """
+    _nat = _native_dir() or ""
+    _sw = _nat + "/libshwrap_exec.so"
+    if not os.path.exists(_sw):
+        return 0
+    api = _device_api()
+    n = 0
+    flags = ("--target=aarch64-linux-android%s --sysroot=%s/sysroot -resource-dir=%s/lib/clang/21 "
+             "-I%s/sysroot/usr/include -I%s/pyinc -I%s/include -L%s/lib -L%s/sysroot/usr/lib/"
+             "aarch64-linux-android/%s -L%s/lib/clang/21/lib/linux -L%s/libs" % (
+                 api, ROOT, ROOT, ROOT, ROOT, DEPS, DEPS, ROOT, api, ROOT, F))
+    for name, extra in (("clang", ""), ("clang++", " -lc++_shared")):
+        sh = F + "/tmp/" + name + ".sh"
+        body = ("#!/system/bin/sh\n"
+                "# generat de toolchain.py - completeaza flag-urile care lipsesc\n"
+                "for a in \"$@\"; do\n"
+                "  case \"$a\" in --target=*|--sysroot=*) exec %s/libclang_exec.so \"$@\";; esac\n"
+                "done\n"
+                "exec %s/libclang_exec.so %s%s \"$@\"\n" % (_nat, _nat, flags, extra))
+        try:
+            if (not os.path.exists(sh)) or open(sh).read() != body:
+                open(sh, "w").write(body)
+            os.chmod(sh, 0o755)
+            for d in (F + "/tmp", BIN):
+                _force_symlink_launcher(d + "/" + name, _sw)
+            n += 1
+        except Exception:
+            pass
     return n
 
 def _ensure_setuptools():

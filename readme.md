@@ -3749,3 +3749,19 @@ familia "fisier REAL in filesDir = neexecutabil (W^X)":
 4. **Mediul de toolchain intra COMPLET in `os.environ` la pornire** (nu doar 8 chei): orice comanda
    pornita din `bash` (cargo, maturin, cmake, meson) vede acum exact acelasi mediu ca uneltele.
    Asta inchide clasa de probleme "unealta are mediu, bash-ul nu".
+
+## Etapa 85 - `clang`/`clang++` isi completeaza singure flag-urile (`.assets_v245`)
+
+Rularea E2E pe v244: **64 intrari / ~7k tokeni, ZERO "Permission denied"** (familia de binare
+moarte e inchisa). Restul opririlor erau flag-uri scrise manual de agent:
+`$CC t_c.c -o t_c_bin $LDFLAGS` (fara $CFLAGS) -> "fatal error: 'stdio.h' file not found", apoi
+`-latomic` nerezolvat - in 3 sesiuni la rand.
+
+Fix: `_ensure_cc_wrappers()` - `clang`/`clang++` devin lansatoare shwrap cu un `<nume>.sh` care:
+- daca linia de comanda contine deja `--target=`/`--sysroot=`, executa clang-ul BRUT (deci
+  cmake/meson/pip, care isi dau singure flag-urile, nu sunt afectate);
+- altfel adauga singur `--target/--sysroot/-resource-dir/-I/-L` (inclusiv `-L/lib/clang/21/lib/linux`
+  pentru `-latomic` si `-L files/libs` pentru libpython), iar `clang++` adauga si `-lc++_shared`.
+
+Dovezi pe device: compilare C si C++ **fara niciun flag** -> rc=0 si ruleaza (WRAP_C 1.4142 /
+WRAP_CXX 6); meson setup+ninja+run (build dir proaspat) -> MESON_OK 1.414.

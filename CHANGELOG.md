@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-02 (clang/clang++ auto-flags; zero Permission denied in E2E - `.assets_v245`)
+
+- `_ensure_cc_wrappers()`: clang/clang++ (shwrap + .sh) completeaza --target/--sysroot/-I/-L doar
+  cand lipsesc; cmake/meson/pip (care dau flag-urile lor) merg pe calea bruta.
+- dovada: C si C++ fara flag-uri -> rc=0 si ruleaza; meson setup+ninja+run OK.
+- E2E v244: 64 intrari / ~7k tokeni, 0 "Permission denied".
+
 ### 2026-10-02 (deps/bin executabil, -L files/libs in LDFLAGS, mediu complet in os.environ - `.assets_v244`)
 
 - `_fix_dead_binaries()` acopera si `deps/bin` (pkg-config/pkgconf -> symlink; xml2-config/xslt-config sterse).
