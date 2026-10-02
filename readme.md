@@ -3731,3 +3731,21 @@ Sesiunea raportata avea 297 intrari / ~18,8k tokeni. Doua lucruri, de natura dif
    Dovada dupa fix: `meson setup` rc=0 in 5s (sanity check rulat), `ninja` rc=0, binarul ruleaza ->
    MESON_OK 1.414.
 3. Regula (3p): fisierele temporare in $TMPDIR (files/tmp), nu in /tmp sau /sdcard (noexec).
+
+## Etapa 84 - ultimele binare moarte (deps/bin) + LDFLAGS + mediu complet (`.assets_v244`)
+
+Rularea E2E pe v243 (63 intrari / 7,8k tokeni, terminata in 3 minute) a scos ultimele resturi din
+familia "fisier REAL in filesDir = neexecutabil (W^X)":
+
+1. `toolchain/deps/bin/pkg-config` si `pkgconf` erau binare REALE (501 KB) -> "Permission denied";
+   `xml2-config`/`xslt-config` erau scripturi shell (la fel de neexecutabile). Fix: `_fix_dead_binaries()`
+   le transforma in symlink-uri catre `libpkgconf_exec.so` (respectiv le sterge), iar din assets au
+   fost scoase. Dovada: `deps/bin/pkg-config --version` -> 2.3.0.
+2. **`LDFLAGS` nu continea `-L<files/libs>`** -> `-lpython3.14` dadea "unable to find library"
+   (raportat in mai multe sesiuni). Acum e primul `-L`. Dovada: extensie Python compilata cu
+   `-lpython3.14` -> rc=0 si se importa (`py2.sq()` = 7).
+3. Regula (3e) corectata: binarul se ruleaza (a) ca subproces din python sau (b) prin linker64 -
+   NU prin `sh -c` si nu din /sdcard (asa apare "Permission denied" pe un binar corect).
+4. **Mediul de toolchain intra COMPLET in `os.environ` la pornire** (nu doar 8 chei): orice comanda
+   pornita din `bash` (cargo, maturin, cmake, meson) vede acum exact acelasi mediu ca uneltele.
+   Asta inchide clasa de probleme "unealta are mediu, bash-ul nu".

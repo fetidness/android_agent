@@ -1867,6 +1867,23 @@ def _fix_dead_binaries():
              ("llvm-config", "libllvmconfig_exec.so")
              ]
     n = 0
+    # ★ FAZA 4x: si in deps/bin sunt fisiere REALE (pkg-config/pkgconf) + scripturi
+    # (xml2-config/xslt-config) - neexecutabile in filesDir ("deps/bin/pkg-config: Permission
+    # denied", raportat in E2E). pkg-config -> libpkgconf_exec.so; scripturile se STERG.
+    _deps_pairs = [("pkg-config", "libpkgconf_exec.so"), ("pkgconf", "libpkgconf_exec.so")]
+    for name, lib in _deps_pairs:
+        tgt = nat_dir + "/" + lib
+        if os.path.exists(tgt):
+            if _force_symlink_launcher(DEPS + "/bin/" + name, tgt):
+                n += 1
+    for _dead in ("xml2-config", "xslt-config"):
+        try:
+            _p = DEPS + "/bin/" + _dead
+            if os.path.exists(_p) and not os.path.islink(_p):
+                os.remove(_p)
+                n += 1
+        except Exception:
+            pass
     for name, lib in pairs:
         tgt = nat_dir + "/" + lib
         for d in (F + "/tmp", BIN):
@@ -2391,7 +2408,11 @@ def env_vars():
     # ★ sysroot lib PRIMUL: acolo sunt crtbegin/crtend_android.o + libc.so/libdl.so
     # (stub-uri de link). Fara el: "cannot open crtend_android.o" / "unable to find -lc".
     _atom = _atomic_dir()
-    _ldflags = ("-L" + _sdk_lib + " -L" + DEPS + "/lib -L" + apexsdk
+    # ★ FAZA 4x: si -L<files/libs> - acolo stau libpython3.14.so si libc++_shared.so (copiate de
+    # _stable_libs). Fara el: "ld.lld: error: unable to find library -lpython3.14" (raportat in
+    # fiecare sesiune E2E in care agentul compila o extensie Python cu -lpython3.14).
+    FEFF_LIBS = _stable_libs()
+    _ldflags = ("-L" + FEFF_LIBS + " -L" + _sdk_lib + " -L" + DEPS + "/lib -L" + apexsdk
                 # ★ libatomic/libclang_rt sunt STATICE, in lib/clang/21/lib/linux (agentul:
                 # "-latomic" nu se rezolva fara aceasta cale)
                 + " -L" + ROOT + "/lib/clang/21/lib/linux"

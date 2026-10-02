@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-02 (deps/bin executabil, -L files/libs in LDFLAGS, mediu complet in os.environ - `.assets_v244`)
+
+- `_fix_dead_binaries()` acopera si `deps/bin` (pkg-config/pkgconf -> symlink; xml2-config/xslt-config sterse).
+- LDFLAGS: `-L<files/libs>` PRIMUL -> `-lpython3.14` se rezolva (dovada: extensie Python rc=0, import OK).
+- regula (3e): exec corect = subproces din python sau linker64 (nu `sh -c`, nu /sdcard).
+- os.environ primeste TOT mediul de toolchain la pornire (bash/cargo/maturin/cmake/meson).
+
 ### 2026-10-02 (verificarea sesiunii oprite: meson era tot clang-21 mort; reguli anti-drum-gresit - `.assets_v243`)
 
 - meson: sanity check eșua pentru ca $CC = toolchain/bin/clang-21 era binarul real neexecutabil
