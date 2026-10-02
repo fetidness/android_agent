@@ -3619,3 +3619,20 @@ reale, ambele cu cauza gasita si reparata:
    Dovada: `toolchain action=pip_install msgpack` -> exit 0 in 4s.
 3. Garda binar: prag mult mai conservator (a doua oara a declansat fals pe ~1.8KB de text).
 4. env: nota ca PREFIX/CMAKE_ROOT sunt deja corecte si NU trebuie suprascrise.
+
+## Etapa 78 - runda 3 E2E (de la zero, v235 -> verdict curat; `.assets_v237`)
+
+A treia rulare de la zero (memorie + istoric sterse) pe v235: **56 intrari / ~6,2k tokeni, ZERO
+erori de toolchain**, `selftest.lipsa = []`, verdict "TOOLCHAIN COMPLET pentru pip"; agentul a
+terminat in 31 pasi / 2:09 (C, C++, Fortran, Rust, extensie Python nativa, Cython, cmake+ninja,
+pip_install — toate compilate SI rulate, cu rezultate verificate matematic).
+
+Evolutia pe runde de la zero: 271 intrari/~130k -> 162/19,5k -> 152/12,8k -> 110/10k -> 56/6,2k.
+
+Verificari suplimentare pe device: `files/cargo/config` (fisierul deprecat) NU mai exista (doar
+`config.toml` cu `linker=linkwrap.sh`) -> Rust cu dependinte cu build.rs merge; CFLAGS/LDFLAGS
+contin deja `-L .../lib/clang/21/lib/linux` (pentru -latomic).
+
+Singura frecare rǎmasǎ: typo-uri in scripturile de test ale agentului (string neinchis, `import
+time` lipsa, flag-uri scrise de mana in loc de env). Regula noua (3l) in prompt. v237 = v235 +
+aceasta regula (comportament identic al toolchain-ului).

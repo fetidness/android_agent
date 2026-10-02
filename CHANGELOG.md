@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-02 (runda 3 E2E de la zero: 56 intrari / 6,2k tokeni, zero erori - `.assets_v237`)
+
+- verificat: `files/cargo/config` deprecat nu mai exista (Rust cu build.rs merge), LDFLAGS contine
+  calea clang runtime pentru -latomic.
+- regula noua (3l): scripturile de test ale agentului sa fie rulate si reparate (typo-uri), nu
+  rescrise de la zero; flag-urile de compilare se iau din `toolchain action=env`.
+
 ### 2026-10-02 (runda 2 E2E: Rust build.rs + pip build-backend reparate - `.assets_v235`)
 
 - `_cleanup_stale_cargo_config()` la pornire: sterge `files/cargo/config` (deprecat, preferat de
