@@ -16,7 +16,7 @@ cat > /tmp/_probe_runner.sh <<EOF
 #!/system/bin/sh
 F=$F
 export PYTHONHOME=\$F/pyhome
-export PYTHONPATH=\$F/pyhome/lib/stdlib_extra.zip:\$F/pyhome/lib/python3.14:\$F/pyhome/lib/pysitepkg.zip:\$F/python
+export PYTHONPATH=\$F/pyhome/lib/stdlib_extra.zip:\$F/pyhome/lib/python3.14:\$F/pyhome/lib/python3.14/site-packages:\$F/pyhome/lib/pysitepkg.zip:\$F/python
 export LD_LIBRARY_PATH=$LIB:\$F/libs:\$F/toolchain/deps/lib:\$F/pyhome/lib
 export TMPDIR=\$F/tmp
 export HOME=\$F/home

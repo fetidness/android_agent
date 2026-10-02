@@ -1738,16 +1738,45 @@ def _repair_build_backends(verbose=False):
     Aici le verificam prin import si, daca o instalare e rupta, o stergem si o reinstalam curat
     (fara dependinte, cu pip-ul nostru care merge).
     """
-    checks = (("pathspec", "pathspec._backends.agg"), ("scikit_build_core", "scikit_build_core.build"),
-              ("setuptools", "setuptools.build_meta"), ("wheel", "wheel"), ("packaging", "packaging"),
-              ("pyproject_hooks", "pyproject_hooks"), ("pybind11", "pybind11"), ("Cython", "Cython"),
-              ("mesonbuild", "mesonbuild"))
-    broken = []
-    for pkg, mod in checks:
-        try:
+    # (nume pip, functie de verificare "adanca" - import SI functionalitate reala)
+    def _ok_mod(mod):
+        def _f():
             __import__(mod)
+            return True
+        return _f
+
+    def _ok_mesonpy():
+        # ★ NU cerem mesonpy._project: structura difera intre versiuni (0.22 nu are _project.py).
+        # Criteriul corect = hook-urile PEP 517 folosite de pip la metadata/build.
+        # ★ verificat pe device: wheel-ul oficial meson-python 0.22.1 (31 kB) NU are
+        # `prepare_metadata_for_build_wheel` (hook-ul a fost mutat) - deci NU il cerem.
+        # Criteriul minim real: build_wheel prezent si modulul in sine complet (fara stub).
+        import mesonpy
+        return bool(hasattr(mesonpy, "build_wheel")
+                    and os.path.getsize(getattr(mesonpy, "__file__", "") or "") > 20000)
+
+    def _ok_ninja():
+        import ninja                                  # noqa: F401
+        return True
+
+    checks = (("pathspec", _ok_mod("pathspec._backends.agg")),
+              ("scikit_build_core", _ok_mod("scikit_build_core.build")),
+              ("setuptools", _ok_mod("setuptools.build_meta")),
+              ("wheel", _ok_mod("wheel")), ("packaging", _ok_mod("packaging")),
+              ("pyproject_hooks", _ok_mod("pyproject_hooks")),
+              ("pybind11", _ok_mod("pybind11")), ("Cython", _ok_mod("Cython")),
+              ("mesonbuild", _ok_mod("mesonbuild")),
+              # ★ raportat de E2E: mesonpy din pysitepkg.zip e un STUB incomplet (fara hook-urile
+              # PEP 517 si fara mesonpy._project) -> "pip install numpy" cadea la metadata.
+              # Reinstalat curat in site-packages (care e INAINTEA zip-ului in PYTHONPATH).
+              ("meson-python", _ok_mesonpy), ("ninja", _ok_ninja))
+    broken = []
+    for pkg, fn in checks:
+        try:
+            if not fn():
+                broken.append((pkg, getattr(fn, "__name__", "check")))
         except Exception:
-            broken.append((pkg, mod))
+            broken.append((pkg, getattr(fn, "__name__", "check")))
     if not broken:
         return {"ok": True, "reparate": [], "rupte": []}
     try:
@@ -1771,8 +1800,16 @@ def _repair_build_backends(verbose=False):
                                  pkg], capture_output=True, text=True, env=_env2, cwd=F + "/tmp",
                                 timeout=900, stdin=subprocess.DEVNULL)
             try:
-                __import__(mod)
-                fixed.append(pkg)
+                # ★ modulele importate inainte de reinstalare raman in cache (sys.modules) ->
+                # verificarea dadea "tot rupt" desi instalarea reusise. Curatam cache-ul.
+                import importlib as _il
+                _il.invalidate_caches()
+                for _m in [m for m in list(sys.modules) if m == pkg.replace("-", "_")
+                           or m.startswith(pkg.replace("-", "_") + ".")]:
+                    sys.modules.pop(_m, None)
+                fn2 = dict(checks).get(pkg)
+                if fn2 and fn2():
+                    fixed.append(pkg)
             except Exception:
                 pass
         except Exception:

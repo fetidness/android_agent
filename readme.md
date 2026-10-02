@@ -3676,3 +3676,24 @@ contexte (uid app vs uid 2000). Reparatii:
    apelata automat inainte de fiecare `pip_install` (si disponibila in selftest).
 5. `.rs` dat la `action=compile` primeste mesaj clar (foloseste cargo; binarul iese in
    `target/aarch64-linux-android/release/`), plus regulile (3m)/(3n) in prompt.
+
+## Etapa 81 - stub-ul mesonpy din pysitepkg.zip rupea `pip install numpy` (`.assets_v241`)
+
+A 5-a rulare E2E (89 intrari / ~13,6k tokeni) a scos la iveala o problema reala, noua:
+`pip install numpy` cadea la "Preparing metadata (pyproject.toml)" pentru ca **`mesonpy` din
+`pysitepkg.zip` e un STUB** (6 fisiere, fara hook-urile PEP 517, fara `mesonpy._project`).
+Agentul a diagnosticat corect (a ajuns la `mesonpy._project` lipsa) dar a consumat ~20 de pasi.
+
+Reparat prin `_repair_build_backends()` (rulat automat inainte de fiecare `pip_install`):
+meson-python si ninja sunt verificate si reinstalate CURAT in `site-packages` (care e INAINTE de
+zip in PYTHONPATH, deci copia de pe disc castiga).
+
+Capcana de verificare (dovedita cu wheel-ul oficial): meson-python 0.22.1 NU are
+`prepare_metadata_for_build_wheel` (hook mutat) si are doar 6 fisiere / 31 kB - deci criteriul de
+"sănătate" e `build_wheel` prezent + `__init__.py` > 20 kB (nu lista de hook-uri).
+
+Dovada pe device: `pip install numpy` → metadata **rc=0** in 155 s, "Would install numpy-2.5.3".
+
+Nota de proces: `temp/` e gitignored (probele nu intra in git), dar `tools/probe_run.sh` da - si
+a fost actualizat sa foloseasca ACELASI PYTHONPATH ca agentul (site-packages inainte de zip),
+altfel probele vad alt mediu decat agentul si diagnoza e inselatoare.

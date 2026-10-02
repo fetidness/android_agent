@@ -9,6 +9,15 @@
 
 ---
 
+### 2026-10-02 (mesonpy stub din zip rupea numpy; reparatie reale de backend - `.assets_v241`)
+
+- `_repair_build_backends()`: verifica si reinstaleaza CURAT meson-python + ninja (stub-ul din
+  pysitepkg.zip nu are hook-urile PEP 517) inainte de fiecare pip_install.
+- capcana: meson-python 0.22.1 n-are `prepare_metadata_for_build_wheel` si are 6 fisiere/31 kB ->
+  criteriul de sanatate = `build_wheel` + `__init__.py` > 20 kB.
+- dovada: metadata numpy rc=0 in 155 s (inainte: esec la metadata).
+- `tools/probe_run.sh` foloseste acelasi PYTHONPATH ca agentul (probe fidele).
+
 ### 2026-10-02 (fix-uri din sesiunea cu multe erori: bg in-app, garda adbsh, env cmake, reparatie backend - `.assets_v240`)
 
 - `bg` ruleaza implicit in procesul aplicatiei (uid app) cu mediu de toolchain; adbsh doar pentru
