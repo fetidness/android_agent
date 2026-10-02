@@ -437,6 +437,10 @@ def _write_env_file():
         "export CXXFLAGS=\"$CFLAGS\"\n"
         "export LDFLAGS=\"-L{D}/lib -L{P}/sysroot/usr/lib/aarch64-linux-android/{api}\"\n"
         "export PKG_CONFIG_PATH={D}/lib/pkgconfig\n"
+        # ★ FAZA 4s: cmake are nevoie de PREFIX={P}/sysroot/usr (NU {P}) si de CMAKE_ROOT;
+        # fara ele: 4 incercari pierdute in testul E2E cu CMakeDetermineSystem.cmake / CMAKE_ROOT.
+        "export PREFIX={P}/sysroot/usr\n"
+        "export CMAKE_ROOT={P}/cmake\n"
         "export TMPDIR={F}/tmp\n"
         "export HOME={F}/home\n"
         "export PIP_CACHE_DIR=$HOME/.cache/pip\n"
@@ -1237,11 +1241,12 @@ def _ensure_launchers():
             # PREPEND, niciodata replace (regula dovedita: pierderea nativeLibraryDir = moarte).
             _pybody = ("#!/system/bin/sh\n"
                        "export PYTHONHOME=%s\n"
-                       "export PYTHONPATH=%s/lib/stdlib_extra.zip:%s/lib/pysitepkg.zip:%s/python\n"
+                       "export PYTHONPATH=%s/lib/stdlib_extra.zip:%s/lib/python3.14:"
+                       "%s/lib/python3.14/site-packages:%s/lib/pysitepkg.zip:%s/python\n"
                        "export TMPDIR=%s/tmp\n"
                        "export LD_LIBRARY_PATH=%s:%s/libs:%s/lib:${LD_LIBRARY_PATH}\n"
                        "exec %s/libpyexec.so \"$@\"\n"
-                       % (_pyhome, _pyhome, _pyhome, F, F, nat, F, DEPS, nat))
+                       % (_pyhome, _pyhome, _pyhome, _pyhome, _pyhome, F, F, nat, F, DEPS, nat))
             if (not os.path.exists(_pysh)) or open(_pysh).read() != _pybody:
                 open(_pysh, "w").write(_pybody)
             os.chmod(_pysh, 0o755)
@@ -1290,12 +1295,21 @@ def _ensure_launchers():
                      "linker = \"%s/tmp/linkwrap.sh\"\n"
                      "rustflags = [\"-C\", \"link-arg=-Wl,-rpath,%s\", \"-C\", \"link-arg=-Wl,-rpath,%s/deps/lib\"]\n"
                      % (F, _stable_libs(), DEPS))
-            for _ccfg in (F + "/cargo/config.toml", F + "/cargo/.cargo/config.toml",
-                          F + "/cargo/config"):
+            # ★ FAZA 4s: UN SINGUR fisier de config. Cargo avertiza "both files exist - Using
+            # config" (raportat in 2 teste E2E) si folosea varianta DEPRECATA, ceea ce facea
+            # diagnosticul Rust/maturin confuz. Stergem duplicatele, scriem doar config.toml.
+            try:
+                os.makedirs(F + "/cargo", exist_ok=True)
+                _ccfg = F + "/cargo/config.toml"
+                if (not os.path.exists(_ccfg)) or open(_ccfg).read() != _body:
+                    open(_ccfg, "w").write(_body)
+            except Exception:
+                pass
+            for _dup in (F + "/cargo/config", F + "/cargo/.cargo/config.toml",
+                         F + "/cargo/.cargo/config"):
                 try:
-                    os.makedirs(os.path.dirname(_ccfg), exist_ok=True)
-                    if (not os.path.exists(_ccfg)) or open(_ccfg).read() != _body:
-                        open(_ccfg, "w").write(_body)
+                    if os.path.exists(_dup):
+                        os.remove(_dup)
                 except Exception:
                     pass
         except Exception:
@@ -1319,6 +1333,19 @@ def _ensure_launchers():
                         os.remove(p)
                     open(p, "w").write(body)
                     os.chmod(p, 0o755)
+                # ★ FAZA 4s: acelasi lansator si in toolchain/bin (agentul a listat bin/ si a
+                # raportat "cython nu exista" desi era in files/tmp - un pas pierdut inutil)
+                _b2 = BIN + "/" + name
+                try:
+                    if _sw2 and os.path.exists(_sw2):
+                        if os.path.lexists(_b2):
+                            os.remove(_b2)
+                        os.symlink(_sw2, _b2)
+                    elif not os.path.exists(_b2):
+                        open(_b2, "w").write(body)
+                        os.chmod(_b2, 0o755)
+                except Exception:
+                    pass
                 made.append(name)
             except Exception:
                 pass
@@ -1720,6 +1747,7 @@ def _ensure_setuptools():
             env["PATH"] = F + "/tmp:" + env.get("PATH", "")
             env["PYTHONHOME"] = F + "/pyhome"
             env["PYTHONPATH"] = (F + "/pyhome/lib/stdlib_extra.zip:" + F + "/pyhome/lib/python3.14:"
+                                 + F + "/pyhome/lib/python3.14/site-packages:"
                                  + F + "/pyhome/lib/pysitepkg.zip")
             env["TMPDIR"] = F + "/tmp"
             env["SSL_CERT_FILE"] = env["CURL_CA_BUNDLE"] = _ca_bundle()
@@ -2347,6 +2375,9 @@ def env_vars():
         "PYTHONPATH": (((_pyreal + ":") if _pyreal else "")
                        + F + "/pyhome/lib/stdlib_extra.zip:"
                        + F + "/pyhome/lib/python3.14:"
+                       # ★ site-packages INAINTE de zip: pachetele de pe disc castiga (pybind11 din
+                       # zip dadea get_include() cu cale din arhiva -> 3 pasi pierduti in E2E)
+                       + F + "/pyhome/lib/python3.14/site-packages:"
                        + F + "/pyhome/lib/pysitepkg.zip:"
                        + os.environ.get("PYTHONPATH", "")),
         "PYTHONUNBUFFERED": "1",

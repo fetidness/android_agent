@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-02 (test E2E cu memoria stearsa; 6 fixuri + o concluzie gresita a agentului - `.assets_v234`)
+
+- Fortran in action=compile prin wrapper (inainte "gcc frontend command failed").
+- cargo config: DOAR config.toml (duplicatele `config`/`.cargo` sterse - cargo folosea varianta veche).
+- garda binar: nu mai declanseaza pe text cu ANSI (ESC exclus, prag 25%).
+- PYTHONPATH: site-packages inainte de pysitepkg.zip (pybind11.get_include() corect).
+- env: PREFIX=<toolchain>/sysroot/usr + CMAKE_ROOT (cmake, 4 incercari pierdute inainte).
+- INFIRMAT: "Rust cu build.rs e imposibil" - de fapt merge (rc=0); cauza era target/ copiat de pe
+  /sdcard. Regula noua (3k); pyo3/maturin deblocate.
+- launcher-ele de module (cython/pip/f2py) se scriu si in toolchain/bin.
+
 ### 2026-10-01 (adbsh stabil: op_adbkey; helper probe in git - `.assets_v231`)
 
 - adb_client: prefera `files/op_adbkey` (cheia autorizata a operatorului) fata de `files/adbkey`

@@ -3569,3 +3569,32 @@ e in git.
 Fortran/cmake toate True, RAM 3953MB); `python3` cu env MINIMAL -> `PY3_OK 3.14.7` + numpy 2.5.3
 importabil; `action=compile` C -> `C=4.000000`, C++ -> `CPP_OK` (ambele rulate); pip (extensie C)
 -> rc=0 in 14s.
+
+## Etapa 76 - optimizari din testul E2E "de la zero" (memorie stearsa) (`.assets_v234`)
+
+Test cu memoria STEARSA (context.json + memory.md) si 18 capabilitati verificate REAL (C, C++/STL,
+extensie Python.h, Fortran, Rust, Cython, pybind11, lxml, Perl, cmake+ninja, numpy/BLAS, cffi,
+OpenSSL static, dlopen, pkg-config, meson, `precompile`): 162 intrari / ~19,5k tokeni (fata de
+271 / ~130k in runda anterioara). Fixuri pe frecarile reale observate:
+
+1. **Fortran in `action=compile`** folosea driverul brut -> "gcc frontend command failed".
+   Acum merge prin wrapper-ul `files/tmp/flang`. Dovada: `F_SUM= 22.4683` (suma sqrt(1..10)).
+2. **Doua fisiere de config cargo** (`config` + `config.toml`): cargo avertiza si folosea varianta
+   DEPRECATA, ceea ce a dus la o diagnoza gresita a esecului maturin. Acum scriem DOAR
+   `config.toml` si stergem duplicatele. Dovada: warning-ul a disparut.
+3. **Garda binar prea agresiva**: transforma in "output BINAR" iesiri de TEXT cu secvente ANSI
+   (ESC=0x1b) - agentul a pierdut ~6 pasi ocolind-o ca sa citeasca `id`. Acum ESC nu se numara si
+   pragul e 25% octeti de control. Dovada: text cu ANSI trece, ELF real e rezumat.
+4. **PYTHONPATH**: site-packages INAINTE de pysitepkg.zip -> pachetele de pe disc castiga
+   (`pybind11.get_include()` returna o cale din arhiva -> 3 pasi pierduti).
+5. **cmake**: `PREFIX` corect = `<toolchain>/sysroot/usr` (NU `<toolchain>`) + `CMAKE_ROOT`,
+   acum exportate in env. Inainte: 4 incercari pierdute cu CMakeDetermineSystem.cmake.
+6. **CONCLUZIE GRESITA A AGENTULUI, INFIRMATA DE NOI**: a raportat "cratele Rust cu build.rs nu
+   pot fi construite (exec din datele aplicatiei interzis)" si a declarat maturin/pyo3 imposibil.
+   Fals: `cargo build` pe un crate cu build.rs -> rc=0, build script rulat (`BS_TEST BS_OK`), si
+   un crate care depinde de `quote` (exact ce "cadea") -> de asemenea OK. Cauza reala: proiectul
+   fusese construit pe `/sdcard` (noexec) si copiat cu tot cu `target/` in files/tmp. Regula noua
+   (3k) in prompt. Asta deblocheaza pyo3/maturin (runda anterioara le construise deja cu succes).
+7. (3j) Cython/pybind11 nu sunt binare: `python3 -m cython`, respectiv headerele din
+   `site-packages/pybind11/include`; launcher-ele de module se scriu acum si in `toolchain/bin`
+   (agentul a listat bin/ si a raportat fals ca lipsesc).
