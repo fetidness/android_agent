@@ -9,6 +9,13 @@
 
 ---
 
+### 2026-10-02 (checkpoint: stare verificata si consolidata - `.assets_v245`)
+
+- readme: secțiune "STARE LA CHECKPOINT" - tabel de capabilitati cu dovezile de pe device,
+  evolutia rundelor E2E (271/~130k -> 64/~7k tokeni, ultimele doua cu zero "Permission denied"),
+  clasele de probleme inchise in v240-v245 si ce ramane neatins (grpcio, duckdb, kiwisolver).
+- git: commit de checkpoint (docs) dupa v245.
+
 ### 2026-10-02 (clang/clang++ auto-flags; zero Permission denied in E2E - `.assets_v245`)
 
 - `_ensure_cc_wrappers()`: clang/clang++ (shwrap + .sh) completeaza --target/--sysroot/-I/-L doar

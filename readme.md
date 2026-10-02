@@ -3765,3 +3765,45 @@ Fix: `_ensure_cc_wrappers()` - `clang`/`clang++` devin lansatoare shwrap cu un `
 
 Dovezi pe device: compilare C si C++ **fara niciun flag** -> rc=0 si ruleaza (WRAP_C 1.4142 /
 WRAP_CXX 6); meson setup+ninja+run (build dir proaspat) -> MESON_OK 1.414.
+
+## Etapa 86 - STARE LA CHECKPOINT (`.assets_v245`)
+
+### Ce e verificat pe device (dovada, nu teorie)
+
+| Capabilitate | Dovada |
+|---|---|
+| C / C++ cu STL | compileaza, linkeaza, ruleaza; chiar si FARA flag-uri (lansatoarele le completeaza) |
+| Extensie Python (Python.h) | compileaza cu `-lpython3.14` (LDFLAGS are `-L files/libs`) si se importa |
+| Fortran (FLANG) | prin wrapper `files/tmp/flang` (si prin `toolchain action=compile`) |
+| Rust (cargo, cu si fara `build.rs`) | `cargo build --release` (si cu `--target`) -> rc=0, binarul ruleaza |
+| Cython / pybind11 | extensii compilate si importate |
+| cmake + ninja | configure + build + run (PREFIX/CMAKE_ROOT deja in mediu) |
+| meson + ninja | `meson setup` (sanity check rulat) + ninja + run -> MESON_OK |
+| pip: extensii C/C++ | ujson, cmarkgfm, msgpack, pycryptodome... `exit 0` |
+| pip: numpy | metadata rc=0 (mesonpy real, nu stub-ul din zip) |
+| `bg` (joburi lungi) | ruleaza IN PROCESUL APLICATIEI, vede toolchain-ul, log in `files/logs/bg` |
+| executabile | symlink-uri catre lib-ul APK-ului; direct-exec din python si linker64 OK |
+
+### Evolutia rundelor E2E "de la zero" (intrari / tokeni)
+
+    271 / ~130k  ->  162 / 19,5k  ->  152 / 12,8k  ->  110 / ~10k  ->  63 / 7,8k  ->  64 / ~7k
+    (ultimele doua: ZERO "Permission denied")
+
+### Clase de probleme inchise in v240-v245
+
+1. binare REALE in filesDir (assets: 192 MB LLVM + deps/bin) = neexecutabile (W^X) -> symlink-uri
+   catre nativeLibraryDir / sterse; assets curatate.
+2. `bg` rula ca uid 2000 -> nu vedea filesDir; acum ruleaza in-app cu mediu complet.
+3. mediul de toolchain intra COMPLET in `os.environ` la pornire (bash/cargo/maturin/cmake/meson
+   vad exact ce vad uneltele).
+4. `LDFLAGS` fara `-L files/libs` -> `-lpython3.14` nerezolvabil.
+5. pachete de build incomplete (pathspec, scikit_build_core, mesonpy-stub) -> `_repair_build_backends`.
+6. `clang`/`clang++` isi completeaza flag-urile cand lipsesc.
+7. configul cargo deprecat (cc-rust) curatat la pornire -> build-script-urile Rust ruleaza.
+8. UI curat la pornire (doar erorile se afiseaza).
+
+### Raman (neatinse, stiute)
+
+- grpcio (esec la LINK), duckdb (RAM), kiwisolver.
+- maturin/pyo3: proiectul trebuie construit in `files/tmp`, nu pe /sdcard (regula (3k)).
+- typo-urile din scripturile de test ale agentului (regula (3l)).
