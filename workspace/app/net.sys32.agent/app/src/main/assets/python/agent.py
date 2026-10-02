@@ -892,6 +892,50 @@ def _spin(fn,*a,phase="tool",desc="",col=None):
     finally:
         stop.set(); th.join(timeout=0.4); LIVE.update(phase="idle",n=0)
         if drawn[0]: print("\r\33[K",end="",flush=True)   # only if a frame was drawn: never eat an unused line
+BINFMT = ("\x7fELF", "\x89PNG", "\xff\xd8\xff", "PK\x03\x04", "!<arch>", "\x1f\x8b")
+
+
+def _binary_guard(o):
+    """Rezumat in loc de dump binar.
+
+    ★ FAZA 4r (raportat in testul E2E: doua dump-uri ELF de ~2KB au intrat in context, mii de
+    tokeni degeaba). Detectie: primii octeti = format binar cunoscut SAU exista NUL / multi octeti
+    de control in primele 512 caractere. Aplicat central pe call_tool (acopera toate tool-urile).
+    """
+    if not isinstance(o, str):
+        try:
+            o = o.decode("utf-8", "replace")
+        except Exception:
+            return "[output binar neconvertibil]"
+    head = o[:16]
+    isbin = any(head.startswith(m) for m in BINFMT)
+    if not isbin:
+        sample = o[:512]
+        ctrl = sum(1 for ch in sample if ord(ch) < 9 or (13 < ord(ch) < 32) or ord(ch) == 127)
+        isbin = ("\x00" in sample) or (ctrl > 8 and len(sample) > 40)
+    if not isbin:
+        return o
+    import hashlib as _h
+    raw = o.encode("utf-8", "replace")
+    kind = "binar"
+    for m, name in (("\x7fELF", "ELF"), ("\x89PNG", "PNG"), ("\xff\xd8\xff", "JPEG"),
+                    ("PK\x03\x04", "ZIP/APK"), ("!<arch>", "ar"), ("\x1f\x8b", "gzip")):
+        if head.startswith(m):
+            kind = name
+            break
+    trailer = ""
+    if kind == "ELF" and len(raw) > 20:
+        try:
+            import struct as _st
+            et = _st.unpack("<H", raw[16:18])[0]
+            trailer = " | e_type=%s" % {2: "EXEC", 3: "DYN(PIE/shared)"}.get(et, str(et))
+        except Exception:
+            pass
+    return ("[output BINAR %s: %d bytes, sha256=%s%s]\n(pentru binare foloseste python "
+            "(struct/hashlib) sau scrie in fisier; nu le afisa)" % (kind, len(raw),
+                                                                    _h.sha256(raw).hexdigest()[:16], trailer))
+
+
 def run_tool(code):
     """Runs the step and returns what gets sent to the model (the CUT output). In the terminal, in compact mode:
     the live line while it runs, then ONE line: the status dot (GREEN = OK, RED = FAIL), the step number,
@@ -3182,7 +3226,7 @@ if __name__ == "__main__":
                     # /sdcard cand fd-urile sunt epuizate) OMORA procesul agentului. Acum eroarea
                     # devine un rezultat de tool, agentul o vede si continua.
                     try:
-                        o=call_tool(c)
+                        o=_binary_guard(call_tool(c))
                     except Exception as _ex:
                         import traceback as _tb
                         o=("[tool error] %s: %s\n%s" % (type(_ex).__name__, str(_ex)[:300],
