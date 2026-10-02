@@ -1167,7 +1167,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: foloseste `toolchain`/cargo sau `$TC/bin/cargo build --release` - in `files/cargo/config.toml` linker-ul e deja setat (cc-rust) si build-ul merge (dovedit). NU te lupta cu `rustc` invocat direct: linkerul lui implicit `cc` nu se rezolva in mediul spawn-uit de rustc (pierzi zeci de pasi; cargo e calea corecta). (3e) EXEC: binarele ELF compilate de toolchain SUNT executabile direct din files/tmp (dovedit rc=0), iar varianta sigura e `/apex/com.android.runtime/bin/linker64 <binar>`. SCRIPTURILE shell din filesDir NU se executa (Permission denied) - pentru scripturi foloseste lansatoarele ELF (libshwrap_exec.so + <nume>.sh). (3f) CAPCANE DE RULARE (dovedite in testele din UI): linker64 cere o cale ABSOLUTA (`./x` da 'expected absolute path'). Un modul .so compilat NU poate fi importat din /sdcard (namespace de linker; /storage e noexec) - copiaza-l in files/libs sau files/tmp inainte de import. Fortran merge DOAR prin wrapperul files/tmp/flang; driverul brut toolchain/bin/flang EȘUEAZĂ cu 'gcc frontend command failed' - nu-l folosi. Daca adbsh raporteaza ca adbd asteapta autorizarea cheii, NU insista si NU repeta la infinit: foloseste uneltele native (android/ime/notif/capture) si spune operatorului sa apese Allow in dialogul de pe telefon. (3g) .so vs EXECUTABIL (a costat 20+ pasi): daca iesirea se termina in .so, compile face o LIBRARIE PARTEJATA (-shared) si NU se ruleaza (linker64 da SIGSEGV). Pentru un program care ruleaza, foloseste o iesire FARA .so (ex. t_bin): clang produce atunci un PIE executabil normal (are INTERP + entry) care ruleaza direct. (3h) cmake: PREFIX trebuie sa fie <toolchain>/sysroot/usr (NU <toolchain>: acolo nu exista include/android/api-level.h, si CMakeDetermineSystem.cmake cade - 4 incercari pierdute intr-un test real), plus CMAKE_ROOT=<toolchain>/cmake si CMAKE_SYSTEM_VERSION. (3j) Cython/pybind11 NU sunt binare: ruleaza `python3 -m cython --version` si foloseste pybind11.get_include() DOAR din pachetul de pe disc; daca intoarce o cale din .zip, headerele reale sunt in pyhome/lib/python3.14/site-packages/pybind11/include. (3k) Rust cu dependinte care au build.rs MERGE (dovedit: quote/cargo rc=0, BS_TEST BS_OK); daca vezi 'failed to run custom build command ... Permission denied', NU e o limita de executie: proiectul avea target/ copiat de pe /sdcard (noexec). Sterge target/ si rebuild in files/tmp. NU copia niciodata un proiect cu target/ de pe /sdcard. (3i) rustc invocat DIRECT are nevoie de LD_LIBRARY_PATH cu <toolchain>/rust/lib, altfel da library librustc_driver not found; cargo merge fara asta (configul e deja pregatit). (3l) SCRIPTURILE TALE DE TEST: 4 din 5 opriri in ultimele 3 sesiuni E2E au fost typo-uri in propriul script python (string neinchis cu slash duplicat, lipsa `import time`, cale scrisa de mana in loc de env). Scrie scriptul, apoi ruleaza-l; daca da SyntaxError/NameError, repara-l si reia - NU re-scrie testul de la zero si NU pune flag-uri de compilare scrise de mana: foloseste CFLAGS/LDFLAGS din `toolchain action=env` (acolo e si -L spre lib/clang/21/lib/linux pentru -latomic). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
+ " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: foloseste `toolchain`/cargo sau `$TC/bin/cargo build --release` - in `files/cargo/config.toml` linker-ul e deja setat (cc-rust) si build-ul merge (dovedit). NU te lupta cu `rustc` invocat direct: linkerul lui implicit `cc` nu se rezolva in mediul spawn-uit de rustc (pierzi zeci de pasi; cargo e calea corecta). (3e) EXEC: binarele ELF compilate de toolchain SUNT executabile direct din files/tmp (dovedit rc=0), iar varianta sigura e `/apex/com.android.runtime/bin/linker64 <binar>`. SCRIPTURILE shell din filesDir NU se executa (Permission denied) - pentru scripturi foloseste lansatoarele ELF (libshwrap_exec.so + <nume>.sh). (3f) CAPCANE DE RULARE (dovedite in testele din UI): linker64 cere o cale ABSOLUTA (`./x` da 'expected absolute path'). Un modul .so compilat NU poate fi importat din /sdcard (namespace de linker; /storage e noexec) - copiaza-l in files/libs sau files/tmp inainte de import. Fortran merge DOAR prin wrapperul files/tmp/flang; driverul brut toolchain/bin/flang EȘUEAZĂ cu 'gcc frontend command failed' - nu-l folosi. Daca adbsh raporteaza ca adbd asteapta autorizarea cheii, NU insista si NU repeta la infinit: foloseste uneltele native (android/ime/notif/capture) si spune operatorului sa apese Allow in dialogul de pe telefon. (3g) .so vs EXECUTABIL (a costat 20+ pasi): daca iesirea se termina in .so, compile face o LIBRARIE PARTEJATA (-shared) si NU se ruleaza (linker64 da SIGSEGV). Pentru un program care ruleaza, foloseste o iesire FARA .so (ex. t_bin): clang produce atunci un PIE executabil normal (are INTERP + entry) care ruleaza direct. (3h) cmake: PREFIX trebuie sa fie <toolchain>/sysroot/usr (NU <toolchain>: acolo nu exista include/android/api-level.h, si CMakeDetermineSystem.cmake cade - 4 incercari pierdute intr-un test real), plus CMAKE_ROOT=<toolchain>/cmake si CMAKE_SYSTEM_VERSION. (3j) Cython/pybind11 NU sunt binare: ruleaza `python3 -m cython --version` si foloseste pybind11.get_include() DOAR din pachetul de pe disc; daca intoarce o cale din .zip, headerele reale sunt in pyhome/lib/python3.14/site-packages/pybind11/include. (3k) Rust cu dependinte care au build.rs MERGE (dovedit: quote/cargo rc=0, BS_TEST BS_OK); daca vezi 'failed to run custom build command ... Permission denied', NU e o limita de executie: proiectul avea target/ copiat de pe /sdcard (noexec). Sterge target/ si rebuild in files/tmp. NU copia niciodata un proiect cu target/ de pe /sdcard. (3i) rustc invocat DIRECT are nevoie de LD_LIBRARY_PATH cu <toolchain>/rust/lib, altfel da library librustc_driver not found; cargo merge fara asta (configul e deja pregatit). (3m) CARGO: cu configul nostru, binarul iese in target/aarch64-linux-android/release/<nume> (NU target/release) - verifica acolo. (3n) `bg` ruleaza acum joburile IN PROCESUL APLICATIEI (uid app) - deci poate intra in filesDir si vede toolchain-ul; foloseste `bg` pentru build-uri lungi (cargo/cmake/pip). Doar comenzile care chiar au nevoie de uid 2000 (run_su, /data/local/tmp) merg prin adbsh. (3l) SCRIPTURILE TALE DE TEST: 4 din 5 opriri in ultimele 3 sesiuni E2E au fost typo-uri in propriul script python (string neinchis cu slash duplicat, lipsa `import time`, cale scrisa de mana in loc de env). Scrie scriptul, apoi ruleaza-l; daca da SyntaxError/NameError, repara-l si reia - NU re-scrie testul de la zero si NU pune flag-uri de compilare scrise de mana: foloseste CFLAGS/LDFLAGS din `toolchain action=env` (acolo e si -L spre lib/clang/21/lib/linux pentru -latomic). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1788,6 +1788,7 @@ def bg_tool(a):
        list               - toate job-urile (inclusiv terminate)
     """
     act = (a.get("action") or "status").strip()
+    F = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .../files
     reg = _bg_load()
     # ★ P4: auto-curatare (stare care se acumula fara colector) - ruleaza la fiecare apel
     try:
@@ -1800,27 +1801,69 @@ def bg_tool(a):
         if not cmd:
             return "lipseste 'cmd'"
         name = (a.get("name") or "job").strip().replace(" ", "_")[:24]
+        uid_req = str(a.get("uid") or "").strip().lower()
         ts = time.strftime("%Y%m%d-%H%M%S")
         jid = "%s_%s" % (name, ts)
-        log = "%s/%s.log" % (BG_LOG, jid)
-        # rulam prin adbsh: script cu nohup, PID inregistrat, log unic
-        sh = ("mkdir -p %s; cd /data/local/tmp; "
-              "nohup /system/bin/sh -c %s > %s 2>&1 & echo $!") % (
-                  BG_LOG, _shell_q(cmd), _shell_q(log))
+
+        # ★ FAZA 4u: implicit IN PROCESUL APLICATIEI (uid app), nu prin adbsh.
+        # Raportat in E2E: job-urile lansate prin adbsh (uid=2000) NU pot intra in
+        # filesDir -> "cd: files/tmp/rustdemo: Permission denied, EXIT=2", deci exact
+        # build-urile toolchain (cargo/cmake/pip) cadeau prin `bg`. adbsh ramane pentru
+        # ce tine efectiv de shell: /data/local/tmp, run_su, sau uid=2000 cerut explicit.
+        _need_shell = (uid_req in ("2000", "shell", "su") or cmd.startswith("run_su")
+                       or "/data/local/tmp" in cmd)
+        where = "shell" if _need_shell else "app"
+        # ★ FAZA 4u: doua locatii de log - /data/local/tmp e scriibila DOAR de uid=2000
+        # (job-ul aplicatiei dadea PermissionError(13) cand incerca sa scrie acolo).
+        _logdir = (F + "/logs/bg") if where == "app" else BG_LOG
+        log = "%s/%s.log" % (_logdir, jid)
         try:
-            out = run_adbsh_tool(sh, 60)
-        except Exception as e:
-            return "start error: %s" % e
-        import re as _re
-        m = _re.search(r"(\d{4,})", out or "")
-        pid = int(m.group(1)) if m else 0
-        reg[jid] = {"pid": pid, "name": name, "cmd": cmd, "log": log,
+            os.makedirs(_logdir, exist_ok=True)
+        except Exception:
+            pass
+        if where == "app":
+            try:
+                _envb = dict(os.environ)
+                # ★ mediu COMPLET de toolchain (PATH cu files/tmp PRIMUL -> cargo isi gaseste rustc;
+                # fara el: "could not execute process `rustc -vV` (never executed)")
+                try:
+                    import toolchain as _tcB
+                    _envb.update({k: v for k, v in _tcB.env_vars().items() if isinstance(v, str)})
+                except Exception:
+                    try:
+                        _envb.update({k: v for k, v in _env().items() if isinstance(v, str)})
+                    except Exception:
+                        pass
+                _envb["TMPDIR"] = F + "/tmp"
+                _lf = open(log, "ab", 0)
+                _cwd_b = WORK[0] if isinstance(WORK, (tuple, list)) else WORK
+                # SHELL[0] e un TUPLU ("sh","-c") - se concateneaza, nu se pune in lista
+                _argv = list(SHELL[0]) + [cmd]
+                _p = subprocess.Popen(_argv, cwd=_cwd_b, stdout=_lf,
+                                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                      start_new_session=True, env=_envb)
+                pid = int(_p.pid)
+            except Exception as _ex:
+                return "start error (%s): %r" % (where, _ex)
+        else:
+            sh = ("mkdir -p %s; cd /data/local/tmp; "
+                  "nohup /system/bin/sh -c %s > %s 2>&1 & echo $!") % (
+                      BG_LOG, _shell_q(cmd), _shell_q(log))
+            try:
+                out = run_adbsh_tool(sh, 60)
+            except Exception as e:
+                return "start error: %s" % e
+            import re as _re
+            m = _re.search(r"(\d{4,})", out or "")
+            pid = int(m.group(1)) if m else 0
+        reg[jid] = {"pid": pid, "name": name, "cmd": cmd, "log": log, "where": where,
                     "started": time.strftime("%Y-%m-%d %H:%M:%S"), "ts": time.time(),
                     "status": "running"}
         _bg_save(reg)
-        return ("job pornit: %s\n  pid=%d\n  log=%s\n"
+        return ("job pornit: %s\n  pid=%d  (ruleaza ca: %s)\n  log=%s\n"
                 "  (verifica progresul cu bg action=status, apoi bg action=log job=%s)"
-                % (jid, pid, log, jid))
+                % (jid, pid, "aplicatie (uid app, vede filesDir)" if where == "app"
+                   else "shell uid=2000 (adbsh)", log, jid))
 
     if act in ("status", "list"):
         rows = []
@@ -1828,15 +1871,29 @@ def bg_tool(a):
             pid = j.get("pid", 0)
             # liveness REAL (nu presupus): /proc/<pid> exista si nu e zombie
             alive = "?"
+            if j.get("where") == "app":
+                # ★ joburile in procesul aplicatiei: verificare LOCALA (adbsh nu vede /proc-ul
+                # altui uid si nu poate citi filesDir)
+                try:
+                    _st = open("/proc/%d/stat" % pid).read().split(") ", 1)[1][0]
+                    alive = "RUNNING" if _st not in ("Z", "X") else "DONE"
+                except Exception:
+                    alive = "DONE"
+            else:
+                try:
+                    # ★ FAZA 4u: test EXACT ("ALIVE" in output) - iesirea adbsh include bannerul
+                    # [adb] ... , deci vechiul test (st not in ("DEAD","Z")) raporta RUNNING pentru
+                    # procese moarte de mult.
+                    st = run_adbsh_tool(
+                        "test -d /proc/%d && echo ALIVE || echo DEAD" % (pid,), 30)
+                    alive = "RUNNING" if ("ALIVE" in (st or "")) else "DONE"
+                except Exception:
+                    pass
             try:
-                st = run_adbsh_tool(
-                    "test -d /proc/%d && (cat /proc/%d/stat 2>/dev/null | cut -d' ' -f3) || echo DEAD"
-                    % (pid, pid), 30).strip()
-                alive = "RUNNING" if st and st not in ("DEAD", "Z") else "DONE"
-            except Exception:
-                pass
-            try:
-                sz = run_adbsh_tool("wc -c < %s 2>/dev/null || echo 0" % j["log"], 30).strip().split()[0]
+                if j.get("where") == "app":
+                    sz = str(os.path.getsize(j["log"]))
+                else:
+                    sz = run_adbsh_tool("wc -c < %s 2>/dev/null || echo 0" % j["log"], 30).strip().split()[0]
             except Exception:
                 sz = "0"
             dur = int(time.time() - j.get("ts", time.time()))
@@ -1862,7 +1919,14 @@ def bg_tool(a):
                 j = reg[k]; jid = k; break
         if not j:
             return "job necunoscut: %s" % jid
-        out = run_adbsh_tool("tail -n %d %s 2>/dev/null" % (n, j["log"]), 60)
+        if j.get("where") == "app":
+            try:
+                with open(j["log"], "r", encoding="utf-8", errors="replace") as _f:
+                    out = "".join(_f.readlines()[-n:])
+            except Exception as _e:
+                out = "(log necitibil: %r)" % (_e,)
+        else:
+            out = run_adbsh_tool("tail -n %d %s 2>/dev/null" % (n, j["log"]), 60)
         hdr = ("=== %s (pornit %s, pid %d) ===\n" % (jid, j.get("started"), j.get("pid", 0)))
         return hdr + (out or "(log gol)")
 
@@ -1875,7 +1939,16 @@ def bg_tool(a):
         if not j:
             return "job necunoscut: %s" % jid
         pid = j.get("pid", 0)
-        run_adbsh_tool("kill -9 %d 2>/dev/null; pkill -9 -P %d 2>/dev/null; echo killed" % (pid, pid), 60)
+        if j.get("where") == "app":
+            try:
+                os.killpg(os.getpgid(pid), 9)
+            except Exception:
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+        else:
+            run_adbsh_tool("kill -9 %d 2>/dev/null; pkill -9 -P %d 2>/dev/null; echo killed" % (pid, pid), 60)
         j["status"] = "killed"; j["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
         _bg_save(reg)
         return "job oprit: %s (pid %d)" % (jid, pid)
@@ -1897,6 +1970,26 @@ def _shell_q(s):
     return "'" + str(s).replace("'", "'\\''") + "'"
 
 
+def _adbsh_guard(cmd):
+    """★ FAZA 4u (observatie operator): uid=2000 NU vede filesDir (toolchain-ul e acolo).
+
+    Confuzia "toolchain cu uid 2000 vs fara" a produs erori greu de citit ("cd: files/tmp: Permission
+    denied", "ls: toolchain/bin: Permission denied") si a consumat pasi. Aici prindem comanda inainte
+    de trimitere si intoarcem instructiunea corecta.
+    """
+    _f = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        if _f in (cmd or ""):
+            return ("uid=2000 (adbsh) NU poate citi %s - toolchain-ul, pip, cargo, python si tot ce "
+                    "tine de compilare ruleaza IN APLICATIE (uid app): foloseste python/bash/bg/"
+                    "toolchain (au acces la filesDir). adbsh e doar pentru ce tine de sistem: "
+                    "settings/pm/dumpsys/screencap/input/force-stop, /data/local/tmp, run_su."
+                    % _f)
+    except Exception:
+        pass
+    return ""
+
+
 def run_adbsh_tool(cmd, timeout=20):
     """SHELL ca user 'shell' (uid=2000) prin clientul ADB pur-Python (adb_client).
 
@@ -1913,6 +2006,10 @@ def run_adbsh_tool(cmd, timeout=20):
     Nu mai exista conexiune persistenta proprie si nici verificari manuale de liveness:
     starea o gestioneaza adb_client, intr-un singur loc.
     """
+    _g = _adbsh_guard(cmd)
+    if _g:
+        return _g
+
     import importlib.util as _iu
     global _ADBCLI
     try:
@@ -2509,6 +2606,16 @@ def run_toolchain_tool(a):
                 return ""
 
             _steps = []
+            # ★ FAZA 4u: verifica instalari INCOMPLETE de pachete de build (pathspec._backends,
+            # scikit_build_core._compat) INAINTE de build - altfel pip cade cu ModuleNotFoundError
+            # si agentul le repara manual (a costat ~20 de pasi intr-o sesiune E2E).
+            try:
+                import toolchain as _tcR
+                _rep = _tcR._repair_build_backends()
+                if _rep.get("reparate"):
+                    _steps.append("reparat:" + ",".join(_rep["reparate"]))
+            except Exception:
+                pass
 
             def _missing_deps(txt):
                 """Cerintele de BUILD lipsa, asa cum le raporteaza setuptools/pip.
@@ -2685,6 +2792,12 @@ def run_toolchain_tool(a):
             _d = os.path.dirname(srcf)
             _near = sorted(os.listdir(_d))[:8] if os.path.isdir(_d) else []
             return ("sursa nu exista: %s\n(scrie fisierul intai; in %s: %s)" % (srcf, _d, _near))
+        if srcf.endswith(".rs"):
+            return ("sursa e RUST (.rs): nu se compileaza cu action=compile. Foloseste cargo:\n"
+                    "  mkdir -p %s/tmp/rp/src && scrie Cargo.toml + src/main.rs\n"
+                    "  cd %s/tmp/rp && cargo build --release\n"
+                    "  binarul iese in target/aarch64-linux-android/release/<nume> (NU target/release)"
+                    % (F, F))
         cpp = srcf.endswith((".cpp", ".cc", ".cxx"))
         frt = srcf.endswith((".f90", ".f", ".f95", ".f03", ".for"))
         shared = out.endswith(".so")
@@ -3080,7 +3193,20 @@ if __name__ == "__main__":
         os.environ["LD_LIBRARY_PATH"] = _clean_ld(":".join(_partsS))
         # ★ (cerut de operator): linia de diagnostic NU se mai afiseaza in UI la pornire.
         if os.environ.get("AGENT_VERBOSE"):
-            print("[pas2] PATH aplicat: " + os.environ.get("PATH","")[:80])
+            print("[pas2] PATH aplicat: " + os.environ.get("PATH", "")[:80])
+        # ★ FAZA 4u: mediul de BUILD in os.environ (mostenit de orice proces copil).
+        # Raportat in E2E: cmake cadea cu CMakeDetermineSystem.cmake / api-level.h de fiecare data
+        # cand agentul nu seta PREFIX (4 incercari intr-o sesiune). Acum PREFIX/CMAKE_ROOT/TMPDIR/
+        # CARGO_HOME sunt deja in mediu, deci `cmake` simplu merge.
+        try:
+            import toolchain as _tcS
+            _ev = _tcS.env_vars()
+            for _k in ("PREFIX", "CMAKE_ROOT", "TMPDIR", "CARGO_HOME", "PKG_CONFIG_PATH",
+                       "SSL_CERT_FILE", "CURL_CA_BUNDLE", "PYTHONHOME"):
+                if _ev.get(_k):
+                    os.environ[_k] = str(_ev[_k])
+        except Exception:
+            pass
     except Exception as _eS:
         print("[pas2] EROARE: %r" % (_eS,))
     # ★ P3/P10: colectori de stare acumulata (backup-uri + loguri), la fiecare pornire

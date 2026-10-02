@@ -1728,6 +1728,58 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
 '''
 
 
+
+def _repair_build_backends(verbose=False):
+    """★ FAZA 4u: verifica pachetele de BUILD si repara instalari incomplete.
+
+    Raportat in E2E (a costat ~20 de pasi agentului): `scikit_build_core` si `pathspec` erau pe
+    disc INCOMPLETE (lipseau `_compat/` respectiv `_backends/`) -> orice `pip install` cu
+    scikit-build-core (lxml!) cadea cu ModuleNotFoundError, iar agentul le-a reparat manual.
+    Aici le verificam prin import si, daca o instalare e rupta, o stergem si o reinstalam curat
+    (fara dependinte, cu pip-ul nostru care merge).
+    """
+    checks = (("pathspec", "pathspec._backends.agg"), ("scikit_build_core", "scikit_build_core.build"),
+              ("setuptools", "setuptools.build_meta"), ("wheel", "wheel"), ("packaging", "packaging"),
+              ("pyproject_hooks", "pyproject_hooks"), ("pybind11", "pybind11"), ("Cython", "Cython"),
+              ("mesonbuild", "mesonbuild"))
+    broken = []
+    for pkg, mod in checks:
+        try:
+            __import__(mod)
+        except Exception:
+            broken.append((pkg, mod))
+    if not broken:
+        return {"ok": True, "reparate": [], "rupte": []}
+    try:
+        _env2 = dict(env_vars())
+    except Exception:
+        _env2 = dict(os.environ)
+    import shutil as _sh2
+    _py = F + "/tmp/python3"
+    if not os.path.exists(_py):
+        _py = sys.executable
+    fixed = []
+    for pkg, mod in broken:
+        try:
+            # sterge instalarea rupta (in site-packages real SI in directorul din pyhome)
+            for _base in (F + "/pyhome/lib/python3.14/site-packages", F + "/pyhome/lib/python3.14"):
+                _d = os.path.join(_base, pkg)
+                if os.path.isdir(_d):
+                    _sh2.rmtree(_d, ignore_errors=True)
+            _r = subprocess.run([_py, "-m", "pip", "install", "--no-build-isolation",
+                                 "--force-reinstall", "--no-deps", "--disable-pip-version-check",
+                                 pkg], capture_output=True, text=True, env=_env2, cwd=F + "/tmp",
+                                timeout=900, stdin=subprocess.DEVNULL)
+            try:
+                __import__(mod)
+                fixed.append(pkg)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return {"ok": not [b for b in broken if b[0] not in fixed],
+            "reparate": fixed, "rupte": [p for p, m in broken]}
+
 def _ensure_setuptools():
     """★ setuptools TREBUIE sa fie instalat: cu PIP_NO_BUILD_ISOLATION=1 (setat in env_vars),
     backendul de build ruleaza in procesul nostru si importa setuptools; daca a fost sters de

@@ -3653,3 +3653,26 @@ Verificat pe device (screenshot dupa fiecare instalare): ecran gol + prompt `mes
 Nota de proces: un `sed` pe MainActivity.kt a schimbat markerul `.assets_vNN` - markerul trebuie
 incrementat la ORICE modificare de assets/surse, altfel aplicatia nu re-extrage materialele la
 update (regula 1 din lista de siguranta).
+
+## Etapa 80 - problemele din sesiunea cu multe erori (`.assets_v240`)
+
+Observatie-cheie a operatorului: o parte din confuzie vine din faptul ca unealta ruleaza in DOUA
+contexte (uid app vs uid 2000). Reparatii:
+
+1. **`bg` rula prin adbsh (uid 2000) -> "cd files/tmp/rustdemo: Permission denied, EXIT=2"**, deci
+   exact build-urile lungi (cargo/cmake/pip) cadeau cand agentul folosea `bg`, desi regula (2) din
+   prompt il trimite acolo. Acum `bg` ruleaza implicit IN PROCESUL APLICATIEI (uid app, vede
+   filesDir), cu mediu complet de toolchain (PATH cu files/tmp -> cargo isi gaseste rustc), log in
+   `files/logs/bg/`, liveness/citire/kill LOCALE. adbsh rămâne doar pentru ce tine de sistem
+   (`/data/local/tmp`, `run_su`, `uid=2000` explicit). Dovada: job `bg` -> binar Rust construit.
+2. **Garda in `adbsh`**: orice comanda care atinge filesDir primeste un mesaj clar ("uid=2000 nu
+   vede filesDir; foloseste python/bash/bg/toolchain") in loc de "Permission denied" confuz.
+3. **cmake fara PREFIX**: mediul de build (PREFIX=<toolchain>/sysroot/usr, CMAKE_ROOT, TMPDIR,
+   CARGO_HOME, PKG_CONFIG_PATH) e acum setat in `os.environ` la pornirea agentului, deci `cmake`
+   simplu merge (inainte: 4 incercari pierdute intr-o sesiune).
+4. **Instalari INCOMPLETE de pachete de build** (pathspec fara `_backends`, scikit_build_core fara
+   `_compat`) rupeau `pip install lxml` cu ModuleNotFoundError, iar agentul le repara manual (~20
+   pasi). Acum `_repair_build_backends()` le detecteaza prin import si le reinstaleaza curat,
+   apelata automat inainte de fiecare `pip_install` (si disponibila in selftest).
+5. `.rs` dat la `action=compile` primeste mesaj clar (foloseste cargo; binarul iese in
+   `target/aarch64-linux-android/release/`), plus regulile (3m)/(3n) in prompt.

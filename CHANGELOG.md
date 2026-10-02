@@ -9,6 +9,16 @@
 
 ---
 
+### 2026-10-02 (fix-uri din sesiunea cu multe erori: bg in-app, garda adbsh, env cmake, reparatie backend - `.assets_v240`)
+
+- `bg` ruleaza implicit in procesul aplicatiei (uid app) cu mediu de toolchain; adbsh doar pentru
+  /data/local/tmp, run_su sau uid=2000 explicit. Inainte: "cd files/tmp/...: Permission denied".
+- garda in adbsh: comanda care atinge filesDir -> instructiune clara (confuzia uid 2000 vs app).
+- env de build (PREFIX/CMAKE_ROOT/TMPDIR/CARGO_HOME) setat la pornire -> `cmake` merge fara setari.
+- `_repair_build_backends()`: detecteaza si repara instalari incomplete (pathspec._backends,
+  scikit_build_core._compat) inainte de pip_install.
+- `.rs` -> mesaj clar (cargo, target/aarch64-linux-android/release).
+
 ### 2026-10-02 (pornire complet curata in UI - `.assets_v239`)
 
 - scoase si liniile "[key] cheie gasita - pornesc agentul." si "[key] pornesc agentul..." /
