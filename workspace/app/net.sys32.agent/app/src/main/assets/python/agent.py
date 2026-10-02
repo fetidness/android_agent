@@ -892,57 +892,12 @@ def _spin(fn,*a,phase="tool",desc="",col=None):
     finally:
         stop.set(); th.join(timeout=0.4); LIVE.update(phase="idle",n=0)
         if drawn[0]: print("\r\33[K",end="",flush=True)   # only if a frame was drawn: never eat an unused line
-BINFMT = (b"\x7fELF", b"\x89PNG", b"\xff\xd8\xff", b"PK\x03\x04", b"!<arch>", b"\x1f\x8b")
-
-
-def _binary_guard(o):
-    """Inlocuieste iesirea BINARA cu un rezumat (tip, marime, sha256, head hex).
-
-    ★ FAZA 4r (raportat in E2E: doua dump-uri ELF de ~2 KB au intrat in context si au costat
-    mii de tokeni degeaba). Detectie: primii octeti corespund unui format binar cunoscut SAU
-    exista octeti de control/NUL in primele 512 caractere.
-    """
-    if not isinstance(o, str):
-        try:
-            o = o.decode("utf-8", "replace")
-        except Exception:
-            return "[output binar neconvertibil]"
-    head = o[:16].encode("utf-8", "replace")
-    isbin = any(head.startswith(m) for m in BINFMT)
-    if not isbin:
-        sample = o[:512]
-        ctrl = sum(1 for ch in sample if ord(ch) < 9 or (13 < ord(ch) < 32) or ord(ch) == 127)
-        nul = "\x00" in sample
-        isbin = nul or (ctrl > 8 and len(sample) > 40)
-    if not isbin:
-        return o
-    import hashlib as _h
-    raw = o.encode("utf-8", "replace")
-    kind = "binar"
-    for m, name in ((b"\x7fELF", "ELF"), (b"\x89PNG", "PNG"), (b"\xff\xd8\xff", "JPEG"),
-                    (b"PK\x03\x04", "ZIP/APK"), (b"!<arch>", "ar"), (b"\x1f\x8b", "gzip")):
-        if head.startswith(m):
-            kind = name
-            break
-    trailer = ""
-    if kind == "ELF" and len(raw) > 20:
-        try:
-            import struct as _st
-            etype = _st.unpack("<H", raw[16:18])[0]
-            trailer = " | e_type=%s" % {2: "EXEC", 3: "DYN(PIE/shared)"}.get(etype, str(etype))
-        except Exception:
-            pass
-    return ("[output BINAR %s: %d bytes, sha256=%s%s]\n(atentie: pentru fisiere binare foloseste "
-            "python (struct/hashlib) sau redirectioneaza in fisier; NU le afisa)" %
-            (kind, len(raw), _h.sha256(raw).hexdigest()[:16], trailer))
-
-
 def run_tool(code):
     """Runs the step and returns what gets sent to the model (the CUT output). In the terminal, in compact mode:
     the live line while it runs, then ONE line: the status dot (GREEN = OK, RED = FAIL), the step number,
     what the step really did and, in RED, how long it took (plus a pointer to the log when it was written)."""
     n=TASK["steps"]+1; dsc=brief(code); col=HCLR[sum(map(ord,dsc))%len(HCLR)] if dsc else G
-    o=_spin(py,code,os.getcwd(),phase="tool",desc=dsc,col=col); o=_binary_guard(o); cut,ref=_store(o)
+    o=_spin(py,code,os.getcwd(),phase="tool",desc=dsc,col=col); cut,ref=_store(o)
     TN[0]+=1; TASK.update(steps=n,chars=TASK["chars"]+len(o))
     _show_step(code,cut,n)   # ALWAYS: the first NLINES lines of the code and of the output
     if _looks_like_error(o): TASK["err"]=True
@@ -1139,7 +1094,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: foloseste `toolchain`/cargo sau `$TC/bin/cargo build --release` - in `files/cargo/config.toml` linker-ul e deja setat (cc-rust) si build-ul merge (dovedit). NU te lupta cu `rustc` invocat direct: linkerul lui implicit `cc` nu se rezolva in mediul spawn-uit de rustc (pierzi zeci de pasi; cargo e calea corecta). (3e) EXEC: binarele ELF compilate de toolchain SUNT executabile direct din files/tmp (dovedit rc=0), iar varianta sigura e `/apex/com.android.runtime/bin/linker64 <binar>`. SCRIPTURILE shell din filesDir NU se executa (Permission denied) - pentru scripturi foloseste lansatoarele ELF (libshwrap_exec.so + <nume>.sh). (3f) CAPCANE DE RULARE (dovedite in testele din UI): linker64 cere o cale ABSOLUTA (`./x` da 'expected absolute path'). Un modul .so compilat NU poate fi importat din /sdcard (namespace de linker; /storage e noexec) - copiaza-l in files/libs sau files/tmp inainte de import. Fortran merge DOAR prin wrapperul files/tmp/flang; driverul brut toolchain/bin/flang EȘUEAZĂ cu 'gcc frontend command failed' - nu-l folosi. Daca adbsh raporteaza ca adbd asteapta autorizarea cheii, NU insista si NU repeta la infinit: foloseste uneltele native (android/ime/notif/capture) si spune operatorului sa apese Allow in dialogul de pe telefon. (3g) .so vs EXECUTABIL (costat 20+ pasi intr-un test): daca iesirea se termina in `.so`, compile o face LIBRARIE PARTEJATA (-shared) - NU se ruleaza (linker64 da SIGSEGV pe o librarie). Pentru un program care ruleaza, foloseste o iesire FARA `.so` (ex. `t_bin`): atunci clang produce un PIE executabil normal (are INTERP, entry) si ruleaza direct. (3h) cmake: are nevoie de `export PREFIX=<toolchain>` (CMakeDetermineSystem.cmake citeste $ENV{PREFIX}/include/android/api-level.h) si de `CMAKE_ROOT=<toolchain>/cmake`; altfel "Could not find CMAKE_ROOT" / "file failed to open". Seteaza si CMAKE_SYSTEM_VERSION. (3i) rustc invocat DIRECT are nevoie de LD_LIBRARY_PATH cu <toolchain>/rust/lib (altfel "library librustc_driver-*.so not found"); cargo merge fara asta (configul e pregatit). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
+ " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY (dovedit pe device): procesul app NU poate executa un ELF proaspat compilat (SELinux data_file_type; Android 10+ interzice exec din datele aplicatiei). Caile care MERG: (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU concluziona niciodata ca build-ul e rupt doar pentru ca binarul produs nu porneste direct. (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: foloseste `toolchain`/cargo sau `$TC/bin/cargo build --release` - in `files/cargo/config.toml` linker-ul e deja setat (cc-rust) si build-ul merge (dovedit). NU te lupta cu `rustc` invocat direct: linkerul lui implicit `cc` nu se rezolva in mediul spawn-uit de rustc (pierzi zeci de pasi; cargo e calea corecta). (3e) EXEC: binarele ELF compilate de toolchain SUNT executabile direct din files/tmp (dovedit rc=0), iar varianta sigura e `/apex/com.android.runtime/bin/linker64 <binar>`. SCRIPTURILE shell din filesDir NU se executa (Permission denied) - pentru scripturi foloseste lansatoarele ELF (libshwrap_exec.so + <nume>.sh). (3f) CAPCANE DE RULARE (dovedite in testele din UI): linker64 cere o cale ABSOLUTA (`./x` da 'expected absolute path'). Un modul .so compilat NU poate fi importat din /sdcard (namespace de linker; /storage e noexec) - copiaza-l in files/libs sau files/tmp inainte de import. Fortran merge DOAR prin wrapperul files/tmp/flang; driverul brut toolchain/bin/flang EȘUEAZĂ cu 'gcc frontend command failed' - nu-l folosi. Daca adbsh raporteaza ca adbd asteapta autorizarea cheii, NU insista si NU repeta la infinit: foloseste uneltele native (android/ime/notif/capture) si spune operatorului sa apese Allow in dialogul de pe telefon. (3g) .so vs EXECUTABIL (a costat 20+ pasi): daca iesirea se termina in .so, compile face o LIBRARIE PARTEJATA (-shared) si NU se ruleaza (linker64 da SIGSEGV). Pentru un program care ruleaza, foloseste o iesire FARA .so (ex. t_bin): clang produce atunci un PIE executabil normal (are INTERP + entry) care ruleaza direct. (3h) cmake: are nevoie de export PREFIX=<toolchain> (CMakeDetermineSystem.cmake citeste $ENV{PREFIX}/include/android/api-level.h) si de CMAKE_ROOT=<toolchain>/cmake; altfel apare Could not find CMAKE_ROOT / file failed to open. Seteaza si CMAKE_SYSTEM_VERSION. (3i) rustc invocat DIRECT are nevoie de LD_LIBRARY_PATH cu <toolchain>/rust/lib, altfel da library librustc_driver not found; cargo merge fara asta (configul e deja pregatit). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -3227,7 +3182,7 @@ if __name__ == "__main__":
                     # /sdcard cand fd-urile sunt epuizate) OMORA procesul agentului. Acum eroarea
                     # devine un rezultat de tool, agentul o vede si continua.
                     try:
-                        o=_binary_guard(call_tool(c))
+                        o=call_tool(c)
                     except Exception as _ex:
                         import traceback as _tb
                         o=("[tool error] %s: %s\n%s" % (type(_ex).__name__, str(_ex)[:300],

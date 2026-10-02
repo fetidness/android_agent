@@ -74,3 +74,6 @@ memory.md
 # ---- toolchain nativ (257 MB, regenerabil cu build_toolchain.sh) ----
 workspace/app/net.sys32.agent/app/src/main/assets/toolchain/
 workspace/app/net.sys32.agent/app/src/main/jniLibs/arm64-v8a/lib*_exec.so
+workspace/app/net.sys32.agent/.kotlin/
+workspace/app/net.sys32.agent/.gradle/
+app/build/
