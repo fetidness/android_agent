@@ -143,23 +143,36 @@ def sniff(html):
           'hybrid'  = HTML + date in <script> (scraper + jsengine)
     """
     import re
-    scripts = re.findall(r"<script[^>]*>", html or "")
+    h = html or ""
+    scripts = re.findall(r"<script[^>]*>", h)
     pats = []
     for name, rx in _DATA_PATTERNS:
-        if re.search(rx, html or "", re.S):
+        if re.search(rx, h, re.S):
             pats.append(name)
     # text util fara taguri
-    text = re.sub(r"<script.*?</script>", " ", html or "", flags=re.S)
+    text = re.sub(r"<script.*?</script>", " ", h, flags=re.S)
     text = re.sub(r"<[^>]+>", " ", text)
     text = " ".join(text.split())
+    # ---- indicatori de SPA (aplicatie client-side) ----
+    spa_signals = []
+    if re.search(r'<script[^>]*type="module"', h, re.I): spa_signals.append("module")
+    if re.search(r'<div[^>]*id=["\']?(app|root|__next|root-app)["\']?', h, re.I): spa_signals.append("div#app")
+    if re.search(r'<script[^>]*src="[^"]*/assets/[^"]*\.js', h, re.I): spa_signals.append("assets/js")
+    if re.search(r'<script[^>]*src="[^"]*/(_next|static/js|app)\.?[^"]*\.js', h, re.I): spa_signals.append("bundler")
+    # container gol = SPA (body are doar div gol)
+    body = re.search(r"<body[^>]*>(.*?)</body>", h, re.S | re.I)
+    body_text = re.sub(r"<[^>]+>", " ", body.group(1)) if body else ""
+    if len(body and body.group(1) or "") < 400 and len(" ".join(body_text.split())) < 60:
+        spa_signals.append("body-gol")
+
     if pats:
         kind = "hybrid"
-    elif len(text) < 600 and len(scripts) > 3:
-        kind = "spa"          # gol dar multe scripturi = client-side
+    elif len(text) < 600 and (len(scripts) > 3 or len(spa_signals) >= 2):
+        kind = "spa"          # gol + (multe scripturi SAU semnale clare de SPA)
     else:
         kind = "static"
     return {"kind": kind, "scripts": len(scripts), "patterns": pats,
-            "text_chars": len(text)}
+            "text_chars": len(text), "spa_signals": spa_signals}
 
 def extract_js_data(html, pattern=None):
     """Extrage blocul de date JSON dintr-un <script> (fara sa ruleze JS).
