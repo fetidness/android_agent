@@ -114,6 +114,182 @@ def table(url, idx=0):
         if cells: rows.append(cells)
     return {"tables": len(tabs), "rows": rows}
 
+# ================== INTEGRARE CU MOTORUL JS (jsengine.py) ==================
+# scraper.py = reteaua + HTML. jsengine.py = JavaScript. jsfetch.py = randare DOM.
+# Functiile de mai jos leaga cele trei, cu detectare automata.
+
+_DATA_PATTERNS = [
+    ("__NEXT_DATA__", r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>'),
+    ("__NUXT__",      r'window\.__NUXT__\s*=\s*(.*?);?</script>'),
+    ("__INITIAL_STATE__", r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});'),
+    ("__DATA__",      r'window\.__DATA__\s*=\s*(\{.*?\});'),
+    ("__PRELOADED_STATE__", r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});'),
+    ("APOLLO_STATE",  r'window\.__APOLLO_STATE__\s*=\s*(\{.*?\});'),
+    ("ld+json",       r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>'),
+]
+
+def _has_js():
+    try:
+        import jsengine; return True
+    except Exception:
+        return False
+
+def sniff(html):
+    """Detecteaza ce fel de pagina e si ce date are in JS. NU descarca nimic.
+
+    Intoarce: {kind, scripts, patterns, js_hint}
+    kind: 'static'  = HTML normal (merge scraper)
+          'spa'     = aproape gol, are nevoie de JS/randare (jsengine/jsfetch)
+          'hybrid'  = HTML + date in <script> (scraper + jsengine)
+    """
+    import re
+    scripts = re.findall(r"<script[^>]*>", html or "")
+    pats = []
+    for name, rx in _DATA_PATTERNS:
+        if re.search(rx, html or "", re.S):
+            pats.append(name)
+    # text util fara taguri
+    text = re.sub(r"<script.*?</script>", " ", html or "", flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = " ".join(text.split())
+    if pats:
+        kind = "hybrid"
+    elif len(text) < 600 and len(scripts) > 3:
+        kind = "spa"          # gol dar multe scripturi = client-side
+    else:
+        kind = "static"
+    return {"kind": kind, "scripts": len(scripts), "patterns": pats,
+            "text_chars": len(text)}
+
+def extract_js_data(html, pattern=None):
+    """Extrage blocul de date JSON dintr-un <script> (fara sa ruleze JS).
+
+    pattern = nume din _DATA_PATTERNS (ex. '__NEXT_DATA__'); None = auto (primul gasit).
+    Intoarce (nume, text_json) sau (None, None).
+    """
+    import re
+    for name, rx in _DATA_PATTERNS:
+        if pattern and name != pattern: continue
+        m = re.search(rx, html or "", re.S)
+        if m:
+            raw = m.group(1).strip()
+            if raw.startswith(("window.", "var ")):      # unele au prefix
+                i = raw.find("=")
+                if i > 0: raw = raw[i+1:].strip().rstrip(";")
+            return name, raw
+    return None, None
+
+def js_query(url_or_html, expr, pattern=None, is_html=False):
+    """SUPREM: ia pagina (sau HTML dat), extrage datele JS si le interogheaza cu JS.
+
+    url_or_html = URL (se descarca) SAU HTML direct (is_html=True)
+    expr        = expresie JavaScript; variabila DATE = blocul JSON gasit
+                  (ex. 'DATE.props.pageProps.title' sau 'JSON.stringify(DATE.items)')
+    pattern     = fortat un anumit pattern ('__NEXT_DATA__', 'ld+json', ...)
+    """
+    import json as _json
+    html = url_or_html if is_html else fetch(url_or_html)
+    name, raw = extract_js_data(html, pattern)
+    if not raw:
+        return {"ok": False, "error": "nicio structura de date JS gasita",
+                "patterns_incercate": [p for p,_ in _DATA_PATTERNS]}
+    if not _has_js():
+        return {"ok": False, "error": "jsengine.py lipseste (pip install quickjs)"}
+    import jsengine
+    ctx = jsengine.context()
+    # ld+json poate fi un array sau obiect; il incarcam tolerant
+    try:
+        ctx.eval("var DATE = " + raw + ";")
+    except Exception:
+        ctx.eval("var DATE = " + _json.dumps(raw) + ";")   # fallback: string brut
+    try:
+        rez = ctx.eval(expr)
+    except Exception as e:
+        return {"ok": False, "error": "JS: " + str(e)[:150], "pattern": name}
+    return {"ok": True, "pattern": name, "result": rez,
+            "js_bytes": len(raw)}
+
+def deep(url_or_html, keys=None, pattern=None, is_html=False, limit=200):
+    """Cauta recursiv chei (implicit: title/headline/name) in datele JS ale paginii.
+
+    keys = lista de nume de chei (regex). Intoarce lista de valori gasite.
+    """
+    import json as _json
+    if isinstance(keys, str):
+        keys = [k.strip() for k in keys.split(",") if k.strip()]   # "a,b" -> ["a","b"]
+    keys = keys or ["title", "headline", "name"]
+    # cheile sunt comparate direct (mai sigur decat regex construit din string)
+    keys_js = ",".join(repr(k) for k in keys)
+    expr = ("(function(){var out=[];var KEYS=[%s];"
+            "function w(o){if(!o||typeof o!=='object'||out.length>%d)return;"
+            "if(Array.isArray(o)){for(var i=0;i<o.length;i++)w(o[i]);return;}"
+            "for(var k in o){var v=o[k];"
+            "if(KEYS.indexOf(k.toLowerCase())>=0){if(typeof v==='string'&&v.length>3)out.push(v);}"
+            "else w(v);}}w(DATE);return JSON.stringify(out);})()") % (keys_js, limit)
+    r = js_query(url_or_html, expr, pattern=pattern, is_html=is_html)
+    if not r.get("ok"):
+        return r
+    import json as _json2
+    try: r["values"] = _json2.loads(r["result"] or "[]")
+    except Exception: r["values"] = []
+    return r
+
+def supreme(url, force=None, scrolls=1):
+    """★ SCRAPING SUPREM: alege automat cea mai buna metoda pentru un URL.
+
+    force = 'scraper' | 'hybrid' | 'chrome'  (altfel: auto)
+    Intoarce dict cu {method, data, timp_ms, ...}
+
+    Ordinea (auto):
+      1) fetch + sniff  -> 'static'  => scraper (article/links)
+      2) 'hybrid'       => scraper + jsengine (datele din <script>)
+      3) 'spa'          => jsfetch (Chrome, randare completa)
+    """
+    import time as _t
+    t0 = _t.time()
+    out = {"url": url, "method": None, "data": None}
+    try:
+        html = fetch(url)
+    except Exception as e:
+        out["error"] = "fetch: " + str(e)[:120]; return out
+    info = sniff(html)
+    out["sniff"] = info
+    met = force
+    if not met:
+        met = {"hybrid": "hybrid", "static": "scraper", "spa": "chrome"}[info["kind"]]
+    out["method"] = met
+    if met == "hybrid":
+        name, raw = extract_js_data(html)
+        if name and _has_js():
+            q = js_query(html,
+                "(function(){var o=[];function w(x){"
+                "if(!x||typeof x!=='object'||o.length>150)return;"
+                "if(Array.isArray(x)){for(var i=0;i<x.length;i++)w(x[i]);return}"
+                "for(var k in x){var v=x[k];"
+                "if(/^(title|headline)$/i.test(k)&&typeof v==='string'&&v.length>15)o.push(v);"
+                "else w(v)}}w(DATE);return JSON.stringify(o)})()",
+                is_html=True)
+            out["data"] = q.get("result")
+            out["pattern"] = q.get("pattern")
+            out["ok"] = q.get("ok", False)
+            if not out["ok"]:
+                out["method"] = "scraper"; met = "scraper"
+        else:
+            out["method"] = "scraper"; met = "scraper"
+    if met == "scraper":
+        a = article(url)
+        out["data"] = a.get("text"); out["chars"] = a.get("chars")
+        out["ok"] = bool(a.get("chars"))
+    if met == "chrome":
+        try:
+            import jsfetch
+            tx = jsfetch.fetch(url, scrolls=scrolls, min_texts=25)
+            out["data"] = tx; out["n_texts"] = len(tx); out["ok"] = len(tx) > 3
+        except Exception as e:
+            out["ok"] = False; out["error"] = "jsfetch: " + str(e)[:150]
+    out["timp_ms"] = round((_t.time()-t0)*1000)
+    return out
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print(__doc__); sys.exit(0)
@@ -128,4 +304,19 @@ if __name__ == "__main__":
         for l in links(url, sys.argv[3] if len(sys.argv)>3 else None)[:40]: print("-", l["text"][:60], "->", l["href"])
     elif cmd == "meta": print(json.dumps(meta(url), ensure_ascii=False, indent=1)[:3000])
     elif cmd == "table": print(json.dumps(table(url), ensure_ascii=False)[:3000])
-    else: print("cmd: head|rss|article|xpath|css|links|meta|table")
+    elif cmd == "sniff": print(json.dumps(sniff(fetch(url)), ensure_ascii=False, indent=1))
+    elif cmd == "jsdata":
+        pat=sys.argv[3] if len(sys.argv)>3 else None
+        print(json.dumps(extract_js_data(fetch(url), pat), ensure_ascii=False)[:3000])
+    elif cmd == "jsquery":
+        print(json.dumps(js_query(url, sys.argv[3]), ensure_ascii=False, indent=1)[:4000])
+    elif cmd == "deep":
+        keys=sys.argv[3].split(",") if len(sys.argv)>3 else None
+        r=deep(url, keys); print(json.dumps(r.get("values", r), ensure_ascii=False, indent=1)[:4000])
+    elif cmd == "supreme":
+        r=supreme(url)
+        print("metoda: %s | timp: %s ms"%(r.get("method"), r.get("timp_ms")))
+        print("sniff:",r.get("sniff"))
+        d=r.get("data")
+        print("date:",(json.dumps(d,ensure_ascii=False)[:2500] if not isinstance(d,str) else d[:2500]))
+    else: print("cmd: head|rss|article|xpath|css|links|meta|table|sniff|jsdata|jsquery|deep|supreme")
