@@ -3807,3 +3807,24 @@ WRAP_CXX 6); meson setup+ninja+run (build dir proaspat) -> MESON_OK 1.414.
 - grpcio (esec la LINK), duckdb (RAM), kiwisolver.
 - maturin/pyo3: proiectul trebuie construit in `files/tmp`, nu pe /sdcard (regula (3k)).
 - typo-urile din scripturile de test ale agentului (regula (3l)).
+
+## Etapa 87 - GIT compilat pe device si functional (`.assets_v246`)
+
+Context: operatorul a cerut git ca sa poata face push la GitHub. Agentul l-a COMPILAT nativ
+(git 2.47.1 + libssh2 + nghttp2, binar aarch64 de 19.9 MB) dar a raportat un "SIGSEGV in
+update-ref", a declarat bug de build si a ars ~200 de pasi (sesiune de 427 intrari / ~72k tokeni).
+
+**Verificarea mea arata ca git FUNCTIOMEAZA** - concluzia de "bug" era un artefact:
+- `update-ref` pe un branch cu un BLOB refuza corect ("trying to write non-commit object") - testul
+  agentului era gresit (a scris hash-ul unui fisier intr-un branch);
+- verificate pe device, cu lansatorul: `--version` (2.47.1), init/add/commit/log,
+  `push` catre un repo (end-to-end), **clone HTTPS de pe GitHub** (README = "Hello World!");
+- singurul SIGSEGV real era chiar lansatorul meu: seta `GIT_EXEC_PATH`/`GIT_TEMPLATE_DIR`, iar cu
+  ele binarul crapa (-11); cu env-ul minimal dovedit merge. Nu se seteaza.
+
+Ce am livrat:
+- `_ensure_git_launcher()`: scrie `files/tmp/git.sh` (LD_LIBRARY_PATH prefix+deps, HOME,
+  GIT_SSL_CAINFO din SSL_CERT_FILE, identitate implicita pentru commit) + symlink-ul shwrap
+  `files/tmp/git` (binarul brut nu se poate executa direct din filesDir). Se recreeaza la pornire.
+- Regula (3q) in prompt: NU recompila git; foloseste `files/tmp/git`; push prin HTTPS cu token
+  (`git push https://<TOKEN>@github.com/user/repo.git main`) - calea simpla, fara chei SSH.

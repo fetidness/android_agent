@@ -1372,6 +1372,13 @@ def _ensure_launchers():
             made.append("cc-wrap:%d" % _ncc)
     except Exception:
         pass
+    # ★ FAZA 4z: git compilat pe device -> lansator `files/tmp/git`
+    try:
+        _ngit = _ensure_git_launcher()
+        if _ngit:
+            made.append("git:%d" % _ngit)
+    except Exception:
+        pass
     return made
 
 
@@ -1951,6 +1958,47 @@ def _ensure_cc_wrappers():
         except Exception:
             pass
     return n
+
+
+def _ensure_git_launcher():
+    """★ FAZA 4z: `git` compilat nativ pe device (git 2.47.1, libssh2+nghttp2) -> lansator stabil.
+
+    Dovedit in teste: init/add/commit/log, push (repo local) si clone HTTPS de pe GitHub merg.
+    Binarul NU se poate executa direct din filesDir, deci scriem `git.sh` + symlink shwrap
+    (`files/tmp/git`), la fel ca pentru clang/cargo/cmake. Fara asta, agentul chema binarul direct
+    si raporta "SIGSEGV" (de fapt artefact de test) pierzand ~200 de pasi intr-o sesiune.
+    """
+    _nat = _native_dir() or ""
+    _sw = _nat + "/libshwrap_exec.so"
+    P = F + "/tmp/gitbuild/prefix"
+    binp = P + "/bin/git"
+    if not (os.path.exists(_sw) and os.path.exists(binp)):
+        return 0
+    sh = F + "/tmp/git.sh"
+    # ★ Configuratia EXACTA care a fost dovedita functionala (init/add/commit/log, push, clone
+    # HTTPS). NU setam GIT_EXEC_PATH/GIT_TEMPLATE_DIR: cu ele binarul crapa cu SIGSEGV (reprodus:
+    # acelasi binar + env minimal = OK, acelasi binar + acele variabile = -11).
+    body = ("#!/system/bin/sh\n"
+            "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za)\n"
+            "export LD_LIBRARY_PATH=%s/lib:%s/lib:${LD_LIBRARY_PATH}\n"
+            "export HOME=${HOME:-%s/home}\n"
+            "[ -n \"$SSL_CERT_FILE\" ] && export GIT_SSL_CAINFO=\"$SSL_CERT_FILE\"\n"
+            "[ -z \"$GIT_AUTHOR_NAME\" ] && export GIT_AUTHOR_NAME=agent GIT_COMMITTER_NAME=agent\n"
+            "[ -z \"$GIT_AUTHOR_EMAIL\" ] && export GIT_AUTHOR_EMAIL=agent@device.local "
+            "GIT_COMMITTER_EMAIL=agent@device.local\n"
+            "exec /apex/com.android.runtime/bin/linker64 %s \"$@\"\n"
+            % (P, DEPS, F, binp))
+    try:
+        if (not os.path.exists(sh)) or open(sh).read() != body:
+            open(sh, "w").write(body)
+        os.chmod(sh, 0o755)
+        n = 0
+        for d in (F + "/tmp", BIN):
+            if _force_symlink_launcher(d + "/git", _sw):
+                n += 1
+        return n
+    except Exception:
+        return 0
 
 def _ensure_setuptools():
     """★ setuptools TREBUIE sa fie instalat: cu PIP_NO_BUILD_ISOLATION=1 (setat in env_vars),

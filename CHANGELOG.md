@@ -9,6 +9,14 @@
 
 ---
 
+### 2026-10-03 (git compilat pe device: verificat functional + lansator + regula (3q) - `.assets_v246`)
+
+- git 2.47.1 (compilat nativ de agent) VERIFICAT: init/add/commit/log, push end-to-end (repo local),
+  clone HTTPS de pe GitHub -> rc=0. "SIGSEGV-ul" raportat era un test greșit (blob intr-un branch)
+  plus un lansator propriu care seta GIT_EXEC_PATH/GIT_TEMPLATE_DIR (cu ele binarul crapa -11).
+- `_ensure_git_launcher()`: `files/tmp/git` + git.sh (env dovedit, identitate implicita de commit).
+- regula (3q): nu recompila git; push prin HTTPS cu token.
+
 ### 2026-10-02 (checkpoint: stare verificata si consolidata - `.assets_v245`)
 
 - readme: secțiune "STARE LA CHECKPOINT" - tabel de capabilitati cu dovezile de pe device,
