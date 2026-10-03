@@ -1976,8 +1976,21 @@ def _ensure_git_toolchain():
     dst = ROOT + "/git"
     GITROOT = dst
     _nat = _native_dir() or ""
-    srcpref = F + "/tmp/gitbuild/prefix"
-    srcsrc = F + "/tmp/gitbuild/dropbear-src/dropbearconvert"
+    # ★ surse posibile: build-ul vechi (gitbuild) SI driverul nou de la zero (files/tmp/gb/prefix,
+    # livrat in assets ca git_build_zero_driver.py). Fara a doua cale, un build de la zero facut de
+    # agent nu era preluat in locul durabil si disparea la curatare.
+    srcpref, srcsrc = "", ""
+    for _cand in (F + "/tmp/gitbuild/prefix", F + "/tmp/gb/prefix"):
+        if os.path.exists(_cand + "/bin/git"):
+            srcpref = _cand
+            break
+    for _cand2 in (F + "/tmp/gitbuild/dropbear-src/dropbearconvert",
+                   F + "/tmp/gb/src/dropbear-2024.86/dropbearconvert"):
+        if os.path.exists(_cand2):
+            srcsrc = _cand2
+            break
+    if not srcpref:
+        srcpref = F + "/tmp/gb/prefix"
     # ★ IDEMPOTENT pe fiecare piesa: o rulare partiala (ex. doar bin/ copiat) nu trebuie sa
     # blocheze completarea librariilor (bug prins la test: git copiat, lib/ gol -> "CANNOT LINK
     # EXECUTABLE: library libnghttp2.so.14 not found").

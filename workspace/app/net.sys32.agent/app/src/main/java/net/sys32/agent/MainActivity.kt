@@ -690,7 +690,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v249")
+        val stamp = File(filesDir, ".assets_v251")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -774,6 +774,24 @@ class MainActivity : AppCompatActivity() {
      *  AAPT pierde bitul de executie la ambalare → chmod 755 obligatoriu pe bin/. */
     private fun extractToolchain() {
         val dest = File(filesDir, "toolchain")
+        // ★ NU sterge ce a construit AGENTUL pe device: files/toolchain/git (git 2.47.1 + dropbear,
+        // compilate nativ, ~20 MB, durabile) disparea la fiecare update de APK - exact motivul pentru
+        // care operatorul a raportat "git a disparut si l-am rugat sa-l compileze de la 0".
+        // Il mutam deoparte si il punem la loc dupa re-extragere (acelasi pattern ca site_packages_keep).
+        val gitKeep = File(filesDir, "git_keep")
+        val gitLive = File(dest, "git")
+        var gitSaved = false
+        if (gitLive.exists()) {
+            try {
+                gitKeep.deleteRecursively()
+                gitLive.renameTo(gitKeep)
+                gitSaved = true
+            } catch (_: Exception) {
+                try {
+                    gitKeep.mkdirs(); gitLive.copyRecursively(gitKeep, overwrite = true); gitSaved = true
+                } catch (_: Exception) {}
+            }
+        }
         dest.deleteRecursively()
         fun copyDir(path: String, out: File) {
             val list = assets.list(path) ?: return
@@ -804,6 +822,17 @@ class MainActivity : AppCompatActivity() {
                 val lnk = File(binDir, name)
                 if (!lnk.exists()) lnk.createNewFile()
                 java.lang.Runtime.getRuntime().exec(arrayOf("ln", "-sf", target, lnk.absolutePath)).waitFor()
+            } catch (_: Exception) {}
+        }
+        // ★ punem la loc git-ul construit pe device (vezi mai sus)
+        if (gitSaved) {
+            try {
+                val target = File(dest, "git")
+                if (!target.exists()) gitKeep.renameTo(target)
+                if (!File(target, "bin/git").exists() && gitKeep.exists()) {
+                    gitKeep.copyRecursively(target, overwrite = true)
+                }
+                gitKeep.deleteRecursively()
             } catch (_: Exception) {}
         }
     }

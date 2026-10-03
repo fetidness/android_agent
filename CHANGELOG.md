@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-03 (cauza reala a pierderii git-ului: extractToolchain stergea files/toolchain - `.assets_v250`/`v251`)
+
+- `extractToolchain()` pastreaza `files/toolchain/git` peste update-uri (mutat in `files/git_keep`
+  inainte de stergere, pus la loc dupa) - altfel fiecare update de APK distrugea git-ul compilat
+  pe device.
+- `_ensure_git_toolchain()` accepta si `files/tmp/gb/prefix` (driverul din assets), nu doar vechiul
+  `gitbuild/prefix`.
+- `_ensure_git_launcher()` scrie `GIT_EXEC_PATH` spre libexec-ul DURABIL (fara el, dupa stergerea
+  build tree-ului, `clone https` cade cu "remote-https is not a git command"); launcherul copiaza
+  si `libexec/git-core` + template-urile.
+
 ### 2026-10-03 (git reconstruit de la zero; reteta validata si corectata - `.assets_v249`)
 
 - reteta corectata cu 12 capcane dovedite (vezi readme Etapa 90): /sdcard fara symlink-uri, xz

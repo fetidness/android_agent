@@ -3920,3 +3920,22 @@ DOVADA (build de la zero, azi): `git --version` 2.47.1; init/add/commit/log OK;
 `clone --depth 1 https://github.com/octocat/Hello-World.git` -> rc=0, README="Hello World!";
 `dbclient git@github.com` -> "Hi fetidness! You've successfully authenticated";
 `git ls-remote git@github.com:fetidness/android_agent.git` -> rc=0 cu refs reale.
+
+## Etapa 91 - DE CE disparea git-ul dupa fiecare update (cauza reala) (`.assets_v250`/`v251`)
+
+Complaintul operatorului ("l-am pus sa compileze git de la 0") nu era (doar) despre reteta greșita:
+**`extractToolchain()` din MainActivity stergea tot `files/toolchain/` la fiecare schimbare de
+`.assets_vNN`**, iar git-ul construit pe device traia exact acolo (`files/toolchain/git/`). Deci
+fiecare update de APK distrugea rezultatul muncii agentului - inclusiv cand el il construise corect.
+
+Fix (acelasi pattern ca `site_packages_keep`, folosit deja pentru site-packages):
+- inainte de `dest.deleteRecursively()`, `files/toolchain/git` e mutat in `files/git_keep`;
+- dupa re-extragerea assets-urilor si refacerea symlink-urilor, e pus la loc;
+- daca `bin/git` lipseste, se copiaza inapoi recursiv.
+
+In plus, `_ensure_git_toolchain()` cauta acum esentialul in AMBELE locatii de build:
+`files/tmp/gitbuild/prefix` (build-ul vechi) si `files/tmp/gb/prefix` (driverul nou din assets,
+`git_build_zero_driver.py`) - altfel un build de la zero facut de agent nu ajungea in locul durabil.
+
+Testul de durabilitate: doua update-uri de APK consecutive (v250 -> v251) si verificare ca
+`files/toolchain/git/bin/{git,dbclient,dropbearconvert}` si `libexec/git-core` sunt inca acolo.
