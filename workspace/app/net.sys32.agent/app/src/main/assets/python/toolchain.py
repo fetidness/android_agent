@@ -1995,8 +1995,11 @@ def _ensure_git_toolchain():
     # blocheze completarea librariilor (bug prins la test: git copiat, lib/ gol -> "CANNOT LINK
     # EXECUTABLE: library libnghttp2.so.14 not found").
     try:
+        # ★ dropbearkey: permite GENERAREA de chei SSH pe device (util cand operatorul vrea o cheie
+        # noua). Nu venea in pachetul initial - il copiem daca a fost construit.
         need_bin = [("git", srcpref + "/bin/git"), ("dbclient", srcpref + "/bin/dbclient"),
-                    ("dropbearconvert", srcsrc)]
+                    ("dropbearconvert", srcsrc),
+                    ("dropbearkey", srcpref + "/bin/dropbearkey")]
         if not os.path.exists(srcpref + "/bin/git") and not os.path.exists(dst + "/bin/git"):
             return ""
         for d in (dst + "/bin", dst + "/lib"):
@@ -2048,6 +2051,18 @@ def _ensure_git_toolchain():
                         _sh3.copy2(os.path.join(_root, _fn), os.path.join(_dd, _fn))
                     except Exception:
                         pass
+        # ★ prefixul COMPILAT in binar e tree-ul de build (files/tmp/gb/prefix); daca acela exista,
+        # cream etc/gitattributes gol ca sa nu mai apara warning-uri (nu patch-ui binarul!)
+        for _pfx in (F + "/tmp/gb/prefix", F + "/tmp/gitbuild/prefix"):
+            if os.path.isdir(_pfx):
+                try:
+                    os.makedirs(_pfx + "/etc", exist_ok=True)
+                    _ga = _pfx + "/etc/gitattributes"
+                    if not os.path.exists(_ga):
+                        open(_ga, "w").write("")
+                except Exception:
+                    pass
+        _ensure_git_config()
         if os.path.exists(dst + "/bin/git"):
             try:
                 open(dst + "/.installed", "w").write("git toolchain durabil\n")
@@ -2056,6 +2071,29 @@ def _ensure_git_toolchain():
         return dst if os.path.exists(dst + "/bin/git") else ""
     except Exception:
         return ""
+
+def _ensure_git_config():
+    """★ (dintr-o sesiune reala de build de la zero) FARA identitate git, reflog-ul crapa:
+    `git update-ref` / `fetch` / `clone` (faza finala) dau SIGSEGV (rc=139), in timp ce
+    init/add/commit/log merg. Agentul a consumat ~15 pasi izoland asta. Scriem configul global
+    (HOME=files/home) o data, cu identitate + zgomotul de sistem oprit.
+    """
+    try:
+        p = F + "/home/.gitconfig"
+        if os.path.exists(p) and os.path.getsize(p) > 40:
+            return True
+        os.makedirs(F + "/home", exist_ok=True)
+        open(p, "w").write(
+            "[user]\n\tname = agent\n\temail = agent@device.local\n"
+            "[safe]\n\tdirectory = *\n"
+            "[init]\n\tdefaultBranch = main\n"
+            "[gc]\n\tauto = 0\n\tautoDetach = false\n"
+            "[maintenance]\n\tauto = false\n"
+            "[core]\n\tlogAllRefUpdates = true\n")
+        return True
+    except Exception:
+        return False
+
 
 def _ensure_git_launcher():
     """★ FAZA 4z: `git` compilat nativ pe device (git 2.47.1, libssh2+nghttp2) -> lansator stabil.
@@ -2121,8 +2159,14 @@ def _ensure_git_launcher():
             _ssh = "unset GIT_SSH_COMMAND\n"
     _le = P + "/libexec/git-core"
     _le_line = ("export GIT_EXEC_PATH=%s\n" % _le) if os.path.isdir(_le) else ""
+    # ★ GIT_CONFIG_NOSYSTEM=1 + GIT_TEMPLATE_DIR: fara ele git scrie warning-uri la fiecare comanda
+    # ("unable to access '<build prefix>/etc/gitattributes': Permission denied",
+    #  "templates not found in <build prefix>/share/git-core/templates") - prefixul compilat e
+    # tree-ul de build, care nu mai exista pe termen lung. Agentul a pierdut ~10 pasi pe ele.
     body = ("#!/system/bin/sh\n"
-            "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za/4zc)\n"
+            "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za/4zc/4zd)\n"
+            "export GIT_CONFIG_NOSYSTEM=1\n"
+            "export GIT_TEMPLATE_DIR=%s/share/git-core/templates\n" % P
             + _le_line + _ssh +
             "export LD_LIBRARY_PATH=%s/lib:%s/tmp/gitbuild/prefix/lib:%s/lib:${LD_LIBRARY_PATH}\n"
             "export HOME=${HOME:-%s/home}\n"

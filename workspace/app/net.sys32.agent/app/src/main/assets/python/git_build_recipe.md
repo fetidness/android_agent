@@ -23,6 +23,21 @@ RETETA VERIFICATA integral pe device (2026-10-03): build -> install -> HTTPS -> 
 8. **`make install` cu ACELEASI variabile** (altfel recompileaza cu `cc` si cade).
 9. In locul durabil (`files/toolchain/git/`) intra si **`libexec/git-core/*`** (helper-ele
    `git-remote-https`! fara ele clone HTTPS esueaza) + `share/git-core/templates`.
+10. **PREFIXUL COMPILAT = locul durabil** (`prefix=$F/toolchain/git`). Daca se compileaza cu un
+    prefix temporar (ex. files/tmp/gb/prefix), binarul retine acea cale si fiecare comanda scoate
+    warning-uri ("unable to access <prefix>/etc/gitattributes: Permission denied", "templates not
+    found in <prefix>/share/git-core/templates"). NU PATCH-UI binarul ca sa scapi de ele (a costat
+    ~10 pasi intr-o sesiune): fie compilezi cu prefixul durabil, fie pui in launcher
+    `GIT_CONFIG_NOSYSTEM=1` + `GIT_TEMPLATE_DIR=<durabil>/share/git-core/templates`.
+11. **Identitatea git e obligatorie**: fara `user.name`/`user.email` (HOME/corect), `git update-ref`
+    / `fetch` / finalul lui `clone` crapa cu **SIGSEGV (rc=139)**, desi init/add/commit/log merg.
+    Configul se scrie in `files/home/.gitconfig` (il face `_ensure_git_config()`).
+12. dropbear (in afara de crypt/getpass): `configure --host=aarch64-linux-android` (altfel
+    "cannot run C compiled programs"); Makefile-ul cheama `$(srcdir)/ifndef_wrapper.sh` -> trece-l
+    prin `sh `; iar CFLAGS dat pe linia de comanda SUPRASCRIE `CFLAGS +=` din Makefile, deci
+    sub-make-ul libtommath nu mai primeste `-I` si cade cu "dbmalloc.h not found" -> da TOATE
+    `-I`-urile (inclusiv `-I<dropbear>/src`) in CFLAGS-ul de pe linia de comanda, plus
+    `-DLOCALOPTIONS_H_EXISTS`. Construieste si `dropbearkey` (chei SSH pe device).
 
 ## 1. Surse (descarca in files/tmp/gitbuild)
 - git:      https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.47.1.tar.xz

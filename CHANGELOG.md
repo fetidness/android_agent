@@ -9,6 +9,20 @@
 
 ---
 
+### 2026-10-03 (optimizari din conversatia de build a agentului - `.assets_v252`)
+
+- reguli noi in prompt: (3s) fara concluzii de mediu fara test ("SELinux blocheaza exec" si "grep e
+  mut" au fost FALSE si au costat ~60 de pasi); (3t) fara pipe in comenzile bg; (3u) nu patch-ui
+  binarul git; (3b) rescrisa (exec din filesDir se testeaza, nu se presupune).
+- `_ensure_git_config()`: files/home/.gitconfig (identitate + safe.directory + fara gc/maintenance) -
+  fara ea update-ref/fetch/clone crapa cu SIGSEGV (rc=139).
+- launcher git: GIT_CONFIG_NOSYSTEM=1 + GIT_TEMPLATE_DIR (fara warning-uri la fiecare comanda);
+  `_ensure_git_toolchain()` creeaza etc/gitattributes gol la prefixul compilat si copiaza dropbearkey.
+- `(no output)` reparat in toate cele 3 locuri (bash/bg/run_su) cu mesaj explicit.
+- garda adbsh nu mai blocheaza comenzile cu pipe/heredoc care doar mentioneaza filesDir.
+- driver (assets) + reteta: prefix durabil, configure --host, ifndef_wrapper prin sh, CFLAGS cu
+  toate -I si -DLOCALOPTIONS_H_EXISTS (command-line CFLAGS anuleaza CFLAGS += din Makefile).
+
 ### 2026-10-03 (cauza reala a pierderii git-ului: extractToolchain stergea files/toolchain - `.assets_v250`/`v251`)
 
 - `extractToolchain()` pastreaza `files/toolchain/git` peste update-uri (mutat in `files/git_keep`

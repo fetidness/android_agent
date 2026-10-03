@@ -3939,3 +3939,44 @@ In plus, `_ensure_git_toolchain()` cauta acum esentialul in AMBELE locatii de bu
 
 Testul de durabilitate: doua update-uri de APK consecutive (v250 -> v251) si verificare ca
 `files/toolchain/git/bin/{git,dbclient,dropbearconvert}` si `libexec/git-core` sunt inca acolo.
+
+## Etapa 92 - optimizari din conversatia de build a agentului (339 mesaje / ~39k tokeni) (`.assets_v252`)
+
+Am citit integral conversatia in care operatorul a cerut "compileaza-mi git si sa fie complet
+functional". Git a iesit pana la urma functional, dar pe drum agentul a pierdut ~150 de pasi in
+doua categorii de probleme. Le-am reparat pe amandoua.
+
+### A. CONCLUZII FALSE DESPRE MEDIU (cauza principala, ~60 pasi pierduti)
+Agentul a afirmat si apoi a construit in jurul a doua lucruri care erau FALSE:
+- "SELinux blocheaza exec din filesDir" - de fapt helper-ul `git-remote-http` **ruleaza** direct din
+  `files/toolchain/git/libexec/git-core` (verificat acum: rc=1 cu usage = a executat). Consecinta:
+  a mutat tot git-ul in `/data/local/tmp`, a construit o a doua instalare (43 MB arhiva) si a
+  PATCH-UIT binarul ca sa schimbe prefixul hardcodat (apoi l-a restaurat).
+- "toybox grep nu returneaza" - de fapt `grep -n` merge perfect pe device (verificat acum).
+
+Fix: regula noua (3s) in prompt - o concluzie de mediu se scrie DOAR dupa un test care a esuat, cu
+comanda si eroarea exacta; daca vrei sa spui "X e blocat", ruleaza intai `subprocess.run([cale])`
+sau `grep -n x fisier`. Regula (3b) a fost rescrisa (era absoluta: "app NU poate executa un ELF din
+filesDir") - acum cere testarea intai. Regula (3t): in `bg` NU se pune pipe (log-ul iese gol - s-a
+intamplat de 4 ori). Regula (3u): identitatea git / prefixul se rezolva prin config, nu prin
+patcharea binarului.
+
+### B. LUCRURI REALE, REZOLVATE ACUM IN COD
+1. **SIGSEGV fara identitate git** (agentul a izolat corect: `update-ref`/`fetch`/finalul lui
+   `clone` dau rc=139 fara `user.name`/`user.email`; cu identitate = rc=0). Acum
+   `_ensure_git_config()` scrie `files/home/.gitconfig` (identitate, safe.directory=*, gc.auto=0,
+   maintenance.auto=false, defaultBranch=main) - clasa de crash dispare.
+2. **Warning-uri la fiecare comanda** ("unable to access <prefix>/etc/gitattributes", "templates not
+   found"): launcherul exporta acum `GIT_CONFIG_NOSYSTEM=1` si `GIT_TEMPLATE_DIR`, iar
+   `_ensure_git_toolchain()` creeaza `etc/gitattributes` gol la prefixul compilat.
+3. **`(no output)`** la comenzile fara iesire (7 aparitii; agentul a crezut de mai multe ori ca
+   unealta e stricata): toate cele 3 locuri rămase (bash, bg/runner, run_su) raspund explicit ca
+   comanda a rulat OK.
+4. **Garda adbsh** bloca si comenzi legitime care doar *mentionau* calea filesDir (ex. `strings ...
+   | grep <cale>`, heredoc cu SSL_CERT_FILE): ~6 pasi pierduti reformuland. Acum blocheaza doar
+   comenzile simple de acces, fara pipe/heredoc.
+5. **dropbearkey** intra in pachetul durabil (generare de chei SSH pe device).
+6. **Driverul din assets** (`git_build_zero_driver.py`) primeste corectiile reale descoperite de
+   agent: prefix = locul durabil (fara patch de binar), `configure --host`, `sh ifndef_wrapper.sh`,
+   CFLAGS cu toate `-I` + `-DLOCALOPTIONS_H_EXISTS`, dropbearkey. Reteta (12 puncte) actualizata.
+

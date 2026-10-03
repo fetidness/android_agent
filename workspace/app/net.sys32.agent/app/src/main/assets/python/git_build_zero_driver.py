@@ -10,7 +10,10 @@ F = "/data/data/net.sys32.agent/files"
 TC = F + "/toolchain"
 DEPS = TC + "/deps"
 B = F + "/tmp/gb"
-INS = B + "/prefix"
+INS = F + "/toolchain/git"          # ★ prefixul COMPILAT = locul DURABIL:
+# altfel binarul retine tree-ul de build (files/tmp/gb/prefix) si fiecare comanda da
+# warning-uri "unable to access .../etc/gitattributes", iar la curatare git se strica.
+# (agentul a ajuns sa PATCH-UIE binarul ca sa scape de ele - nu e necesar)
 SRC = B + "/src"
 ST = F + "/tmp/gb_status.txt"
 NAT = None
@@ -219,8 +222,11 @@ if not os.path.exists(dbsrc):
 if not os.path.exists(INS + "/bin/dbclient"):
     env2 = dict(e)
     env2["LIBS"] = "-lz"
-    r = subprocess.run(["/system/bin/sh", "./configure", "--prefix=" + INS, "--disable-zlib",
-                        "--disable-syslog"], cwd=dbsrc, env=env2, capture_output=True, text=True,
+    # ★ --host: fara el configure incearca sa RULEZE programele C compilate (cross) si cade cu
+    #   "cannot run C compiled programs. If you meant to cross compile, use --host".
+    r = subprocess.run(["/system/bin/sh", "./configure", "--host=aarch64-linux-android",
+                        "--prefix=" + INS, "--disable-zlib", "--disable-syslog"],
+                       cwd=dbsrc, env=env2, capture_output=True, text=True,
                        timeout=900, stdin=subprocess.DEVNULL)
     # ★ Android nu are crypt(): dropbear cade cu
     #   "DROPBEAR_SVR_PASSWORD_AUTH requires `crypt()'" la compilarea libtomcrypt.
@@ -251,8 +257,26 @@ if not os.path.exists(INS + "/bin/dbclient"):
             log("cli-auth.c: shim getpass adaugat")
     except Exception as _e:
         log("getpass shim warn: %r" % (_e,))
-    run([mk, "-C", dbsrc, "PROGRAMS=dropbear dbclient dropbearkey dropbearconvert", "-j4",
-         "dropbear", "dbclient", "dropbearconvert"], timeout=1800, label="make-dropbear")
+    # ★ Makefile-ul lui dropbear cheama ./src/ifndef_wrapper.sh direct -> "Permission denied"
+    #   (scripturile din filesDir nu se executa). Il facem sa cheme `sh`.
+    try:
+        mf = dbsrc + "/Makefile"
+        t2 = open(mf).read()
+        if "$(srcdir)/ifndef_wrapper.sh" in t2:
+            open(mf, "w").write(t2.replace("$(srcdir)/ifndef_wrapper.sh",
+                                           "sh $(srcdir)/ifndef_wrapper.sh"))
+            log("Makefile dropbear: ifndef_wrapper prin sh")
+    except Exception as _e:
+        log("patch Makefile warn: %r" % (_e,))
+    # ★ CFLAGS pe linia de comanda SUPRASCRIE `CFLAGS +=` din Makefile (make nu aduna la command-line
+    #   vars) -> sub-make-ul libtommath pierdea -I spre dropbear/src ("dbmalloc.h not found").
+    #   De aceea TOATE -I-urile si -DLOCALOPTIONS_H_EXISTS trebuie sa fie in CFLAGS-ul dat de noi.
+    db_cflags = [e.get("CFLAGS", "")] + ["-I" + dbsrc + "/src", "-I" + dbsrc,
+                                         "-DLOCALOPTIONS_H_EXISTS"]
+    run([mk, "-C", dbsrc, "CFLAGS=" + " ".join(x for x in db_cflags if x.strip()),
+         "PROGRAMS=dropbear dbclient dropbearkey dropbearconvert", "-j4",
+         "dropbear", "dbclient", "dropbearconvert", "dropbearkey"],
+        timeout=1800, label="make-dropbear")
     for b in ("dbclient", "dropbearconvert"):
         sp = dbsrc + "/" + b
         if os.path.exists(sp):
@@ -260,7 +284,7 @@ if not os.path.exists(INS + "/bin/dbclient"):
             os.chmod(INS + "/bin/" + b, 0o755)
 
 # ★ dropbear se construieste DUPA prima copiere -> recopiem binarele lui acum
-for _b in ("dbclient", "dropbearconvert"):
+for _b in ("dbclient", "dropbearconvert", "dropbearkey"):
     _s2 = INS + "/bin/" + _b
     if os.path.exists(_s2):
         shutil.copy2(_s2, G + "/bin/" + _b)
