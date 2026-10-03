@@ -260,7 +260,18 @@ def supreme(url, force=None, scrolls=1):
     out["method"] = met
     if met == "hybrid":
         name, raw = extract_js_data(html)
-        if name and _has_js():
+        # ★ __NEXT_DATA__ poate fi APROAPE GOL (doar metadata; continutul vine din JS) ->
+        # hibridul e insuficient, trecem automat pe RANDARE COMPLETA (ni se schimba metoda).
+        # ★ DACA pagina are MULT text in HTML (ex. Wikipedia: 215 KB), continutul e in DOM,
+        # nu in JS -> scraper e suficient si mult mai rapid. Doar cand HTML-ul e SARAC
+        # si blocul JS mic avem un SPA care chiar are nevoie de randare.
+        if name and len(raw or "") < 2000:
+            out["hybrid_slab"] = len(raw or "")
+            if info["text_chars"] > 3000:
+                out["method"] = "scraper"; met = "scraper"      # HTML bogat -> scraper
+            else:
+                out["method"] = "chrome"; met = "chrome"        # HTML sarac -> randare
+        elif name and _has_js():
             q = js_query(html,
                 "(function(){var o=[];function w(x){"
                 "if(!x||typeof x!=='object'||o.length>150)return;"
@@ -273,7 +284,7 @@ def supreme(url, force=None, scrolls=1):
             out["pattern"] = q.get("pattern")
             out["ok"] = q.get("ok", False)
             if not out["ok"]:
-                out["method"] = "scraper"; met = "scraper"
+                out["method"] = "scraper"; met = "scraper"   # fallback
         else:
             out["method"] = "scraper"; met = "scraper"
     if met == "scraper":
