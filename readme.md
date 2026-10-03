@@ -256,6 +256,50 @@ La o reinstalare nu se recompileaza:
    Fix aplicat in `scraper.py`: functia `_clean_meta()` care scoate/converteste
    valorile ne-serializabile + `default=str` la afisare.
 
+#### ★ MOTOR JAVASCRIPT (jsengine.py) - site-uri cu JS
+
+Site-urile moderne (React/Vue/Next.js) pun datele in JavaScript, nu in DOM.
+`scraper.py` singur NU le vede. Solutia: **QuickJS compilat nativ pe device**.
+
+**Instalat:** `quickjs 1.19.4` (wheel `android_24_arm64_v8a`, 449 KB) - ES2020 complet:
+async/await, Promise, optional chaining (`?.`), nullish (`??`), Map/Set, classes, BigInt.
+Alternativa mini-racer (V8) e IMPOSIBILA pe device: cere `just build-dll` cu V8 din sursa.
+
+**Functii noi in scraper.py (leaga scraper + jsengine automat):**
+
+| Functie | Ce face |
+|---------|---------|
+| `sniff(html)` | clasifica pagina: `static` / `hybrid` / `spa` + listeaza pattern-urile de date |
+| `extract_js_data(html)` | scoate blocul JSON din `<script>` (7 patterns cunoscute) |
+| `js_query(url, expr)` | extrage datele JS si le interogheaza cu JavaScript (variabila `DATE`) |
+| `deep(url, keys)` | cauta recursiv chei (`title`/`headline`/`name`) in structura imbricata |
+| **`supreme(url)`** | **★ ALEGE AUTOMAT metoda optima si o executa** |
+
+**Pattern-uri de date recunoscute:** `__NEXT_DATA__`, `__NUXT__`, `__INITIAL_STATE__`,
+`__DATA__`, `__PRELOADED_STATE__`, `__APOLLO_STATE__`, `ld+json`.
+
+**CLI:**
+```bash
+python3.14 files/python/scraper.py sniff <url>          # ce fel de pagina e
+python3.14 files/python/scraper.py jsquery <url> 'Object.keys(DATE)'
+python3.14 files/python/scraper.py deep <url> title,headline
+python3.14 files/python/scraper.py supreme <url>        # ★ face tot, alege singur
+```
+
+**Lantul suprem (dovada pe device, BBC News 379 KB):**
+```
+scraper.fetch()           195 ms   ia HTML-ul
+scraper.extract_js_data()   6 ms   scoate 93 KB de JSON din <script>
+jsengine (QuickJS)         20 ms   interogheaza recursiv structura
+                        --------
+TOTAL                     221 ms   123 titluri extrase (vs 253 chars cu article() singur)
+```
+
+**Decizia automata a lui `supreme()`:**
+- `kind=static` -> `scraper.article()` (HTML normal, <1s)
+- `kind=hybrid` -> scraper (reteaua) + jsengine (datele JS) - **cel mai eficient**
+- `kind=spa` -> `jsfetch.fetch()` (Chrome, randare completa, 12-23s)
+
 #### Verificat pe device (3 oct 2026, toate rc=0)
 
 ```
