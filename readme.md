@@ -4,17 +4,22 @@
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
 
-### Starea repo-ului (28 sept 2026) — ARHITECTURA "ZERO TERMUX"
+### Starea repo-ului (3 oct 2026, `.assets_v252`) — ARHITECTURA "ZERO TERMUX"
+
+> **Nota (3 oct 2026):** valorile de mai jos sunt RE-MASURATE pe clona curenta,
+> nu preluate din documentatie veche. Daca modifici o cifra aici, masoar-o intai
+> (`wc -c`, `ls`, `grep -n assets_v`), pentru ca tabelul acesta a fost deja o data
+> in urma cu codul (spunea v197 / 187 915 B cand realul era v252 / 233 337 B).
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v197`** |
-| APK debug | **282 MB** (toolchain nativ COMPLET + binare executabile) |
-| `agent.py` (assets) | **187 915 B** |
-| `toolchain.py` (assets) | **62 737 B** |
+| Marker assets activ | **`.assets_v252`** (in `MainActivity.kt`, singura sursa de adevar) |
+| APK debug | **~282 MB** (toolchain nativ COMPLET + binare executabile) |
+| `agent.py` (assets) | **233 337 B** (3549 linii) |
+| `toolchain.py` (assets) | **153 965 B** |
 | Module Kotlin | **15** |
-| Assets Python | agent.py + toolchain.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri |
-| Toolchain nativ | `assets/toolchain/` (343 MB) + **16 binare** in `jniLibs/` |
+| Assets Python | agent.py + toolchain.py + adb_client.py + adb_setup.py + android_bridge.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri (pysitepkg, stdlib_extra) |
+| Toolchain nativ | `assets/toolchain/` (~343 MB) + binare `lib*_exec.so` in `jniLibs/` — **NU sunt in git** (vezi `.gitignore`), se regenereaza |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
 | Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |
@@ -380,7 +385,7 @@ $ADB shell pm list packages | grep sys32                       # package present
 
 `MainActivity.kt` in `extractAssets()`:
 ```kotlin
-val stamp = File(filesDir, ".assets_v115")
+val stamp = File(filesDir, ".assets_v252")   // valoarea CURENTA (verific-o cu grep, nu o presupune)
 if (stamp.exists() && dest.exists()) return   // ← iese IMEDIAT daca markerul exista
 ```
 Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi markerul.
@@ -389,14 +394,14 @@ Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi mar
 ```bash
 # 1. gaseste markerul curent
 grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt
-#    -> 654:  val stamp = File(filesDir, ".assets_v115")
+#    -> 693:  val stamp = File(filesDir, ".assets_v252")
 
-# 2. incrementeaza-l (v115 -> v116)
-sed -i 's/\.assets_v115/.assets_v116/' app/src/main/java/net/sys32/agent/MainActivity.kt
+# 2. incrementeaza-l (v252 -> v253)
+sed -i 's/\.assets_v252/.assets_v253/' app/src/main/java/net/sys32/agent/MainActivity.kt
 
 # 3. rebuild + install, apoi verifica PE DEVICE
 $ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/ | grep assets_v
-#    -> .assets_v116  (trebuie sa fie NOU)
+#    -> .assets_v253  (trebuie sa fie NOU)
 ```
 
 Ce face re-extragerea (util cand ceva „nu se actualizeaza"):
@@ -597,7 +602,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v184`**) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v252`**; se citeste cu `grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt`) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -683,9 +688,19 @@ cd /home/gab/Desktop/android_agent/workspace/app
 
 > **Schema de nume:** `agent-<platform>-<varianta>.py` unde platforma = `android` | `linux`,
 > iar varianta = `original` (neatins) | `v2` (optimizat pentru context de 1M tokeni).
-> `assets/python/agent.py` este COPIA versiunii v2 - numele fix `agent.py` e cel pe care
-> il cauta codul Kotlin (`ProcessBuilder(py, "agent.py")`), deci default-ul se schimba
-> inlocuind acel fisier, fara nicio modificare de cod.
+>
+> ⚠️ **ATENTIE (corectat 3 oct 2026): `assets/python/agent.py` NU mai este copia lui
+> `agent-android-v2.py`.** Fisierele `agent-*-*.py` din radacina sunt INGHETATE la
+> 25 sept 2026 (ultimul commit `c71edc1`) si au ramas documentatie de referinta.
+> Codul VIU este `assets/python/agent.py` (3 oct, v252): 233 337 B / 3549 linii,
+> fata de 180 558 B / 2696 linii in `agent-android-v2.py` — nu sunt identice
+> (`md5`: assets `455cdb63...`, v2 rădăcină `8639f8b4...`), iar niciunul nu e
+> substring al celuilalt.
+>
+> `agent.py` este numele fix pe care il cauta codul Kotlin (`ProcessBuilder(py, "agent.py")`),
+> deci versiunea care ruleaza pe device este EXCLUSIV cea din assets. Daca vrei sa
+> reeditezi agentul, editeaza `assets/python/agent.py` direct — **nu** copia
+> `agent-android-v2.py` peste el (ai pierde 853 linii de dezvoltare ulterioara).
 
 ---
 

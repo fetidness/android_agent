@@ -3,11 +3,50 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `9ffae1a`.
+> Ultimul commit inclus: `70954fd`.
 
-**Total: 190 commituri in 12 zile** (19 sep -> 1 oct).
+**Total: 237 commituri in 15 zile** (19 sep -> 3 oct).
 
 ---
+
+### 2026-10-03 (git reconstruit de la zero pe device dupa curatare completa + README corectat)
+
+Sesiune pe device. Operatorul a semnalat corect ca git-ul lipsea complet (nu doar
+"nu se executa"): `files/toolchain/git/` era gol, iar `files/home/.ssh/` la fel.
+
+**Ce s-a facut (reconstruire completa, dupa `git_build_recipe.md`):**
+- surse descarcate pe device (git 2.47.1, libssh2 1.11.1, nghttp2 1.64.0, dropbear 2024.86)
+  si compilate nativ (clang 21 + lld); md5shim, NO_PTHREADS, CURL_CONFIG fals ca in reteta.
+- git instalat in locul durabil `files/toolchain/git/` (bin/, lib/, libexec/git-core/ cu 172
+  helper-e, share/git-core/templates).
+- **capcana noua (helper-ele)**: `git-remote-https` si `dbclient` sunt ELF-uri; git le executa
+  DIRECT -> "cannot exec 'remote-https': Permission denied" / "remote helper 'https' aborted
+  session". Fix: fiecare ELF din libexec + binarele dropbear au fost invelite in lansatoare
+  shwrap (`libshwrap_exec.so`), cu scriptul `<nume>.sh` in ACELASI director din care e invocat
+  symlinkul (`libshwrap_exec.so` deriva scriptul din `dirname(argv[0])+basename+".sh"`).
+  Fara `.sh`-ul in libexec-ul git: "files/tmp/git-remote-https.sh: No such file or directory".
+- **capcana noua (chei dropbear)**: `dropbearkey -f <k>` scrie cheia in format DROPBEAR nativ,
+  deci `dropbearconvert openssh dropbear <k>` da "File does not begin with OpenSSH key header".
+  Ordinea corecta: intai `dropbearconvert dropbear openssh` (pentru cheia publica/privata
+  OpenSSH folosita de GitHub), apoi `openssh dropbear` pentru `.db`-ul cerut de dbclient.
+- **cheie SSH NOUA generata pe device** cu `dropbearkey -t ed25519` (cea veche a operatorului
+  fusese stearsa); cheia publica a fost adaugata de operator in GitHub; autentificarea a fost
+  confirmata ("Hi fetidness! You've successfully authenticated").
+- **dovada finala**: `git clone --depth 1 git@github.com:fetidness/android_agent.git` -> rc=0,
+  899 fisiere; si clone HTTPS -> rc=0.
+
+**README corectat (4 inconsistente reale, gasite prin masurare, nu presupunere):**
+- tabelul de sus spunea `.assets_v197` / `agent.py` 187 915 B / `toolchain.py` 62 737 B;
+  real (masurat in clona): **`.assets_v252`** / **233 337 B** (3549 linii) / **153 965 B**.
+- OP.7 spunea "acum `.assets_v184`"; real `.assets_v252`.
+- afirmatia "`assets/python/agent.py` este COPIA versiunii v2" e FALSA: `agent-android-v2.py`
+  din radacina e inghetat la 25 sept (180 558 B / 2696 linii), in timp ce `assets/python/agent.py`
+  e codul viu (233 337 B / 3549 linii); md5 diferit, niciunul substring al celuilalt.
+- OP.3 folosea exemplul v115/v116 la un marker care acum e v252 (comenzile `sed` pareau corecte
+  dar se refereau la alt fisier) - actualizat la v252/v253.
+
+**Nota de proces:** toate cifrele corectate au fost MASURATE pe clona inainte de editare
+(`wc -c`, `grep -n assets_v MainActivity.kt`, `md5`); regula OP.7 din readme cere explicit asta.
 
 ### 2026-10-03 (optimizari din conversatia de build a agentului - `.assets_v252`)
 
