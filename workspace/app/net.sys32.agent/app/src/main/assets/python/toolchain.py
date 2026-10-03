@@ -2005,6 +2005,36 @@ def _ensure_git_toolchain():
                         _sh3.copy2(_s2, dst + "/lib/" + _bn)
                     except Exception:
                         pass
+        # helper-ele de retea (git-remote-https!) + template-urile: fara ele clone/push https
+        # esueaza cu "git: 'remote-https' is not a git command"
+        _le_src = srcpref + "/libexec/git-core"
+        _le_dst = dst + "/libexec/git-core"
+        if os.path.isdir(_le_src) and (not os.path.isdir(_le_dst) or len(os.listdir(_le_dst)) < 5):
+            os.makedirs(_le_dst, exist_ok=True)
+            for _x in os.listdir(_le_src):
+                _sp, _dp = _le_src + "/" + _x, _le_dst + "/" + _x
+                try:
+                    if os.path.islink(_sp):
+                        _t = os.readlink(_sp)
+                        if os.path.lexists(_dp):
+                            os.remove(_dp)
+                        os.symlink(_t, _dp)
+                    elif not os.path.exists(_dp):
+                        _sh3.copy2(_sp, _dp)
+                        os.chmod(_dp, 0o755)
+                except Exception:
+                    pass
+        _tpl_src = srcpref + "/share/git-core/templates"
+        if os.path.isdir(_tpl_src) and not os.path.isdir(dst + "/share/git-core/templates"):
+            for _root, _dirs, _files in os.walk(_tpl_src):
+                _rel = os.path.relpath(_root, _tpl_src)
+                _dd = os.path.join(dst + "/share/git-core/templates", _rel)
+                os.makedirs(_dd, exist_ok=True)
+                for _fn in _files:
+                    try:
+                        _sh3.copy2(os.path.join(_root, _fn), os.path.join(_dd, _fn))
+                    except Exception:
+                        pass
         if os.path.exists(dst + "/bin/git"):
             try:
                 open(dst + "/.installed", "w").write("git toolchain durabil\n")
@@ -2076,9 +2106,11 @@ def _ensure_git_launcher():
             _ssh = ("export GIT_SSH_COMMAND=\"%s -i %s\"\n" % (_db, _key))
         else:
             _ssh = "unset GIT_SSH_COMMAND\n"
+    _le = P + "/libexec/git-core"
+    _le_line = ("export GIT_EXEC_PATH=%s\n" % _le) if os.path.isdir(_le) else ""
     body = ("#!/system/bin/sh\n"
-            "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za)\n"
-            + _ssh +
+            "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za/4zc)\n"
+            + _le_line + _ssh +
             "export LD_LIBRARY_PATH=%s/lib:%s/tmp/gitbuild/prefix/lib:%s/lib:${LD_LIBRARY_PATH}\n"
             "export HOME=${HOME:-%s/home}\n"
             "[ -n \"$SSL_CERT_FILE\" ] && export GIT_SSL_CAINFO=\"$SSL_CERT_FILE\"\n"

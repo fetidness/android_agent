@@ -1600,7 +1600,16 @@ def py(c,cwd):
         try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
         except Exception: pass
         raise
-    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")
+    o.seek(0)
+    # ★ (raportat in E2E: "shell-ul nu returneaza nimic" - de 7 ori intr-o sesiune) Comanda a rulat
+    # SIGUR, doar ca nu a scris nimic (ex. `echo x > fisier`, `mv`, `chmod`). Spunem asta explicit,
+    # ca agentul sa nu creada ca unealta e rupta si sa treaca pe alt tool.
+    _txt = o.read().decode("utf-8","replace")
+    if not _txt.strip():
+        return ("(comanda a rulat OK, rc=%s, dar nu a scris nimic la stdout/stderr - normal pentru "
+                "redirectari/scrieri de fisiere; verifica efectul pe disc in loc sa repeti comanda)"
+                % getattr(p, "returncode", "?"))
+    return _txt
 
 # ==================== TOOL ROUTER: alege AUTOMAT python vs bash ====================
 # Euristici bazate pe masuratori reale (teste 1-3): bash castiga pe fluxuri/volum/paralelism,

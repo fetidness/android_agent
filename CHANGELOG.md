@@ -9,6 +9,16 @@
 
 ---
 
+### 2026-10-03 (git reconstruit de la zero; reteta validata si corectata - `.assets_v249`)
+
+- reteta corectata cu 12 capcane dovedite (vezi readme Etapa 90): /sdcard fara symlink-uri, xz
+  lipsa, git NU se configureaza, CC/AR/RANLIB explicite, flag-uri complete in CFLAGS, NO_CURL
+  pacaleala din make, NO_PTHREADS, shim MD5 + allow-multiple-definition + start-group,
+  install cu aceleasi variabile, libexec/git-core obligatoriu, dropbear (crypt/getpass/UA).
+- driver livrat in assets (git_build_zero_driver.py).
+- bash: output gol -> mesaj explicit.
+- dovezi: git 2.47.1 de la 0; clone HTTPS rc=0; dbclient auth OK; ls-remote SSH rc=0.
+
 ### 2026-10-03 (git durabil in files/toolchain/git + reteta de reconstructie in APK - `.assets_v248`)
 
 - `_ensure_git_toolchain()`: muta esentialul in files/toolchain/git (bin/git, dbclient,

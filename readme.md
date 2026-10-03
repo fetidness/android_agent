@@ -3883,3 +3883,40 @@ Ce am facut:
 
 Nota: arborele de build din `files/tmp/gitbuild` (648 MB) poate fi sters pentru spatiu - reteta il
 reconstruieste din surse. Esentialul nu depinde de el.
+
+## Etapa 90 - git RECONSTRUIT de la zero pe device (reteta validata) (`.assets_v249`)
+
+Operatorul a sters tot (inclusiv copia durabila) si a cerut agentului sa compileze git de la 0.
+Sesiunea (199 intrari / ~24k tokeni) a lovit aproape toate capcanele posibile. Am refacut eu
+build-ul pas cu pas pana a iesit complet si am corectat RETETA din assets cu ce am invatat:
+
+1. `/sdcard` nu permite **symlink-uri** (FUSE) -> `make install`/cmake cad acolo. Totul in filesDir.
+2. `tar` (toybox) nu are **xz** -> dezarhivare cu Python (`tarfile`); nu sterge arhivele pana nu
+   confirmi directoarele extrase (agentul le-a sters din greseala si a re-descarcat).
+3. git 2.47.1 **nu are CMakeLists** si NU trebuie configurat: `./configure` aduce 3 teste runtime
+   de cross-compilare (cache-uri manuale, ~40 de pasi pierduti). Se compileaza DIRECT cu `make`.
+4. `CC`/`AR`/`RANLIB` explicite: altfel make ia `cc` -> shim-ul `cc-rust` ->
+   "cc-rust: exec clang: No such file or directory".
+5. Flag-uri COMPLETE in CFLAGS (`--target/--sysroot/-resource-dir`): fara ele lansatorul clang
+   adauga `-I<TC>/pyinc` si git isi ia headerele Python ("object.h: unknown type name Py_ssize_t").
+6. **NU pune `NO_CURL`**: in make `NO_CURL=0` = "definit" -> git fara helper-ele curl ->
+   "git: 'remote-https' is not a git command". Foloseste `CURL_CONFIG` catre un script fals.
+7. `NO_PTHREADS=YesPlease`: Bionic nu are `pthread_setcancelstate`.
+8. libcurl cere **MD5**, dar `deps/libcrypto.a` e construit fara MD5 -> shim peste EVP +
+   `-Wl,--allow-multiple-definition` (libcurl isi are propriul MD5) + `--start-group` pentru
+   ordinea bibliotecilor statice (altfel "undefined symbol: X509_STORE_up_ref" / "MD5_Init").
+9. `make install` cu ACELEASI variabile (altfel recompileaza cu `cc` si cade).
+10. In locul durabil intra si **`libexec/git-core/*`** (helper-ul `git-remote-https`!) si
+    `share/git-core/templates` - fara ele `clone https://` esueaza.
+11. dropbear: `--disable-zlib` + `#define DROPBEAR_SVR_PASSWORD_AUTH 0` (Android n-are `crypt()`)
+    + shim `getpass` in `src/cli-auth.c` (Bionic n-are `getpass`) + download cu User-Agent.
+12. Unealta `bash` raspundea "(no output)" la comenzi fara iesire, iar agentul credea ca e rupta
+    (de 7 ori intr-o sesiune) -> acum spune explicit ca a rulat OK, fara output.
+
+Reteta completa: `files/python/git_build_recipe.md`. Driverul Python folosit pentru validare:
+assets `git_build_zero_driver.py` (+ sursa in `temp/build_git_zero.py`).
+
+DOVADA (build de la zero, azi): `git --version` 2.47.1; init/add/commit/log OK;
+`clone --depth 1 https://github.com/octocat/Hello-World.git` -> rc=0, README="Hello World!";
+`dbclient git@github.com` -> "Hi fetidness! You've successfully authenticated";
+`git ls-remote git@github.com:fetidness/android_agent.git` -> rc=0 cu refs reale.

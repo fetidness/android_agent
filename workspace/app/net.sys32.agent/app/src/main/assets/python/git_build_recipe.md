@@ -1,9 +1,28 @@
 # Reteta: git + SSH pe device (reconstructie de la zero)
 
-Se foloseste DOAR daca `files/toolchain/git/bin/git` lipseste (curatare completa / uninstall).
-Se construieste in `files/tmp` (NICIODATA pe /sdcard - e noexec), prin unealta `bg` (joburi lungi).
-Mediul de compilare: `toolchain action=env` (CC/CXX/CFLAGS/LDFLAGS/PATH);
-`clang`/`clang++` isi completeaza singure flag-urile lipsa.
+Se foloseste DACA `files/toolchain/git/bin/git` lipseste. Rulat prin `python`/`bg` (procesul aplicatiei).
+Mediu: `toolchain action=env`.
+RETETA VERIFICATA integral pe device (2026-10-03): build -> install -> HTTPS -> SSH = OK.
+
+## REGULI CARE NU SE NEGOCIAZA (fiecare a costat pasi intr-o sesiune reala)
+
+1. **Toate caile in filesDir** (`files/tmp/...`): pe `/sdcard` NU se pot crea symlink-uri (FUSE) si
+   nu se executa nimic (noexec) - `make install`/cmake cad acolo.
+2. **git NU se configureaza** (`./configure` cere 3 cache-uri pentru teste runtime de cross-compilare).
+   Se compileaza DIRECT cu `make`, flag-urile fiind variabile de make.
+3. **`CC`/`AR`/`RANLIB` explicite**: altfel make foloseste `cc` -> shim-ul `cc-rust` ->
+   "cc-rust: exec clang: No such file or directory".
+4. **Flag-uri COMPLETE in CFLAGS** (`--target=aarch64-linux-android<api> --sysroot=<TC>/sysroot
+   -resource-dir=<TC>/lib/clang/21`): fara `--target`, lansatorul clang adauga singur setul lui de
+   `-I`, inclusiv `<TC>/pyinc` -> git isi ia headerele Python ("object.h: unknown type name
+   'Py_ssize_t'").
+5. **NU pune `NO_CURL`**: in make, `NO_CURL=0` inseamna "este definit" -> git fara helper-ele curl ->
+   "git: 'remote-https' is not a git command". Foloseste `CURL_CONFIG` catre scriptul fals + `CURL_LDFLAGS`.
+6. **`NO_PTHREADS=YesPlease`**: Bionic nu are `pthread_setcancelstate` / `pthread_cancel`.
+7. **Dezarhivare cu Python** (toybox `tar` nu are xz). NU sterge arhivele pana nu confirmi directoarele.
+8. **`make install` cu ACELEASI variabile** (altfel recompileaza cu `cc` si cade).
+9. In locul durabil (`files/toolchain/git/`) intra si **`libexec/git-core/*`** (helper-ele
+   `git-remote-https`! fara ele clone HTTPS esueaza) + `share/git-core/templates`.
 
 ## 1. Surse (descarca in files/tmp/gitbuild)
 - git:      https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.47.1.tar.xz
@@ -18,16 +37,38 @@ Mediul de compilare: `toolchain action=env` (CC/CXX/CFLAGS/LDFLAGS/PATH);
           -DCRYPTO_BACKEND=OpenSSL -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
           -DCMAKE_PREFIX_PATH=$TC/deps && ninja -C b_ss install
 
-## 3. git (config dovedit in build_git.sh din sesiunea originala)
-    cd git-2.47.1
-    make -j4 NO_GETTEXT=1 NO_TCLTK=1 NO_PYTHON=1 NO_PERL=1 NO_RUST=1 NO_EXPAT=1 NO_ICONV=1 \
-      NO_OPENSSL=0 NO_CURL=1 NO_INSTALL_HARDLINKS=1 NO_MMAP=1 NO_IPV6=1 \
-      CURL_LDFLAGS="-lcurl -lnghttp2 -lssh2 -lz -lssl -lcrypto" LIBSSH2_LIBRARY="-lssh2" \
-      prefix=$B/prefix all && make prefix=$B/prefix install
+### 2b. Shim MD5 (libcurl.a cere MD5_Init/Update/Final, dar libcrypto.a e construit fara MD5)
+    files/tmp/md5shim.c: implementeaza MD5_Init/Update/Final peste EVP (EVP_md5) si se compileaza
+    cu clang-ul nostru; se adauga la link prin variabila `LIBS=<...>/md5shim.o`.
+    Fara el: "ld.lld: error: undefined symbol: MD5_Init" la linkarea git-remote-http.
+
+## 3. git: DIRECT cu make (NU ./configure)
+    make -j4 -C src/git-2.47.1 \
+      CC=$F/tmp/clang AR=$F/tmp/ar RANLIB=$F/tmp/ranlib \
+      NO_GETTEXT=1 NO_TCLTK=1 NO_PYTHON=1 NO_PERL=1 NO_RUST=1 NO_EXPAT=1 NO_ICONV=1 \
+      NO_INSTALL_HARDLINKS=1 NO_MMAP=1 NO_PTHREADS=YesPlease \
+      CFLAGS="-O2 -fPIC --target=aarch64-linux-android<api> --sysroot=$TC/sysroot \
+              -resource-dir=$TC/lib/clang/21 -I$TC/deps/include -I$INS/include" \
+      LDFLAGS="--target=aarch64-linux-android<api> --sysroot=$TC/sysroot -L$INS/lib -L$TC/deps/lib \
+               -L$TC/lib/clang/21/lib/linux -Wl,-rpath,$INS/lib" \
+      CURL_CONFIG="sh $F/tmp/curl-config" CURL_CFLAGS="-I$TC/deps/include" \
+      CURL_LDFLAGS="-L$INS/lib -lcurl -lnghttp2 -lssh2 -lssl -lcrypto -lz -lzstd" \
+      CURL_LIBCURL="-lcurl" LIBSSH2_LIBRARY="-lssh2" \
+      prefix=$INS gitexecdir=$INS/libexec/git-core all
+    # apoi ACELASI comando cu "install" in loc de "all" (aceleasi variabile!)
 
 ## 4. dropbear: clientul SSH (dbclient) + convertorul de chei
-    cd dropbear-2024.86 && ./configure --prefix=$B/prefix && make dropbearconvert dbclient
-    cp dbclient dropbearconvert $B/prefix/bin/
+    cd dropbear-2024.86
+    sh ./configure --prefix=$INS --disable-zlib --disable-syslog
+    # Android nu are crypt(): fara linia urmatoare build-ul cade cu
+    #   "DROPBEAR_SVR_PASSWORD_AUTH requires `crypt()'" (libtomcrypt/sysoptions.h)
+    echo '#define DROPBEAR_SVR_PASSWORD_AUTH 0' >> localoptions.h
+    # Bionic nu are getpass(): pune la inceputul src/cli-auth.c o implementare proprie
+    #   (citeste de la /dev/tty) + "#define getpass getpass_shim"
+    make -j4 dbclient dropbearconvert && cp dbclient dropbearconvert $INS/bin/
+    # download: matt.ucc.asn.au da 403 la urllib fara User-Agent -> foloseste mirror-ul GitHub
+    # (mkj/dropbear/releases) sau pune un UA de curl.
+    # IMPORTANT: copiaza binarele in locul durabil DUPA acest pas (sau re-copiaza la final).
 
 ## 5. Esentialul in locul DURABIL (asta face si _ensure_git_toolchain() automat)
     mkdir -p files/toolchain/git/bin files/toolchain/git/lib
