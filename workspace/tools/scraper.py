@@ -56,13 +56,28 @@ def rss(url, limit=30):
             "summary":(e.get("summary") or "")[:200]} for e in f.entries[:limit]]
     return {"feed": f.feed.get("title") or "", "count": len(f.entries), "entries": out}
 
+def _clean_meta(d):
+    """Curata metadatele trafilatura: scoate elementele lxml (body/commentsbody) si
+    converteste valorile ne-serializabile in string.
+    BUG reparat 3 oct: in trafilatura 2.x, as_dict() intoarce si elemente XML
+    (_Element) la cheile 'body'/'commentsbody', iar json.dumps cadea cu TypeError."""
+    out = {}
+    for k, v in (d or {}).items():
+        if v is None or isinstance(v, (str, int, float, bool)):
+            out[k] = v
+        elif isinstance(v, (list, tuple)):
+            out[k] = [x if isinstance(x, (str, int, float, bool)) else str(x) for x in v]
+        else:
+            out[k] = str(v)          # include elementele lxml -> reprezentare text
+    return out
+
 def article(url):
     """Extractie articol AUTOMATA cu trafilatura (text+metadate) - elimina nav/ads/footer."""
     import trafilatura
     h = fetch(url)
     txt = trafilatura.extract(h, include_comments=False, include_tables=True, favor_precision=True)
     meta = trafilatura.extract_metadata(h)
-    return {"text": txt or "", "meta": (meta.as_dict() if meta else {}),
+    return {"text": txt or "", "meta": _clean_meta(meta.as_dict() if meta else {}),
             "chars": len(txt or "")}
 
 def links(url, pattern=None):
@@ -106,7 +121,7 @@ if __name__ == "__main__":
     if cmd == "head": print(json.dumps(head(url)))
     elif cmd == "rss": print(json.dumps(rss(url, int(sys.argv[3]) if len(sys.argv)>3 else 10), ensure_ascii=False)[:4000])
     elif cmd == "article": 
-        a=article(url); print(json.dumps(a["meta"], ensure_ascii=False)[:600]); print("---"); print(a["text"][:2000])
+        a=article(url); print(json.dumps(a["meta"], ensure_ascii=False, default=str)[:600]); print("---"); print(a["text"][:2000])
     elif cmd == "xpath": print(json.dumps(xpath(url, sys.argv[3])[:30], ensure_ascii=False))
     elif cmd == "css": print(json.dumps(css(url, sys.argv[3], sys.argv[4] if len(sys.argv)>4 else None)[:30], ensure_ascii=False))
     elif cmd == "links":

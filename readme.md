@@ -148,6 +148,8 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 > **NU folosi `adbsh` pentru ce face `android`/`python`** — e 10x mai lent si poate rate-limita.
 6. **Mai multe verificari independente** → `multi` **O SINGURA DATA** (fiecare
    cerere retrimite TOT contextul: 2-6 ops intr-un apel = economie ~60-97% tokeni)
+7. **★ SCRAPING / WEB (pagini, RSS, articole, tabele, linkuri)** → `python/scraper.py`
+   (**DEFAULT**, NU requests+regex scris de mana). Vezi sectiunea "SCRAPING WEB" mai jos.
 
 
 ### Unde sunt fisierele (pe device)
@@ -174,6 +176,104 @@ Traiesc in **stocarea privata**: `/data/data/net.sys32.agent/files/`
 (motiv: elimina zgomotul MediaProvider/FUSE; vezi Etapa 32). `AGENT_HOME` se
 IGNORa acum pentru HOME (ramane doar pentru compat) — il folosim doar ca sa
 localizam `workspace/` de pe sdcard.
+
+### ★ SCRAPING WEB — `scraper.py` (DEFAULT pentru orice acces web)
+
+**Regula:** pentru ORICE operatiune web (pagini, articole, RSS, tabele, linkuri, meta)
+foloseste `files/python/scraper.py`. NU scrie requests+regex de mana, NU folosi
+`curl | grep` pentru HTML (se sparge la HTML real) si NU parsa HTML cu regex.
+
+**Locatia pe device:** `files/python/scraper.py`
+**Sursa in repo:** `workspace/tools/scraper.py` (+ copie in `assets/python/scraper.py`)
+
+#### Comenzi
+
+| Comanda | Ce face |
+|---------|---------|
+| `head <url>` | status + content-type + lungime (HEAD, fara sa descarce corpul) |
+| `meta <url>` | toate meta-urile (og:, twitter:, description, title) |
+| `article <url>` | **extragere automata de articol** (trafilatura: text + metadate, fara nav/ads/footer) |
+| `xpath <url> <expr>` | XPath direct pe lxml (**cel mai rapid si puternic**) |
+| `css <url> <sel> [attr]` | selectori CSS (prin parsel) |
+| `rss <url> [limit]` | feed RSS/Atom -> titlu/link/data/summary |
+| `links <url> [pattern]` | toate linkurile (absolutizate, opțional filtrate cu regex) |
+| `table <url> [idx]` | extrage tabelul N ca lista de randuri |
+
+#### Utilizare
+
+```bash
+# ca script (CLI)
+python3.14 files/python/scraper.py article https://www.bbc.com/news
+python3.14 files/python/scraper.py xpath https://site.com "//h2//text()"
+python3.14 files/python/scraper.py rss https://feeds.bbci.co.uk/news/rss.xml 5
+python3.14 files/python/scraper.py table https://en.wikipedia.org/wiki/... 0
+```
+```python
+# ca modul
+import sys; sys.path.insert(0, "/data/data/net.sys32.agent/files/python")
+import scraper
+scraper.article(url)          # -> {text, meta, chars}
+scraper.xpath(url, "//h2//text()")
+scraper.css(url, "h2::text")
+scraper.rss(url, limit=10)
+scraper.table(url, idx=0)
+scraper.links(url, pattern="news")
+scraper.meta(url); scraper.head(url)
+```
+
+#### Stack (CAND E INSTALAT pe device)
+
+| Pachet | Versiune | Rol |
+|--------|----------|-----|
+| `lxml` | 6.1.3 (C, compilat pe device) | XPath + parsare rapida |
+| `parsel` | 1.12.1 | selectori CSS peste lxml |
+| `trafilatura` | 2.3.0 | extragere articol + metadate |
+| `feedparser` | 6.0.14 | RSS/Atom |
+| `justext` | 3.0.2 | boilerplate removal |
+| `requests` | (inclus) | HTTP (Session cu keep-alive + UA mobil) |
+| + deps | cssselect, w3lib, courlan, htmldate, dateparser, babel, lxml_html_clean, pytz | |
+
+**Wheelhouse local:** `files/wheels/` (13 wheel-uri) — include
+`lxml-6.1.3-cp314-cp314-android_24_arm64_v8a.whl` (**compilat pe device**, ~3 MB).
+La o reinstalare nu se recompileaza:
+`python -m pip install --find-links files/wheels --no-index lxml trafilatura parsel feedparser justext`
+
+#### Doua capcane REALE (reparate/constatate pe device, 3 oct 2026)
+
+1. **`pip install <pachet>` fara `--no-build-isolation` EȘUA** cu
+   ``BackendUnavailable: Cannot import 'setuptools.build_meta'`` (setuptools sta in
+   `pysitepkg.zip`, iar subprocesul de build izolat nu pune zip-ul pe `sys.path`).
+   Fix: **intotdeauna `--no-build-isolation`** cand instalezi pachete noi (sau foloseste
+   `toolchain action=pip_install`, care merge pe calea standard).
+2. **AAPT2 elimina folderele care incep cu `_`**, deci in `site-packages` lipseau
+   19 fisiere din `pathspec/_backends`, `scikit_build_core/_compat`, `scikit_build_core/_vendor`,
+   `setuptools_scm/_integration` — ceea ce rupea build-ul lxml
+   (``ModuleNotFoundError: No module named 'scikit_build_core._compat'``).
+   Fix: extras folderele `_*` din `pysitepkg.zip` in site-packages (bypass pe capcana AAPT2).
+3. **`json.dumps` cadea la `article`** in trafilatura 2.x: `extract_metadata().as_dict()`
+   intoarce la cheile `body`/`commentsbody` elemente lxml (`_Element`), nu string
+   (``TypeError: Object of type _Element is not JSON serializable``).
+   Fix aplicat in `scraper.py`: functia `_clean_meta()` care scoate/converteste
+   valorile ne-serializabile + `default=str` la afisare.
+
+#### Verificat pe device (3 oct 2026, toate rc=0)
+
+```
+head   https://example.com                      -> status 200, text/html
+meta   https://example.com                      -> title "Example Domain"
+article https://www.bbc.com/news                -> metadate + text articol
+xpath  https://www.bbc.com/news "//h2//text()"  -> titluri reale de stiri
+css    https://www.bbc.com/news "h2"            -> titluri reale de stiri
+links  https://www.bbc.com/news                 -> 40 linkuri (absolutizate)
+rss    https://feeds.bbci.co.uk/news/rss.xml 3  -> feed "BBC News", 25 intrari
+table  https://en.wikipedia.org/wiki/List_of_... -> tabel cu ~200 randuri
+```
+
+> ⚠️ Atentie la XPath: `//h1/text()` da gol daca textul e in elemente copil
+> (ex. `<h1><span>Text</span></h1>`) — foloseste `//h1//text()` (dublu slash) ca sa
+> prinzi tot subtree-ul. Nu e bug, e XPath standard.
+
+---
 
 ### Cum pornesti Python-ul manual (pe device, prin adb)
 ```bash
