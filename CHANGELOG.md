@@ -9,6 +9,17 @@
 
 ---
 
+### 2026-10-03 (git prin SSH functional pe device: cheia operatorului + dropbearconvert - `.assets_v247`)
+
+- cheia operatorului copiata in files/home/.ssh (chmod 600) si convertita in format dropbear
+  (dbclient nu citeste OpenSSH: "Exited: String too long"); dropbearconvert construit pe device.
+- known_hosts cu cheile GitHub verificate prin fingerprint.
+- dovezi: dbclient -> "Hi fetidness! You've successfully authenticated"; git ls-remote SSH rc=0;
+  clone+commit+push --dry-run rc=0.
+- lansatorul git seteaza automat GIT_SSH_COMMAND (si converteste cheia daca lipseste .db).
+- regula (3q): SSH preferat, HTTPS+token alternativ. Nota de securitate: revocare cheie daca
+  telefonul se pierde.
+
 ### 2026-10-03 (git compilat pe device: verificat functional + lansator + regula (3q) - `.assets_v246`)
 
 - git 2.47.1 (compilat nativ de agent) VERIFICAT: init/add/commit/log, push end-to-end (repo local),

@@ -3828,3 +3828,27 @@ Ce am livrat:
   `files/tmp/git` (binarul brut nu se poate executa direct din filesDir). Se recreeaza la pornire.
 - Regula (3q) in prompt: NU recompila git; foloseste `files/tmp/git`; push prin HTTPS cu token
   (`git push https://<TOKEN>@github.com/user/repo.git main`) - calea simpla, fara chei SSH.
+
+## Etapa 88 - git prin SSH pe device, functional (`.assets_v247`)
+
+Operatorul a cerut SSH si a aprobat folosirea cheii lui de pe laptop. Rezultat verificat:
+
+- **transport**: github.com:22 si ssh.github.com:443 raspund amandoua (banner SSH-2.0 GitHub);
+  known_hosts populat cu cheile reale (verificate prin fingerprint: ED25519
+  SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU = cea publicata de GitHub).
+- **client**: dropbear `dbclient` v2024.86 (compilat de agent pe device).
+- **cheia operatorului**: copiata in `files/home/.ssh/id_ed25519_github` (chmod 600) si
+  CONVERTITA in format dropbear cu `dropbearconvert` (construit pe device din sursa dropbear -
+  dbclient NU citeste chei OpenSSH: "Exited: String too long").
+- **dovada**: `dbclient ... git@github.com` -> "Hi fetidness! You've successfully authenticated";
+  `files/tmp/git ls-remote git@github.com:fetidness/android_agent.git` -> rc=0 cu refs reale;
+  clone + commit + `push --dry-run` -> rc=0 ("* [new branch] HEAD -> _probe_test").
+
+In lansatorul `git` (`_ensure_git_launcher`): daca exista cheia in `files/home/.ssh`, se seteaza
+automat `GIT_SSH_COMMAND="<prefix>/bin/dbclient -i <cheie>.db"`; conversia `.db` se face singura
+daca lipseste (cu dropbearconvert). Regula (3q) spune acum ambele cai (SSH preferat, HTTPS+token
+alternativ).
+
+SECURITY: cheia privata a operatorului sta acum pe device in files/home/.ssh (chmod 600). Daca
+telefonul se pierde, cheia trebuie revocata din GitHub (Settings -> SSH keys) - sau se poate revoca
+si inlocui cu una generata pe device (varianta 2 din discutie).

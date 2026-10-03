@@ -1978,8 +1978,42 @@ def _ensure_git_launcher():
     # ★ Configuratia EXACTA care a fost dovedita functionala (init/add/commit/log, push, clone
     # HTTPS). NU setam GIT_EXEC_PATH/GIT_TEMPLATE_DIR: cu ele binarul crapa cu SIGSEGV (reprodus:
     # acelasi binar + env minimal = OK, acelasi binar + acele variabile = -11).
+    # ★ SSH: daca exista clientul dropbear si o cheie in files/home/.ssh, il dam lui git prin
+    # GIT_SSH_COMMAND (git nu are ssh propriu). known_hosts e populat cu cheile reale de la GitHub.
+    _db = P + "/bin/dbclient"
+    _key = F + "/home/.ssh/id_ed25519_github.db"
+    _ssh = ""
+    if os.path.exists(_db):
+        # ★ dbclient NU citeste chei OpenSSH ("Exited: String too long") - are nevoie de formatul
+        # dropbear. Convertim o data cu `dropbearconvert` (construit pe device) si folosim .db.
+        try:
+            for _base in ("id_ed25519_github", "id_ed25519", "id_rsa"):
+                _src = F + "/home/.ssh/" + _base
+                _dst = _src + ".db"
+                if os.path.exists(_src + ".pub") or os.path.exists(_src):
+                    if not os.path.exists(_dst):
+                        _cv = F + "/tmp/gitbuild/dropbear-src/dropbearconvert"
+                        if os.path.exists(_cv) and os.path.exists(_src):
+                            subprocess.run([_cv, "openssh", "dropbear", _src, _dst],
+                                           capture_output=True, timeout=120)
+                            try:
+                                os.chmod(_dst, 0o600)
+                            except Exception:
+                                pass
+                    if os.path.exists(_dst):
+                        _key = _dst
+                        break
+        except Exception:
+            pass
+        if os.path.exists(_key):
+            # dbclient NU intelege sintaxa OpenSSH "-o ...": verifica host key-ul din
+            # $HOME/.ssh/known_hosts (HOME e chiar files/home, setat mai jos).
+            _ssh = ("export GIT_SSH_COMMAND=\"%s -i %s\"\n" % (_db, _key))
+        else:
+            _ssh = "unset GIT_SSH_COMMAND\n"
     body = ("#!/system/bin/sh\n"
             "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za)\n"
+            + _ssh +
             "export LD_LIBRARY_PATH=%s/lib:%s/lib:${LD_LIBRARY_PATH}\n"
             "export HOME=${HOME:-%s/home}\n"
             "[ -n \"$SSL_CERT_FILE\" ] && export GIT_SSL_CAINFO=\"$SSL_CERT_FILE\"\n"
