@@ -1960,6 +1960,60 @@ def _ensure_cc_wrappers():
     return n
 
 
+
+GITROOT = None      # se seteaza in _ensure_git_toolchain (files/toolchain/git)
+
+
+def _ensure_git_toolchain():
+    """★ FAZA 4zb: muta ESENTIALUL git-ului din files/tmp/gitbuild (648 MB de build tree, fragil)
+    intr-un loc DURABIL: files/toolchain/git (git + dbclient + dropbearconvert + libs, ~20 MB).
+
+    Asa o reinstalare/curatare de files/tmp nu mai pierde git-ul. Daca esentialul lipseste si
+    sursele/prefixul nu mai exista, intoarce "" (i se spune agentului sa reconstruiasca - vezi
+    regula (3r) din prompt, cu reteta exacta).
+    """
+    global GITROOT
+    dst = ROOT + "/git"
+    GITROOT = dst
+    _nat = _native_dir() or ""
+    srcpref = F + "/tmp/gitbuild/prefix"
+    srcsrc = F + "/tmp/gitbuild/dropbear-src/dropbearconvert"
+    # ★ IDEMPOTENT pe fiecare piesa: o rulare partiala (ex. doar bin/ copiat) nu trebuie sa
+    # blocheze completarea librariilor (bug prins la test: git copiat, lib/ gol -> "CANNOT LINK
+    # EXECUTABLE: library libnghttp2.so.14 not found").
+    try:
+        need_bin = [("git", srcpref + "/bin/git"), ("dbclient", srcpref + "/bin/dbclient"),
+                    ("dropbearconvert", srcsrc)]
+        if not os.path.exists(srcpref + "/bin/git") and not os.path.exists(dst + "/bin/git"):
+            return ""
+        for d in (dst + "/bin", dst + "/lib"):
+            os.makedirs(d, exist_ok=True)
+        import shutil as _sh3
+        for _nm, _s in need_bin:
+            _d = dst + "/bin/" + _nm
+            if (not os.path.exists(_d)) and os.path.exists(_s):
+                _sh3.copy2(_s, _d)
+                os.chmod(_d, 0o755)
+        _nso = len([x for x in os.listdir(dst + "/lib")]) if os.path.isdir(dst + "/lib") else 0
+        if _nso == 0:
+            # lista EXPLICITA (fara glob): exact librariile de care are nevoie gitul la rulare
+            for _bn in ("libnghttp2.so.14.28.3", "libnghttp2.so.14", "libnghttp2.so",
+                        "libssh2.so.1", "libssh2.so", "libcrypto.so.3", "libssl.so.3"):
+                _s2 = srcpref + "/lib/" + _bn
+                if os.path.exists(_s2):
+                    try:
+                        _sh3.copy2(_s2, dst + "/lib/" + _bn)
+                    except Exception:
+                        pass
+        if os.path.exists(dst + "/bin/git"):
+            try:
+                open(dst + "/.installed", "w").write("git toolchain durabil\n")
+            except Exception:
+                pass
+        return dst if os.path.exists(dst + "/bin/git") else ""
+    except Exception:
+        return ""
+
 def _ensure_git_launcher():
     """★ FAZA 4z: `git` compilat nativ pe device (git 2.47.1, libssh2+nghttp2) -> lansator stabil.
 
@@ -1970,7 +2024,11 @@ def _ensure_git_launcher():
     """
     _nat = _native_dir() or ""
     _sw = _nat + "/libshwrap_exec.so"
-    P = F + "/tmp/gitbuild/prefix"
+    _root = _ensure_git_toolchain()
+    if _root and os.path.exists(_root + "/bin/git"):
+        P = _root                      # locatia DURABILA (files/toolchain/git)
+    else:
+        P = F + "/tmp/gitbuild/prefix"  # fallback: build tree-ul din tmp
     binp = P + "/bin/git"
     if not (os.path.exists(_sw) and os.path.exists(binp)):
         return 0
@@ -1981,6 +2039,8 @@ def _ensure_git_launcher():
     # ★ SSH: daca exista clientul dropbear si o cheie in files/home/.ssh, il dam lui git prin
     # GIT_SSH_COMMAND (git nu are ssh propriu). known_hosts e populat cu cheile reale de la GitHub.
     _db = P + "/bin/dbclient"
+    if not os.path.exists(_db):
+        _db = F + "/tmp/gitbuild/prefix/bin/dbclient"
     _key = F + "/home/.ssh/id_ed25519_github.db"
     _ssh = ""
     if os.path.exists(_db):
@@ -1992,7 +2052,12 @@ def _ensure_git_launcher():
                 _dst = _src + ".db"
                 if os.path.exists(_src + ".pub") or os.path.exists(_src):
                     if not os.path.exists(_dst):
-                        _cv = F + "/tmp/gitbuild/dropbear-src/dropbearconvert"
+                        _cv = ""
+                        for _c in ((_root + "/bin/dropbearconvert") if _root else "",
+                                   F + "/tmp/gitbuild/dropbear-src/dropbearconvert"):
+                            if _c and os.path.exists(_c):
+                                _cv = _c
+                                break
                         if os.path.exists(_cv) and os.path.exists(_src):
                             subprocess.run([_cv, "openssh", "dropbear", _src, _dst],
                                            capture_output=True, timeout=120)
@@ -2014,14 +2079,14 @@ def _ensure_git_launcher():
     body = ("#!/system/bin/sh\n"
             "# git 2.47.1 compilat pe device (vezi readme: FAZA 4z/4za)\n"
             + _ssh +
-            "export LD_LIBRARY_PATH=%s/lib:%s/lib:${LD_LIBRARY_PATH}\n"
+            "export LD_LIBRARY_PATH=%s/lib:%s/tmp/gitbuild/prefix/lib:%s/lib:${LD_LIBRARY_PATH}\n"
             "export HOME=${HOME:-%s/home}\n"
             "[ -n \"$SSL_CERT_FILE\" ] && export GIT_SSL_CAINFO=\"$SSL_CERT_FILE\"\n"
             "[ -z \"$GIT_AUTHOR_NAME\" ] && export GIT_AUTHOR_NAME=agent GIT_COMMITTER_NAME=agent\n"
             "[ -z \"$GIT_AUTHOR_EMAIL\" ] && export GIT_AUTHOR_EMAIL=agent@device.local "
             "GIT_COMMITTER_EMAIL=agent@device.local\n"
             "exec /apex/com.android.runtime/bin/linker64 %s \"$@\"\n"
-            % (P, DEPS, F, binp))
+            % (P, F, DEPS, F, binp))
     try:
         if (not os.path.exists(sh)) or open(sh).read() != body:
             open(sh, "w").write(body)

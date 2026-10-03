@@ -9,6 +9,15 @@
 
 ---
 
+### 2026-10-03 (git durabil in files/toolchain/git + reteta de reconstructie in APK - `.assets_v248`)
+
+- `_ensure_git_toolchain()`: muta esentialul in files/toolchain/git (bin/git, dbclient,
+  dropbearconvert, libnghttp2) - idempotent pe fiecare piesa, lista explicita de librarii.
+  Dovada: cu LD_LIBRARY_PATH doar pe locatia durabila, git --version + ls-remote SSH merg.
+- `assets/python/git_build_recipe.md`: reteta completa de reconstructie (surse, flag-uri,
+  dropbearconvert, known_hosts, verificari); regula (3r) o refera.
+- cheia SSH ramane DOAR in files/home/.ssh; assets verificate (fara material de cheie).
+
 ### 2026-10-03 (git prin SSH functional pe device: cheia operatorului + dropbearconvert - `.assets_v247`)
 
 - cheia operatorului copiata in files/home/.ssh (chmod 600) si convertita in format dropbear

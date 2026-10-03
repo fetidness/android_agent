@@ -3852,3 +3852,34 @@ alternativ).
 SECURITY: cheia privata a operatorului sta acum pe device in files/home/.ssh (chmod 600). Daca
 telefonul se pierde, cheia trebuie revocata din GitHub (Settings -> SSH keys) - sau se poate revoca
 si inlocui cu una generata pe device (varianta 2 din discutie).
+
+## Etapa 89 - git durabil + reteta de reconstructie (`.assets_v248`)
+
+Problema: git-ul si clientul SSH stateau in `files/tmp/gitbuild` (648 MB de arbore de build, fragil:
+o curatare de files/tmp le pierde). Azi, dupa o reinstalare obisnuita (`adb install -r`) mergeau,
+dar dupa o curatare completa nu, iar promptul spunea doar "nu recompila" - fara reteta.
+
+Ce am facut:
+
+1. **Locatie durabila**: `_ensure_git_toolchain()` muta esentialul (idempotent, pe fiecare piesa)
+   in `files/toolchain/git/`:
+   - `bin/git` (2.47.1), `bin/dbclient` (dropbear SSH), `bin/dropbearconvert` (conversie chei),
+   - `lib/libnghttp2.so*` (singura librarie partajata de care are nevoie gitul la rulare;
+     libssh2/libssl/libcrypto sunt statice, prin deps).
+   Dovada: cu LD_LIBRARY_PATH fortat DOAR pe locatia durabila -> `git --version` si
+   `git ls-remote git@github.com:fetidness/android_agent.git` merg (rc=0).
+   (Capcana prinsa: o rulare partiala lasa `bin/` completat si `lib/` gol -> "CANNOT LINK
+   EXECUTABLE: libnghttp2.so.14 not found"; functia e acum idempotenta pe fiecare piesa, cu lista
+   explicita de librarii, fara glob.)
+
+2. **Reteta in APK**: `assets/python/git_build_recipe.md` (ajunge pe device in
+   `files/python/git_build_recipe.md`). Contine: URL-urile surselor (git 2.47.1, libssh2 1.11.1,
+   nghttp2 1.64.0, dropbear 2024.86), configurile cmake/make dovedite, pasul de dropbearconvert,
+   popularea known_hosts (cu fingerprint-ul de verificat) si verificarile finale. Regula noua
+   (3r) trimite agentul la ea si interzice improvizatia.
+
+3. **Cheia SSH NU intra in APK**: sta doar in `files/home/.ssh/` (chmod 600). Am verificat
+   `assets/` pentru material de cheie -> gol. Reteta spune explicit regula.
+
+Nota: arborele de build din `files/tmp/gitbuild` (648 MB) poate fi sters pentru spatiu - reteta il
+reconstruieste din surse. Esentialul nu depinde de el.
