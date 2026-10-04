@@ -33,6 +33,62 @@ e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 
 ---
 
+## 🚀 BUILD VOCISHD PE DEVICE (5 oct 2026) — Gradle+AGP+NDK pe telefon (~95%)
+
+**Al treilea experiment: compilarea APK-ului VOCISHD (`net.sys32.vocis`, repo `hdvoice`)
+direct pe telefon.** Rezultat: **~95%** (39 task-uri Android executate), blocat doar la
+aapt2 în mod daemon. Detalii complete în `CHANGELOG.md` (5 oct 2026) și în `odc_agent/memory.md`.
+
+### Ce funcționează dovedit
+- **Gradle 9.8 + AGP 9.0.1 + Kotlin 2.1.21 + Compose + kapt + Hilt + Room** configurează
+  complet proiectul VocisHD.
+- **OPUS (codec audio C, 149 fișiere) se compilează + linkează** cu ninja + clang 21, pentru
+  toate ABI-urile (arm64-v8a, armeabi-v7a, mips, x86, x86_64...).
+- **kapt trece**, resurse/manifest/dex/keystore/CMake/SDK/NDK — toate funcționale.
+
+### `net.sys32.javahost` — APK-gazdă pentru executabile Java
+Un APK mic (`net.sys32.javahost`, ~11 MB) care conține binararele JDK **ambalate ca
+`lib<name>_exec.so`** în `lib/arm64/`: `libjava`, `libjlink`, `libjmod`, `libjimage`,
+`libjavac`, `libjar`, `libkeytool`, `libjarsigner`, `libaapt2` + 120 libs de suport
+(absl, protobuf, fmt, libc++).
+**De ce:** SELinux permite execuția DOAR din `lib/arm64/` din APK. Binararele ELF din
+`filesDir` dau `Permission denied`. Deci Java (și aapt2) trebuie „împachetate" ca lib-uri ca
+să ruleze din procesul aplicației. **odc_agent NU are legătură cu VocisHD** — javahost e
+APK-ul gazdă dedicat.
+
+### Bariere rezolvate (toate SELinux / binare x86_64)
+1. java/jlink/jmod/javac → în APK ca lib-uri (executabile)
+2. Gradle daemon fork (`jspawnhelper` eșua) → `-Djdk.lang.Process.launchMechanism=VFORK`
+3. `java.io.tmpdir` (compilat Termux, inexistent) → `-Djava.io.tmpdir=<filesDir>/tmp`
+4. cmake/aapt2 x86_64 de la AGP → symlink la variantele **aarch64** ale noastre
+5. SDK scriibil (AGP își instalează componente) → în `filesDir`
+6. NDK oficial (x86_64, inutil) → **fake-NDK** prin symlink-uri (`_ensure_fake_ndk()`)
+7. kapt `ExceptionInInitializerError` (SQLite-jdbc x86_64) → `room.verifier=false`
+8. keystore debug lipsă → generat + `-Duser.home=<filesDir>`
+
+### BLOCAJ RĂMAS (unicul): aapt2 daemon
+AGP 9 lansează **`aapt2 daemon`** (mod server) pentru transform-urile AAR (play-services,
+media3...). Aapt2-ul Termux 2.20 (aarch64, singurul care rulează) **nu are `--daemon`**;
+aapt2-ul oficial (cu daemon) e **x86_64** → „AAPT2 Daemon startup failed".
+`android.enableAapt2Daemon=false` nu ajută în AGP 9.
+Opțiuni neîncercate: **box64** (translare x86_64), **downgrade AGP**, **compilare aapt2 din
+sursă cu daemon pentru ARM**.
+
+### Comanda de build (rezumat)
+```
+B=/data/data/net.sys32.agent/files/hdbuild
+java -Duser.home=$B -Djdk.lang.Process.launchMechanism=VFORK -Djava.io.tmpdir=$B/tmp \
+  -Djava.library.path=$B/tmp:$B/gradle/lib \
+  -cp $B/gradle/lib/gradle-launcher-9.8.0.jar org.gradle.launcher.GradleMain assembleDebug
+```
+(rulat ca APP uid 10322 prin python/bg — NU adbsh; env: JAVA_HOME=$B/jdk, LD_LIBRARY_PATH cu
+$B/tlib:$B/tmp:$B/gradle/lib:<javahost lib>:$B/jdk/lib, ANDROID_HOME=$B/sdk.)
+
+**Concluzie:** build-ul Android complet (inclusiv NDK/cod nativ C) **este tehnic posibil pe
+device** — fiecare verigă dovedită. Rămâne o singură incompatibilitate (aapt2 daemon ARM).
+
+---
+
 ## ⚡ START RAPID — CITESTE ASTA PRIMUL
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**

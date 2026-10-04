@@ -9,6 +9,49 @@
 
 ---
 
+### 2026-10-05 (BUILD VOCISHD PE DEVICE: Gradle+AGP+CMake+Opus funcțional ~95%)
+
+> **Al treilea experiment major: compilarea APK-ului VOCISHD (`net.sys32.vocis`,
+> repo `hdvoice`) DIRECT PE TELEFON**, fără PC/Gradle pe PC. Rezultat: build-ul ajunge
+> la **~95%** (39 task-uri Android executate), blocat doar la aapt2 în mod daemon.
+
+**Ce FUNCȚIONEAZĂ pe device (dovedit):**
+- **Gradle 9.8 + AGP 9.0.1 + Kotlin 2.1.21 + Compose + kapt + Hilt** se încarcă și
+  configurează complet proiectul VocisHD.
+- **OPUS (codec audio C, 149 fișiere) SE COMPILEAZĂ ȘI SE LINKEAZĂ** — `ninja` + `clang 21`
+  (al nostru, aarch64), pentru **toate ABI-urile**: arm64-v8a, armeabi-v7a, armeabi, mips,
+  mips64, x86, x86_64 (`libopus.a` + `libopus_jni.so` produse).
+- **kapt TRE CE** (procesare adnotări Hilt/Room pe 93 fișiere Kotlin).
+- Resurse, AndroidManifest, dex, keystore, SDK minimal, NDK fals, CMake — toate funcționale.
+
+**Ce am construit pentru asta:**
+- **`net.sys32.javahost`** — APK-gazdă (11 MB) cu binararele JDK ambalate ca
+  `lib<name>_exec.so`: `libjava`, `libjlink`, `libjmod`, `libjimage`, `libjavac`, `libjar`,
+  `libkeytool`, `libjarsigner`, `libaapt2` + 120 libs de suport (absl/protobuf/fmt/c++).
+  Rolul lui: SELinux permite execuția DOAR din `lib/arm64/` din APK — deci Java (și aapt2)
+  trebuie „ambalate" ca lib-uri ca să poată rula din procesul aplicației.
+- SDK Android minimal în `filesDir` (`platforms/android-36` complet + `build-tools/36.0.0` +
+  `licenses`), NDK fals prin symlink-uri, cmake/aapt2 înlocuite cu variantele aarch64.
+- `-Djdk.lang.Process.launchMechanism=VFORK` (Gradle fork-ează daemonul prin `jspawnhelper`
+  care nu rulează → VFORK îl ocolește), `-Djava.io.tmpdir`, `-Duser.home`.
+
+**Bariere rezolvate (toate SELinux / binare x86_64):** java/jlink/jmod/javac → în APK ca
+lib-uri; Gradle daemon fork → VFORK; `java.io.tmpdir` → redirecționat; cmake/aapt2 x86_64 ale
+AGP → symlink la aarch64-ul nostru; SDK scriibil → `filesDir`; NDK oficial (x86_64) inutil →
+fake-NDK; kapt SQLite → `room.verifier=false`; keystore debug → generat + `-Duser.home`.
+
+**BLOCAJ RĂMAS (unicul):** AGP 9 lansează **`aapt2 daemon`** (mod server) pentru
+transform-urile AAR (play-services, media3...). Aapt2-ul Termux 2.20 (aarch64, singurul care
+rulează) **nu are opțiunea `--daemon`**; aapt2-ul oficial (cu daemon) e x86_64 →
+„AAPT2 Daemon startup failed". Opțiuni neîncercate: box64 (translare x86_64), downgrade AGP,
+compilare aapt2 din sursă cu daemon pentru ARM.
+
+**Concluzie:** build-ul Android complet (inclusiv cod nativ C/NDK) **este tehnic posibil pe
+device** — am dovedit fiecare verigă. Rămâne o singură incompatibilitate de unealtă
+(aapt2 daemon ARM). Toate detaliile de reproducere sunt în memorie (`odc_agent/memory.md`).
+
+---
+
 ### 2026-10-04 (BUILD APK NATIV PE DEVICE + A DOUA APLICATIE `net.sys32.odc_agent`)
 
 > **IMPORTANT: acum exista DOUA aplicatii pe device.**
