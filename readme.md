@@ -25,8 +25,11 @@ permite build + test FARA sa intrerupi agentul activ.
 **Pipeline-ul de build pe device** (dovedit E2E): JDK 21 + kotlinc 2.4.20 + aapt2 2.20 +
 d8 9.2.4 + apksigner 0.9 (toate pachete Termux aarch64) + `android.jar` API 36 de la Google.
 Script: `/data/local/tmp/apkbuild/build_apk.sh <proj> <pkg> <label> <out.apk>` (6 pasi:
-aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare). Sursa clonei:
-`workspace/agent2/`. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
+aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare).
+**Sursa clonei e in acest repo, in `odc_agent/`** (odc = *on-device compiled*): app-ul
+complet (`app/src/main/`: manifest, res, assets Python, 15 module Kotlin in
+`java/net/sys32/agent2/`). Stdlib CPython e exclus din git (regenerabil), site-packages
+e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 
 ---
 
