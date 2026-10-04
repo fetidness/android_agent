@@ -1,5 +1,35 @@
 # Agent Android (net.sys32.agent)
 
+## 🟢⚠️ DOUA APLICATII PE DEVICE (4 oct 2026) — CITESTE INAINTE DE ORICE
+
+Pe telefon exista acum **DOUA aplicatii independente** care ruleaza alaturi:
+
+- **`net.sys32.agent`** = agentul **ORIGINAL** (aplicatia „mare", cu toolchain nativ complet
+  in APK, ~282 MB). Aceasta e aplicatia activa, cea cu care operatorul purta conversatia.
+- **`net.sys32.agent2`** = **CLONA**, compilata **direct pe telefon din surse** (fara PC, fara
+  Gradle, fara Android Studio), instalata ca aplicatie SEPARATA (APK ~17.6 MB). Nume afisat:
+  „Agent 2". Diferenta de marime fata de original: clona NU include toolchain-ul nativ in APK
+  (il descarca la runtime in `files/`), deci e mult mai mica.
+
+**De ce doua?** Pentru ca agentul original RULA in timpul build-ului. Reinstalarea peste el
+(`pm install -r`) ar OMORI procesul -> ar omori si sesiunea agentului. A doua aplicatie
+permite build + test FARA sa intrerupi agentul activ.
+
+**REGULI:**
+- **NU** reinstala niciodata peste `net.sys32.agent` cat timp ruleaza (moare procesul).
+- Pentru test/schimbari de cod -> foloseste `net.sys32.agent2` (clona), nu originalul.
+- Cele doua au chei de semnare DIFERITE (nu sunt interschimbabile la update).
+- Serviciile de sistem (IME, Notification Listener) pot fi active doar cate unul la un
+  moment dat -> daca activezi tastatura Agent 2, se dezactiveaza cea a agentului original.
+
+**Pipeline-ul de build pe device** (dovedit E2E): JDK 21 + kotlinc 2.4.20 + aapt2 2.20 +
+d8 9.2.4 + apksigner 0.9 (toate pachete Termux aarch64) + `android.jar` API 36 de la Google.
+Script: `/data/local/tmp/apkbuild/build_apk.sh <proj> <pkg> <label> <out.apk>` (6 pasi:
+aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare). Sursa clonei:
+`workspace/agent2/`. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
+
+---
+
 ## ⚡ START RAPID — CITESTE ASTA PRIMUL
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
@@ -20,6 +50,7 @@
 | Module Kotlin | **15** |
 | Assets Python | agent.py + toolchain.py + adb_client.py + adb_setup.py + android_bridge.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri (pysitepkg, stdlib_extra) |
 | Toolchain nativ | `assets/toolchain/` (~343 MB) + binare `lib*_exec.so` in `jniLibs/` — **NU sunt in git** (vezi `.gitignore`), se regenereaza |
+| **A 2-a aplicatie** | **`net.sys32.agent2`** („Agent 2") — clona compilata PE DEVICE, instalata alaturi; vezi sectiunea de sus |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
 | Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |

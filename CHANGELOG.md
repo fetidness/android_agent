@@ -9,6 +9,43 @@
 
 ---
 
+### 2026-10-04 (BUILD APK NATIV PE DEVICE + A DOUA APLICATIE `net.sys32.agent2`)
+
+> **IMPORTANT: acum exista DOUA aplicatii pe device.**
+> `net.sys32.agent` = agentul ORIGINAL (activ, vorbea cu operatorul in timpul build-ului).
+> `net.sys32.agent2` = CLONA, compilata direct pe telefon din surse, instalata ALATURI.
+> Nu se re-instaleaza peste agentul original cat timp ruleaza (procesul moare la
+> `pm install` -> moare si sesiunea agentului). A doua aplicatie e calea sigura.
+
+- **Lanț complet de build Android pe device, fara PC, fara Gradle, fara Android Studio.**
+  Dovedit end-to-end: source Kotlin -> APK semnat -> instalat -> rulat.
+- Unelte (pachete Termux aarch64): **JDK 21** (openjdk-21), **kotlinc 2.4.20**, **d8 9.2.4**,
+  **aapt2 2.20**, **apksigner 0.9** + biblotecii C++ Termux (libc++, fmt, protobuf, abseil...).
+  `android.jar` API 36 de la Google (`platform-36_r01.zip`), androidx din Google Maven.
+- Pipeline (script `/data/local/tmp/apkbuild/build_apk.sh`, 6 pasi):
+  1. `aapt2 compile` resurse + resursele din fiecare AAR; `aapt2 link --auto-add-overlay
+     --extra-packages <toate pachetele cu resurse>` -> `base.apk` + `R.java`
+  2. `kotlinc` sursele `.kt` -> `classes/`
+  3. `javac` SEPARAT pe R.java-urile generate (kotlinc nu compileaza `.java` fara javac)
+  4. `jar` + `d8` (include kotlin-stdlib + TOATE jar-urile runtime) -> `classes.dex`
+  5. ambalare dex + `assets/` in `base.apk`
+  6. `keytool` (cheie noua) + `apksigner` -> APK semnat (v1+v2+v3)
+- **Clona `net.sys32.agent2`**: transformare = inlocuire globala `net.sys32.agent` ->
+  `net.sys32.agent2` (27 fisiere, 66 aparitii: package Kotlin, applicationId/namespace,
+  cai filesDir, action strings, taskAffinity), folder java redenumit, label -> "Agent 2".
+  `build.py`: hash-ul de cale APK hardcodat -> inlocuit cu `_find_app_lib()` (glob dinamic).
+- Rezultat: **282 clase**, APK **17.6 MB**, instalat si RULAT (ajunge la dialogul
+  "Agent 2 wants to set up a VPN connection" + All files access) = pipeline validat pe
+  a doua aplicatie.
+- Capcane rezolvate la runtime (fiecare = un `ClassNotFoundException` la rand):
+  kotlin-stdlib lipsa din dex; AAR-uri KMP care sunt `.klib` in loc de bytecode
+  (`collection-jvm`, `lifecycle-common-jvm`, `annotation-jvm`); `kotlinx-coroutines`;
+  `androidx.arch.core` (core-runtime); `R.class` generat dar necompilat;
+  `R$drawable` appcompat (`--extra-packages`); `R$id` lifecycle (AAR-ul `-android`
+  cu resursele reale: `view_tree_lifecycle_owner`, `view_tree_view_model_store_owner`).
+- HelloWorld (`net.sys32.hello`): primul test al pipeline-ului, compilat + instalat +
+  rulat (screenshot arata "Hello World de pe device! / Compilat pe telefon. / SM-A366B").
+
 ### 2026-10-04 (UI: font terminal reglabil + text selectabil + banner mutat in bara - `.assets_v253`)
 
 - `output` TextView: **11sp -> 15sp** implicit. Bara sus-dreapta `A-` / `<marime>` / `A+`
