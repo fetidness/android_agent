@@ -9,11 +9,11 @@
 
 ---
 
-### 2026-10-04 (BUILD APK NATIV PE DEVICE + A DOUA APLICATIE `net.sys32.agent2`)
+### 2026-10-04 (BUILD APK NATIV PE DEVICE + A DOUA APLICATIE `net.sys32.odc_agent`)
 
 > **IMPORTANT: acum exista DOUA aplicatii pe device.**
 > `net.sys32.agent` = agentul ORIGINAL (activ, vorbea cu operatorul in timpul build-ului).
-> `net.sys32.agent2` = CLONA, compilata direct pe telefon din surse, instalata ALATURI.
+> `net.sys32.odc_agent` = CLONA, compilata direct pe telefon din surse, instalata ALATURI.
 > Nu se re-instaleaza peste agentul original cat timp ruleaza (procesul moare la
 > `pm install` -> moare si sesiunea agentului). A doua aplicatie e calea sigura.
 
@@ -30,12 +30,12 @@
   4. `jar` + `d8` (include kotlin-stdlib + TOATE jar-urile runtime) -> `classes.dex`
   5. ambalare dex + `assets/` in `base.apk`
   6. `keytool` (cheie noua) + `apksigner` -> APK semnat (v1+v2+v3)
-- **Clona `net.sys32.agent2`**: transformare = inlocuire globala `net.sys32.agent` ->
-  `net.sys32.agent2` (27 fisiere, 66 aparitii: package Kotlin, applicationId/namespace,
-  cai filesDir, action strings, taskAffinity), folder java redenumit, label -> "Agent 2".
+- **Clona `net.sys32.odc_agent`**: transformare = inlocuire globala `net.sys32.agent` ->
+  `net.sys32.odc_agent` (27 fisiere, 66 aparitii: package Kotlin, applicationId/namespace,
+  cai filesDir, action strings, taskAffinity), folder java redenumit, label -> "ODC Agent".
   `build.py`: hash-ul de cale APK hardcodat -> inlocuit cu `_find_app_lib()` (glob dinamic).
 - Rezultat: **282 clase**, APK **17.6 MB**, instalat si RULAT (ajunge la dialogul
-  "Agent 2 wants to set up a VPN connection" + All files access) = pipeline validat pe
+  "ODC Agent wants to set up a VPN connection" + All files access) = pipeline validat pe
   a doua aplicatie.
 - Capcane rezolvate la runtime (fiecare = un `ClassNotFoundException` la rand):
   kotlin-stdlib lipsa din dex; AAR-uri KMP care sunt `.klib` in loc de bytecode
@@ -45,6 +45,14 @@
   cu resursele reale: `view_tree_lifecycle_owner`, `view_tree_view_model_store_owner`).
 - HelloWorld (`net.sys32.hello`): primul test al pipeline-ului, compilat + instalat +
   rulat (screenshot arata "Hello World de pe device! / Compilat pe telefon. / SM-A366B").
+
+- **Reproductibil din repo:** sursa clonei e in `odc_agent/` (numele vine de la *on-device
+  compiled*). Include `odc_agent/README.md` (diferente + cum se construieste) si
+  `odc_agent/build_apk.sh` (scriptul de build pe device). Reteta completa de la zero
+  (unelte, `android.jar`, androidx, capcane runtime) e in `readme.md` -> **OP.2-DEVICE**.
+- **Redenumire completa**: package-ul clonei a trecut de la `net.sys32.agent2` la
+  **`net.sys32.odc_agent`** (nume afisat „ODC Agent"), ca sa nu existe confuzii cu
+  originalul. 0 aparitii de „agent2" in repo. Recompilat + reinstalat (282 clase, 17.7 MB).
 
 ### 2026-10-04 (UI: font terminal reglabil + text selectabil + banner mutat in bara - `.assets_v253`)
 

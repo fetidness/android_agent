@@ -6,9 +6,9 @@ Pe telefon exista acum **DOUA aplicatii independente** care ruleaza alaturi:
 
 - **`net.sys32.agent`** = agentul **ORIGINAL** (aplicatia „mare", cu toolchain nativ complet
   in APK, ~282 MB). Aceasta e aplicatia activa, cea cu care operatorul purta conversatia.
-- **`net.sys32.agent2`** = **CLONA**, compilata **direct pe telefon din surse** (fara PC, fara
+- **`net.sys32.odc_agent`** = **CLONA**, compilata **direct pe telefon din surse** (fara PC, fara
   Gradle, fara Android Studio), instalata ca aplicatie SEPARATA (APK ~17.6 MB). Nume afisat:
-  „Agent 2". Diferenta de marime fata de original: clona NU include toolchain-ul nativ in APK
+  „ODC Agent". Diferenta de marime fata de original: clona NU include toolchain-ul nativ in APK
   (il descarca la runtime in `files/`), deci e mult mai mica.
 
 **De ce doua?** Pentru ca agentul original RULA in timpul build-ului. Reinstalarea peste el
@@ -17,10 +17,10 @@ permite build + test FARA sa intrerupi agentul activ.
 
 **REGULI:**
 - **NU** reinstala niciodata peste `net.sys32.agent` cat timp ruleaza (moare procesul).
-- Pentru test/schimbari de cod -> foloseste `net.sys32.agent2` (clona), nu originalul.
+- Pentru test/schimbari de cod -> foloseste `net.sys32.odc_agent` (clona), nu originalul.
 - Cele doua au chei de semnare DIFERITE (nu sunt interschimbabile la update).
 - Serviciile de sistem (IME, Notification Listener) pot fi active doar cate unul la un
-  moment dat -> daca activezi tastatura Agent 2, se dezactiveaza cea a agentului original.
+  moment dat -> daca activezi tastatura ODC Agent, se dezactiveaza cea a agentului original.
 
 **Pipeline-ul de build pe device** (dovedit E2E): JDK 21 + kotlinc 2.4.20 + aapt2 2.20 +
 d8 9.2.4 + apksigner 0.9 (toate pachete Termux aarch64) + `android.jar` API 36 de la Google.
@@ -28,7 +28,7 @@ Script: `/data/local/tmp/apkbuild/build_apk.sh <proj> <pkg> <label> <out.apk>` (
 aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare).
 **Sursa clonei e in acest repo, in `odc_agent/`** (odc = *on-device compiled*): app-ul
 complet (`app/src/main/`: manifest, res, assets Python, 15 module Kotlin in
-`java/net/sys32/agent2/`). Stdlib CPython e exclus din git (regenerabil), site-packages
+`java/net/sys32/odc_agent/`). Stdlib CPython e exclus din git (regenerabil), site-packages
 e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 
 ---
@@ -53,7 +53,7 @@ e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 | Module Kotlin | **15** |
 | Assets Python | agent.py + toolchain.py + adb_client.py + adb_setup.py + android_bridge.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri (pysitepkg, stdlib_extra) |
 | Toolchain nativ | `assets/toolchain/` (~343 MB) + binare `lib*_exec.so` in `jniLibs/` — **NU sunt in git** (vezi `.gitignore`), se regenereaza |
-| **A 2-a aplicatie** | **`net.sys32.agent2`** („Agent 2") — clona compilata PE DEVICE, instalata alaturi; vezi sectiunea de sus |
+| **A 2-a aplicatie** | **`net.sys32.odc_agent`** („ODC Agent") — clona compilata PE DEVICE, instalata alaturi; vezi sectiunea de sus |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
 | Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |
@@ -541,6 +541,101 @@ unzip -l $APK | grep 'lib/arm64-v8a/'
 > da `ModuleNotFoundError` pentru un subpachet cu `_`, asta e cauza.
 
 ---
+
+### OP.2-DEVICE — BUILD APK PE TELEFON, DE LA ZERO (fara PC, fara Gradle)
+
+> Calea folosita pentru a doua aplicatie (`odc_agent` / `net.sys32.odc_agent`).
+> Reproductibila complet pe device. Dovedita E2E (4 oct 2026).
+
+**De ce e nevoie de alt pipeline:** Gradle + AGP + Android SDK cer un JVM si un SDK care nu
+exista pe Android. Solutia: unelte Termux aarch64 (precompilate) + `android.jar` de la Google,
+rulate **manual** din `/data/local/tmp` (singurul director executabil; `filesDir` e blocat de
+SELinux — binararele ELF de acolo dau `Permission denied`).
+
+#### Pasul 0 — unde se lucreaza
+```
+TC=/data/local/tmp/apkbuild        # radacina stack-ului de build
+```
+Totul se copiaza aici din `/sdcard` (unde aplicatia/agentul scrie) pentru ca adbsh (uid 2000)
+nu poate citi `filesDir`. **Orice copiere pierde bitul de exec** -> `chmod -R 755` dupa.
+
+#### Pasul 1 — uneltele (pachete Termux aarch64, `packages.termux.dev/apt/termux-main`)
+Fiecare `.deb` e o arhiva `ar` -> `data.tar.xz`; se extrage cu python (parsez ar manual,
+`tarfile`+`lzma`). Prefixul intern e `data/data/com.termux/files/usr`.
+
+| Unealta | Pachet (cale in repo Termux) | Marime |
+|---|---|---|
+| JDK 21 | `pool/main/o/openjdk-21/openjdk-21_21.0.12_aarch64.deb` | 106 MB |
+| kotlinc 2.4.20 | `pool/main/k/kotlin/kotlin_2.4.20_all.deb` | 88 MB |
+| d8 9.2.4 | `pool/main/d/d8/d8_37.0.0_all.deb` | 14.7 MB |
+| aapt2 2.20 | `pool/main/a/aapt2/aapt2_16.0.0.4-2_aarch64.deb` | 1 MB |
+| apksigner 0.9 | `pool/main/a/apksigner/apksigner_37.0.0_all.deb` | 1.1 MB |
+| libs C++ | `libc++`, `fmt`, `libprotobuf`, `abseil-cpp`, `libexpat`, `libpng`, `libzopfli`, `zlib` | ~3.6 MB |
+| libs JDK | `libandroid-shmem`, `libandroid-spawn`, `libiconv`, `libjpeg-turbo`, `littlecms`, `alsa-plugins` | ~1.2 MB |
+
+Se pun in `$TC/{jdk,kotlin,d8,aapt2,apksigner}` si libs C++/JDK in `$TC/tlib`.
+
+**JDK pe device** = `$TC/jdk/bin/java`. Are nevoie OBLIGATORIU de:
+```
+LD_LIBRARY_PATH=$TC/tlib:$JH/lib:$JH/lib/server     # altfel: libz.so.1 / libandroid-shmem.so not found
+```
+Wrapper `$TC/jrun.sh`: seteaza `JAVA_HOME` + `LD_LIBRARY_PATH` si face `exec java "$@"`.
+**NU folosi `linker64` pentru a pasa argumente** — le trateaza pe toate ca fisiere
+(`error: expected absolute path: "-version"`). Ruleaza binarul DIRECT din `/data/local/tmp`.
+
+#### Pasul 2 — `android.jar` (referinta API) + androidx
+- **android.jar API 36**: `https://dl.google.com/android/repository/platform-36_r01.zip`
+  (63 MB) -> `android-36/android.jar` (27.7 MB). Google il da DIRECT, fara sdkmanager.
+- **androidx** din Google Maven: `https://dl.google.com/dl/android/maven2/` (AAR -> classes.jar).
+  Necesare: core-ktx, core, appcompat (+resources), fragment, activity, lifecycle-*, savedstate,
+  collection, annotation, coroutines, arch-core-runtime, dexmaker. Se pun in `$TC/classpath/`.
+  **CAPCANA KMP**: `collection-1.4.0.jar`, `lifecycle-common-2.8.0.jar`, `annotation-1.8.0.jar`
+  sunt `.klib` (metadata Kotlin, NU bytecode) -> trebuie variantele `-jvm`
+  (`collection-jvm`, `lifecycle-common-jvm`, `annotation-jvm`). `lifecycle-runtime-2.8.0.aar`
+  si `lifecycle-viewmodel-2.8.0.aar` sunt umbrele goale -> foloseste `-android`.
+- **resursele AAR** cu `<id>` (`view_tree_lifecycle_owner` etc.):
+  `lifecycle-runtime-android`, `lifecycle-viewmodel-android`, `activity`, `savedstate`
+  -> se extrag in `$TC/aar_res/` si se compileaza la link.
+
+#### Pasul 3 — pregatirea proiectului
+Proiectul are nevoie (pentru build manual) de structura plata: `AndroidManifest.xml`, `res/`,
+`src/` (fisiere `.kt`), `assets/`. Fata de varianta Gradle se adauga MANUAL in manifest:
+- `package="net.sys32.odc_agent"` (Gradle il lua din `namespace`)
+- `<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/>`
+  (fara el -> `DeprecatedTargetSdkVersionDialog` si app-ul e blocat)
+
+#### Pasul 4 — scriptul (6 pasi)
+```
+/system/bin/sh $TC/build_apk.sh <proj_dir> <package> <label> <out.apk>
+```
+1. `aapt2 compile --dir res` + resursele fiecare AAR -> zip-uri; `aapt2 link --auto-add-overlay
+   --extra-packages <TOATE pachetele cu resurse>` -> `base.apk` + `R.java`
+   (`--extra-packages` e obligatoriu: fara el -> `ClassNotFoundException androidx.appcompat.R$drawable`,
+   `NoSuchFieldError view_tree_*`)
+2. `kotlinc` sursele `.kt` -> `classes/`
+3. `javac` SEPARAT pe R.java-urile generate (kotlinc NU compileaza `.java` fara javac)
+4. `jar cf classes.jar` + `d8` (include **kotlin-stdlib + TOATE jar-urile runtime**:
+   altfel `ClassNotFoundException: kotlin.jvm.internal.Intrinsics`) -> `classes.dex`
+5. ambaleaza `classes.dex` + `assets/` in `base.apk` (`jar uf`)
+6. `keytool` (o cheie noua `release.keystore`) + `apksigner sign` -> APK v1+v2+v3
+
+#### Pasul 5 — instalare pe device (Samsung)
+```
+pm install -r --bypass-low-target-sdk-block /data/local/tmp/odc_agent.apk
+```
+Fara `--bypass-low-target-sdk-block` -> `INSTALL_FAILED_VERIFICATION_FAILURE` /
+`INSTALL_FAILED_DEPRECATED_SDK_VERSION`. Pornire: `am start -n net.sys32.odc_agent/.MainActivity`.
+
+#### Capcane la runtime (fiecare = un `ClassNotFoundException` in logcat, pe rand)
+Ordinea intalnita: `kotlin.jvm.internal.Intrinsics` -> `androidx.collection.SimpleArrayMap` ->
+`kotlinx.coroutines.flow.StateFlowKt` -> `androidx.arch.core.executor.ArchTaskExecutor` ->
+`androidx.appcompat.R$drawable` -> `androidx.lifecycle.runtime.R$id` ->
+`androidx.lifecycle.viewmodel.R$id`. Fiecare se rezolva adaugand jar-ul/AAR-ul lipsa in
+classpath (si, pentru R-uri, in `--extra-packages`).
+
+#### Timpi reali (SM-A366B, pe device)
+- build complet (aapt2+kotlinc+javac+d8+ambalare+semnare): **~1.5 min** (282 clase)
+- prima descarcare a uneltelor: ~380 MB (o singura data)
 
 ### OP.3 — INSTALL + CELE 3 CAPCANE OBLIGATORII
 

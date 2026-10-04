@@ -78,7 +78,7 @@ workspace/app/net.sys32.agent/.kotlin/
 workspace/app/net.sys32.agent/.gradle/
 app/build/
 
-# ---- odc_agent (on-device compiled agent = clona net.sys32.agent2) ----
+# ---- odc_agent (on-device compiled agent = clona net.sys32.odc_agent) ----
 # aceeasi politica: stdlib CPython regenerabil EXCLUS, site-packages PASTRAT
 odc_agent/app/src/main/assets/python/Lib/*
 !odc_agent/app/src/main/assets/python/Lib/site-packages/
