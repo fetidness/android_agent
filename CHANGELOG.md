@@ -3,9 +3,25 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `71274b9`.
+> Ultimul commit inclus: `95adb4b`.
 
-**Total: 246 commituri in 15 zile** (19 sep -> 3 oct).
+**Total: 247 commituri in 16 zile** (19 sep -> 4 oct).
+
+---
+
+### 2026-10-04 (UI: font terminal reglabil + text selectabil/copiabil - `.assets_v252`)
+
+- `output` TextView: **11sp -> 15sp** implicit. Bara sus-dreapta `A-` / `<marime>` / `A+`
+  (10..30 sp, pas 1sp), persistata in SharedPreferences (`agent_ui`/`font_size`) -> marimea
+  se pastreaza intre lansari.
+- `AGENT_COLS` se masoara acum cu `fontSizeSp` (inainte `11f` hardcodat) -> banner-ul ramine
+  aliniat la fontul real la prima pornire.
+- `setTextIsSelectable(true)` pe terminal -> long-press deschide bara contextuala
+  **Copy / Select all / Share**. Butonul dedicat "copy" (prima varianta a schimbarii) a fost
+  SCOS la cererea operatorului: copierea apare DOAR cand selectezi textul.
+- Verificat pe device (SM-A366B): `A- 15 A+` in coltul dreapta-sus (singure, fara "copy"),
+  font 15sp; long-press pe "DeepSeek" -> selectie + bara cu Copy.
+- Doar Kotlin (`MainActivity.kt`) -> `.assets_v252` NESCHIMBAT (fara re-extragere de assets).
 
 ---
 

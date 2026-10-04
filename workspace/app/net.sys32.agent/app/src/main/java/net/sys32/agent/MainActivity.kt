@@ -49,6 +49,11 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var followTail = true
     private var programmaticScroll = false
 
+    // ===== FONT (sp) =====
+    // dimensiunea fontului terminalului (sp), persistata intre lansari
+    private var fontSizeSp = 15f
+    private lateinit var fontLabel: TextView
+
     private val extraTop: Int get() = (16 * resources.displayMetrics.density).toInt()
 
     private val mono: Typeface by lazy {
@@ -79,6 +84,10 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = Color.parseColor("#0D1117")
         window.navigationBarColor = Color.parseColor("#0D1117")
 
+        // dimensiunea fontului: citita din preferinte (persistata), implicit 15sp
+        fontSizeSp = getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getFloat("font_size", fontSizeSp).coerceIn(FONT_MIN, FONT_MAX)
+
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#0D1117"))
@@ -91,8 +100,11 @@ class MainActivity : AppCompatActivity() {
 
         output = TextView(this).apply {
             setPadding(24, 16, 24, 24)
-            textSize = 11f
+            textSize = fontSizeSp
             typeface = mono
+            // SELECTIE + COPIERE: long-press pe text -> bara cu Copy / Select all.
+            // Copierea apare DOAR cand selectezi textul (fara buton dedicat).
+            setTextIsSelectable(true)
             setTextColor(Color.parseColor("#ABB2BF"))
             setBackgroundColor(Color.parseColor("#0D1117"))
             // PERFORMANTA: layout pe o singura coloana, fara reflow pe ecran;
@@ -100,6 +112,39 @@ class MainActivity : AppCompatActivity() {
             setLineSpacing(0f, 1f)
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
+
+        // ===== BARA DE CONTROL (sus, dreapta): dimensiune font =====
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.parseColor("#11151C"))
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        fun miniBtn(label: String, color: String, onClick: () -> Unit) = Button(this).apply {
+            text = label
+            textSize = 13f
+            typeface = mono
+            setTextColor(Color.parseColor(color))
+            setBackgroundColor(Color.TRANSPARENT)
+            minWidth = 0; minimumWidth = 0
+            setPadding(dp(12), dp(2), dp(12), dp(2))
+            setOnClickListener { onClick() }
+        }
+        fontLabel = TextView(this).apply {
+            text = fontSizeSp.toInt().toString()
+            textSize = 13f
+            typeface = mono
+            setTextColor(Color.parseColor("#5C6370"))
+            setPadding(dp(6), 0, dp(6), 0)
+        }
+        val btnFontMinus = miniBtn("A-", "#ABB2BF") { changeFontSize(-1f) }
+        val btnFontPlus  = miniBtn("A+", "#ABB2BF") { changeFontSize(+1f) }
+        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        bar.addView(btnFontMinus, LinearLayout.LayoutParams(-2, -2))
+        bar.addView(fontLabel, LinearLayout.LayoutParams(-2, -2))
+        bar.addView(btnFontPlus, LinearLayout.LayoutParams(-2, -2))
+        root.addView(bar, LinearLayout.LayoutParams(-1, -2))    // bara sta SUS
+
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         // ===== SCROLL =====
@@ -309,6 +354,10 @@ class MainActivity : AppCompatActivity() {
         // altfel TextView-ul urias face re-layout lent la revenirea din background.
         private const val MAX_UI_CHARS = 200000
         private const val MAX_UI_KEEP = 180000
+        // UI: dimensiunea fontului terminalului (sp) + limitele ei
+        private const val FONT_MIN = 10f
+        private const val FONT_MAX = 30f
+        private const val PREFS = "agent_ui"
 
         /** Permite SERVICIILOR sa scrie o linie de status in terminalul aplicatiei
          *  (ex. ScreenCaptureService anunta cand sesiunea de captura s-a OPrit,
@@ -321,6 +370,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /** Modifica dimensiunea fontului terminalului (sp) si o salveaza. */
+    private fun changeFontSize(delta: Float) {
+        fontSizeSp = (fontSizeSp + delta).coerceIn(FONT_MIN, FONT_MAX)
+        applyFontSize()
+    }
+
+    /** Aplica dimensiunea fontului pe terminal si o persista in preferinte. */
+    private fun applyFontSize() {
+        try { output.textSize = fontSizeSp } catch (_: Exception) {}
+        try { fontLabel.text = fontSizeSp.toInt().toString() } catch (_: Exception) {}
+        try {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putFloat("font_size", fontSizeSp).apply()
+        } catch (_: Exception) {}
+    }
+
 
     /** ★ Inlocuieste ULTIMA linie din terminal (pentru countdown-uri).
      *  PERFORMANTA: nu reconstruim tot textul (Ansi.toSpannable pe tot ar fi lent);
@@ -972,7 +1038,7 @@ class MainActivity : AppCompatActivity() {
 pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Agent").absolutePath
                 pb.environment()["AGENT_COLS"] = run {
                     val test = android.widget.TextView(this@MainActivity).apply {
-                        textSize = 11f; typeface = mono
+                        textSize = fontSizeSp; typeface = mono
                     }
                     val w = test.paint.measureText("M")
                     val usable = resources.displayMetrics.widthPixels - 48f

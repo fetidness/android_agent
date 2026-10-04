@@ -926,6 +926,11 @@ Componenta 2 ruleaza ca PROCES SEPARAT (libpyexec.so agent.py).
 - Auto-scroll inteligent: ramine sus cind citesti, urmareste cind esti jos
 - Buton STOP trimite SIGINT procesului Python (PID luat prin reflexie din
   cimpul "pid", nu metoda - aceasta nu exista pe Android)
+- Bara sus-dreapta: `A-` / `<marime>` / `A+` = reglaj font terminal (10..30 sp,
+  pas 1sp), persistat in SharedPreferences (`agent_ui`/`font_size`). Implicit 15 sp.
+  `AGENT_COLS` se masoara cu aceeasi marime, deci banner-ul ramine aliniat.
+- Text SELECTABIL: long-press pe terminal -> bara contextuala cu Copy / Select all /
+  Share (fara buton dedicat "copy"). (`setTextIsSelectable(true)`)
 
 ### 3.2 Bridge (AndroidBridge.kt)
 - Server TCP pe 127.0.0.1, port aleator (ServerSocket(0, 8, 127.0.0.1))
