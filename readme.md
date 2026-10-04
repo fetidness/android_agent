@@ -4,7 +4,7 @@
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
 
-### Starea repo-ului (3 oct 2026, `.assets_v252`) — ARHITECTURA "ZERO TERMUX"
+### Starea repo-ului (4 oct 2026, `.assets_v253`) — ARHITECTURA "ZERO TERMUX"
 
 > **Nota (3 oct 2026):** valorile de mai jos sunt RE-MASURATE pe clona curenta,
 > nu preluate din documentatie veche. Daca modifici o cifra aici, masoar-o intai
@@ -13,7 +13,7 @@
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v252`** (in `MainActivity.kt`, singura sursa de adevar) |
+| Marker assets activ | **`.assets_v253`** (in `MainActivity.kt`, singura sursa de adevar) |
 | APK debug | **~282 MB** (toolchain nativ COMPLET + binare executabile) |
 | `agent.py` (assets) | **233 337 B** (3549 linii) |
 | `toolchain.py` (assets) | **153 965 B** |
@@ -529,7 +529,7 @@ $ADB shell pm list packages | grep sys32                       # package present
 
 `MainActivity.kt` in `extractAssets()`:
 ```kotlin
-val stamp = File(filesDir, ".assets_v252")   // valoarea CURENTA (verific-o cu grep, nu o presupune)
+val stamp = File(filesDir, ".assets_v253")   // valoarea CURENTA (verific-o cu grep, nu o presupune)
 if (stamp.exists() && dest.exists()) return   // ← iese IMEDIAT daca markerul exista
 ```
 Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi markerul.
@@ -538,14 +538,14 @@ Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi mar
 ```bash
 # 1. gaseste markerul curent
 grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt
-#    -> 693:  val stamp = File(filesDir, ".assets_v252")
+#    -> 693:  val stamp = File(filesDir, ".assets_v253")
 
 # 2. incrementeaza-l (v252 -> v253)
-sed -i 's/\.assets_v252/.assets_v253/' app/src/main/java/net/sys32/agent/MainActivity.kt
+sed -i 's/\.assets_v253/.assets_v254/' app/src/main/java/net/sys32/agent/MainActivity.kt
 
 # 3. rebuild + install, apoi verifica PE DEVICE
 $ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/ | grep assets_v
-#    -> .assets_v253  (trebuie sa fie NOU)
+#    -> .assets_v254  (trebuie sa fie NOU)
 ```
 
 Ce face re-extragerea (util cand ceva „nu se actualizeaza"):
@@ -746,7 +746,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v252`**; se citeste cu `grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt`) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v253`**; se citeste cu `grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt`) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum

@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.text.InputType
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -139,7 +140,30 @@ class MainActivity : AppCompatActivity() {
         }
         val btnFontMinus = miniBtn("A-", "#ABB2BF") { changeFontSize(-1f) }
         val btnFontPlus  = miniBtn("A+", "#ABB2BF") { changeFontSize(+1f) }
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        // bannerul mutat din terminal in bara: ⚡ AGENT DeepSeek + linia de ajutor
+        val banner = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, dp(8), 0)
+        }
+        val bannerTitle = TextView(this).apply {
+            text = "\u26a1 AGENT DeepSeek"
+            setTextColor(Color.parseColor("#FF5F87"))   // RED (38;5;203)
+            textSize = 13f
+            typeface = mono
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        val bannerHelp = TextView(this).apply {
+            text = "Type /help for all commands"
+            setTextColor(Color.parseColor("#AFAFD7"))   // G (38;5;146)
+            textSize = 11f
+            typeface = mono
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        banner.addView(bannerTitle)
+        banner.addView(bannerHelp)
+        bar.addView(banner, LinearLayout.LayoutParams(0, -2, 1f))
         bar.addView(btnFontMinus, LinearLayout.LayoutParams(-2, -2))
         bar.addView(fontLabel, LinearLayout.LayoutParams(-2, -2))
         bar.addView(btnFontPlus, LinearLayout.LayoutParams(-2, -2))
@@ -756,7 +780,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v252")
+        val stamp = File(filesDir, ".assets_v253")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.

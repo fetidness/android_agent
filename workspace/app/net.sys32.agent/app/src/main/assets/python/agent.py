@@ -3249,14 +3249,8 @@ if __name__ == "__main__":
     refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
     if K:
         ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
-    # --- banner de start: titlu centrat + o linie de ajutor (cerut de operator) ---
-    def _ctr(txt, visible):
-        return txt   # aliniat la stanga (cerut de operator)
-    _title = "\u26a1 AGENT DeepSeek"
-    _tvis = len(_title) - 1   # emoji-ul ⚡ ocupa 2 celule, scadem 1
-    print("")
-    print(RED + _ctr(_title, _tvis) + N)
-    print(G + _ctr("Type /help for all commands", 26) + N + "\n")
+    # --- bannerul (\u26a1 AGENT DeepSeek / Type /help) a fost MUTAT in bara de sus din
+    #     MainActivity.kt (UI nativ) - nu se mai printeaza in terminal (cerut de operator).
     while 1:
         try: q=input(U+UPROMPT+IN).strip()
         except (EOFError,KeyboardInterrupt): print(N);break

@@ -5,11 +5,11 @@
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
 > Ultimul commit inclus: `342ce8f`.
 
-**Total: 248 commituri in 16 zile** (19 sep -> 4 oct).
+**Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
 
 ---
 
-### 2026-10-04 (UI: font terminal reglabil + text selectabil/copiabil - `.assets_v252`)
+### 2026-10-04 (UI: font terminal reglabil + text selectabil + banner mutat in bara - `.assets_v253`)
 
 - `output` TextView: **11sp -> 15sp** implicit. Bara sus-dreapta `A-` / `<marime>` / `A+`
   (10..30 sp, pas 1sp), persistata in SharedPreferences (`agent_ui`/`font_size`) -> marimea
@@ -19,9 +19,16 @@
 - `setTextIsSelectable(true)` pe terminal -> long-press deschide bara contextuala
   **Copy / Select all / Share**. Butonul dedicat "copy" (prima varianta a schimbarii) a fost
   SCOS la cererea operatorului: copierea apare DOAR cand selectezi textul.
-- Verificat pe device (SM-A366B): `A- 15 A+` in coltul dreapta-sus (singure, fara "copy"),
-  font 15sp; long-press pe "DeepSeek" -> selectie + bara cu Copy.
-- Doar Kotlin (`MainActivity.kt`) -> `.assets_v252` NESCHIMBAT (fara re-extragere de assets).
+- **Banner mutat din terminal in bara de sus** (cerut de operator): `⚡ AGENT DeepSeek`
+  (rosu 38;5;203) + `Type /help for all commands` (38;5;146) stau acum in STANGA barei,
+  linga `A- 15 A+`. Print-ul din `agent.py` a fost STERS -> la pornire ecranul e complet gol
+  (doar erorile mai apar, exact cum s-a cerut).
+- Deci `assets/python/agent.py` a fost atins -> marker `.assets_v252` -> **`.assets_v253`**.
+  Re-extragerea sterge `files/python/key.txt`; cheia se pastreaza in `files/home/key.txt`, iar
+  `readStoredKey()` cauta si acolo -> agentul porneste fara re-onboarding.
+- Verificat end-to-end pe device (SM-A366B): `A- 15 A+` singure in coltul dreapta-sus,
+  long-press pe "DeepSeek" -> selectie + bara cu Copy; task trimis din UI -> mesajul ajunge in
+  `context.json` si raspunsul se randeaza in terminal.
 
 ---
 
