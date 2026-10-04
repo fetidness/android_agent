@@ -637,6 +637,40 @@ classpath (si, pentru R-uri, in `--extra-packages`).
 - build complet (aapt2+kotlinc+javac+d8+ambalare+semnare): **~1.5 min** (282 clase)
 - prima descarcare a uneltelor: ~380 MB (o singura data)
 
+#### ⚠ CRITIC — un APK functional are NEVOIE de assets + libs native, nu doar de cod
+Un APK compilat doar cu `classes.dex` (17 MB) **porneste dar Python moare**:
+```
+Cannot run program ".../lib/arm64/libpyexec.so": error=2, No such file or directory
+[watchdog] procesul Python lipseste - il repornesc        (bucla)
+Fatal Python error: Failed to import encodings module
+```
+Deci **build-ul trebuie sa includa si**:
+- **`lib/arm64-v8a/*.so`** — 25 fisiere, **392 MB**: `libpyexec.so` (lanseaza Python),
+  `libpython3.14.so` (interpreterul), `libcrypto_python.so`, `libssl_python.so`,
+  `libsqlite3_python.so`, `libc++_shared.so`, plus TOOLCHAIN-ul (clang 80 MB, flang 137 MB,
+  lld, cargo, cmake, ninja, perl, maturin, rustc).
+- **`assets/`** — **1.0 GB**: `python/` (58 MB: `Lib/` complet — inclusiv cele 123 fisiere
+  `encodings` —, `site-packages/`, ZIP-urile `pysitepkg.zip` + `stdlib_extra.zip`) si
+  `toolchain/` (1 GB, inclusiv `rust-libs.tar` 840 MB).
+- Scriptul `build_apk.sh` le ambaleaza cu `jar uf app.apk -C $PROJ lib` si `... assets`.
+- Manifestul trebuie sa aiba `android:extractNativeLibs="true"`.
+
+**De unde le iei** (NU sunt in git - `.gitignore` exclude `*.so`, `*.tar`, `assets/toolchain`):
+din APK-ul original instalat:
+```sh
+P=$(pm path net.sys32.agent | sed 's/package://')
+unzip -o "$P" "lib/arm64-v8a/*" "assets/*" -d /data/local/tmp/odcassets    # 392 MB + 1 GB
+```
+APK-ul complet iese **~497 MB** (originalul: 664 MB comprimat).
+
+**Capcana la reinstalare:** aplicatia extrage assets in `filesDir` la PRIMA rulare si NU
+re-extraege daca `pyhome` exista deja. Dupa un build nou cu stdlib adaugat:
+`pm clear net.sys32.odc_agent` (forteaza re-extragerea completa).
+
+**Stare finala dovedita:** ODC Agent ajunge la `Configuring... DONE` ->
+`AGENT FULLY CONFIGURED AND OPERATIONAL` -> cere cheia DeepSeek (`⚠ LIPSA CHEIA DeepSeek API`,
+se scrie in `files/python/key.txt`, se pastreaza in `files/home/key.txt`).
+
 ### OP.3 — INSTALL + CELE 3 CAPCANE OBLIGATORII
 
 ```bash

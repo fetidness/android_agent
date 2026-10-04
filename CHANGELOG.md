@@ -54,6 +54,27 @@
   **`net.sys32.odc_agent`** (nume afisat „ODC Agent"), ca sa nu existe confuzii cu
   originalul. 0 aparitii de „agent2" in repo. Recompilat + reinstalat (282 clase, 17.7 MB).
 
+- **Fix: ODC Agent complet functional (assets + libs native in APK).** Prima varianta a
+  clonei (doar cod, 17.7 MB) pornea dar Python murea:
+  `Cannot run program ".../lib/arm64/libpyexec.so" ... error=2` + bucla `[watchdog]`, apoi
+  `Fatal Python error: Failed to import encodings module`. Cauza: build-ul manual nu
+  ambala nici bibliotecile native (`jniLibs`), nici stdlib-ul Python.
+- **Ce s-a adaugat** (extras din APK-ul original instalat, NU versionat in git):
+  - `lib/arm64-v8a/*.so` — **25 fisiere, 392 MB** (libpyexec, libpython3.14, libcrypto/ssl/
+    sqlite3_python, libc++_shared + toolchain: clang 80 MB, flang 137 MB, lld, cargo, cmake,
+    ninja, perl, maturin, rustc...).
+  - `assets/` — **1.0 GB** (`python/` 58 MB cu `Lib/` complet — inclusiv 123 fisiere
+    `encodings` —, site-packages si ZIP-urile `pysitepkg`/`stdlib_extra`; `toolchain/` 1 GB
+    cu `rust-libs.tar` 840 MB, sysroot, cmake, perl...).
+  - `build_apk.sh` ambaleaza acum `lib/` si `assets/` (`jar uf`); manifest are
+    `extractNativeLibs="true"`.
+- **Rezultat: APK 497 MB** (originalul: 664 MB). ODC Agent ajunge la ecranul corect:
+  `Configuring... DONE` -> `AGENT FULLY CONFIGURED AND OPERATIONAL` -> cere cheia DeepSeek
+  (`LIPSA CHEIA DeepSeek API`). Identic functional cu originalul.
+- **Capcana**: aplicatia extrage assets in `filesDir` la PRIMA rulare si nu re-extraege daca
+  `pyhome` exista deja -> dupa un build nou, `pm clear net.sys32.odc_agent` forteaza
+  re-extragerea.
+
 ### 2026-10-04 (UI: font terminal reglabil + text selectabil + banner mutat in bara - `.assets_v253`)
 
 - `output` TextView: **11sp -> 15sp** implicit. Bara sus-dreapta `A-` / `<marime>` / `A+`
