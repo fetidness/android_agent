@@ -49,6 +49,10 @@ class MainActivity : AppCompatActivity() {
     private var permRequested = false   // anti-bucla: cerem o singura data automat din onResume
     @Volatile private var followTail = true
     private var programmaticScroll = false
+    // true DOAR cat timp degetul utilizatorului atinge efectiv ScrollView-ul.
+    // Fara el, TextView-ul selectabil (setTextIsSelectable) emite scroll
+    // "fals" (re-layout/focus) pe care listener-ul il lua drept derulare manuala.
+    private var userTouching = false
 
     // ===== FONT (sp) =====
     // dimensiunea fontului terminalului (sp), persistata intre lansari
@@ -178,12 +182,25 @@ class MainActivity : AppCompatActivity() {
         //   - esti jos la fund        -> auto-scroll (urmareste generarea)
         //   - ai derulat sus          -> nu esti la fund -> rămâi unde esti
         //   - revii jos la fund       -> iar la fund -> auto-scroll reia singur
+        // Touch real pe zona de text: doar atunci miscarile de scroll pot opri urmarirea.
+        // Astfel, scroll-ul "artificial" generat de TextView-ul selectabil (re-layout/focus)
+        // NU mai e confundat cu o derulare manuala a utilizatorului.
+        scroll.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> userTouching = true
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> userTouching = false
+            }
+            false   // nu consumam evenimentul: ScrollView-ul deruleaza normal
+        }
+
         scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
             val child = scroll.getChildAt(0)
             val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
-            // miscarea reala a userului (nu cea programatica): daca s-a urcat, nu mai urmarim;
-            // daca s-a coborat pana EFECTIV la fund (<=2), reluam urmarirea.
-            if (!programmaticScroll) {
+            // Reaccionam DOAR la derularea facuta de degetul utilizatorului (userTouching).
+            // Orice alta schimbare de scroll (programatica, sau cauzata de TextView-ul
+            // selectabil) este ignorata -> nu mai opreste urmarirea din greseala.
+            if (!programmaticScroll && userTouching) {
                 if (scrollY < oldScrollY) {
                     // userul a derulat SUS -> oprim urmarirea
                     followTail = false
@@ -192,7 +209,7 @@ class MainActivity : AppCompatActivity() {
                     followTail = true
                 }
             }
-            // daca userul a ajuns la fund (prin orice mijloc), urmarirea reia
+            // daca suntem EFECTIV la fund (prin orice mijloc), urmarirea reia de la sine
             if (!programmaticScroll && dist <= 8) followTail = true
         }
 
