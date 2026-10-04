@@ -3,9 +3,90 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `70954fd`.
+> Ultimul commit inclus: `71274b9`.
 
-**Total: 237 commituri in 15 zile** (19 sep -> 3 oct).
+**Total: 246 commituri in 15 zile** (19 sep -> 3 oct).
+
+---
+
+### 2026-10-03 (SCRAPING WEB + motor JavaScript NATIV + cautare/stiri - `.assets_v252`)
+
+Sesiune pe device: agentul invata sa citeasca web-ul real (site-uri statice, SPA/React,
+date in JavaScript) si sa caute informatii ACTUALE, fara cheie API. 8 commituri.
+
+**Strat 1 - scraper.py (static, rapid):**
+- `scraper.py` livrat in `assets/python/` (inainte exista doar in `workspace/tools/`).
+- bug fix JSON: in trafilatura 2.x `extract_metadata().as_dict()` intoarce elemente lxml
+  (`_Element`) la `body`/`commentsbody` -> `json.dumps` cadea cu TypeError. Fix: `_clean_meta()`
+  (scoate/converteste valorile neserializabile) + `default=str` la afisare.
+- dependinte native instalate pe device: lxml 6.1.3, parsel 1.12.1, trafilatura 2.3.0,
+  feedparser 6.0.14, justext 3.0.2 (+deps); wheelhouse in `files/wheels` (13 wheel-uri,
+  inclusiv lxml android_24_arm64_v8a compilat pe telefon).
+
+**Strat 2 - jsengine.py (motor JavaScript NATIV pe device):**
+- mini-racer = FUNDATURA pe Android (cere V8 din sursa / `libmini_racer.so`); playwright,
+  selenium, dukpy testate si RESPINSE (fara Chromium headless / fara DOM/ES6).
+- solutia: **quickjs 1.19.4 compilat NATIV** pe device
+  (`quickjs-1.19.4-cp314-cp314-android_24_arm64_v8a.whl`, 449 KB).
+- verificat: ES2020 complet (arrow/let/const, classes+getters, Promise/async-await,
+  optional chaining, nullish, Map/Set, BigInt, template literals, destructuring, regex,
+  closures) + comunicare bidirectionala Python<->JS (`ctx.add_callable()`).
+- `jsengine.py`: mediu "browser" stub (window/document/console/navigator/localStorage),
+  `extract_and_run()` ruleaza TOATE `<script>` inline dintr-o pagina si evalueaza o expresie.
+- cand se foloseste: date in JS inline / calcule client-side (instant); randare completa
+  de DOM -> `jsfetch.py`.
+
+**Strat 3 - jsfetch.py (randare reala in Chrome-ul de pe device):**
+- scraper.py NU vede continutul randat de JS (reddit/x.com = 0 chars, vuejs.org 455,
+  svelte.dev 506). Solutia: deschide pagina in Chrome (V8 real), asteptare adaptiva,
+  citirea arborelui de accesibilitate (`uiautomator dump`).
+- masurat: vuejs.org 71 texte, react.dev 143, angular.dev 83, news.ycombinator.com 268
+  (14s). Auto-dismiss cookie banner, scroll, deduplicare, fallback adb_client/subprocess.
+- cost ~12-23s/pagina -> se foloseste DOAR cand scraper.py nu ajunge.
+
+**Legatura scraper <-> jsengine (`supreme`):**
+- functii noi in scraper.py: `sniff(html)` (static/hybrid/spa), `extract_js_data(html)`
+  (7 patterns: `__NEXT_DATA__`, `__NUXT__`, `__INITIAL_STATE__`, `__DATA__`,
+  `__PRELOADED_STATE__`, `__APOLLO_STATE__`, ld+json), `js_query(url, expr)`,
+  `deep(url, keys)`, `supreme(url)` (alege si executa automat metoda optima).
+- CLI nou: `sniff | jsdata | jsquery | deep | supreme`.
+- dovada (BBC News 379 KB): `sniff` -> "hybrid" (59 scripturi), `supreme` -> 123 titluri
+  in 287 ms (3x mai rapid ca `article()` singur pe hub-uri de stiri, 100x mai mult continut
+  din JSON imbricat).
+- bug reparat: `deep()` cu `keys='title,headline'` era tratat ca o singura cheie -> split pe virgula.
+
+**Optimizare decizie (test cap-coada):**
+- problema: Wikipedia (215 KB text HTML, doar 793 b ld+json) era clasata "hybrid" si trimisa
+  la Chrome (27s inutil); react.dev statea 20s pe Chrome desi scraper-ul dadea continut in 0.6s.
+- regula noua: cand blocul JS e mic (<2000 b), decizia depinde de TEXTUL din HTML
+  (`>3000 chars` -> scraper; `<3000` -> chrome).
+- rezultate: Wikipedia 1214ms (era 27095ms, **22x**), react.dev 615ms (era 20538ms),
+  BBC 293ms (neschimbat). Toate cele 3 ramuri testate (static->scraper, hybrid->scraper+jsengine,
+  spa->chrome).
+
+**Detectie SPA + fallback accessibility:**
+- testat pe danielpincu.com (SPA pur, tema Matrix): `sniff()` rata SPA-urile cu UN singur
+  `<script type=module>` -> acum 4 semnale (script module, div#app/root/__next, src=/assets/*.js,
+  bundler, body gol <60 chars); prag 2+ semnale => spa.
+- `jsfetch()` murea cu "uiautomator dump: ERROR: could not get idle state" pe pagini cu
+  ANIMATII CONTINUE (canvas Matrix) -> FALLBACK automat pe ACCESSIBILITY (bridge Kotlin,
+  nu depinde de idle) + verificarea URL-ului tabului activ + curatare zgomot de browser.
+- dovada: danielpincu.com -> 83-84 texte (inainte 0); stabil pe 2 rulari; cazurile vechi
+  neatinse (bbc.com hybrid 347ms, wikipedia/example.com scraper OK).
+
+**Cautare si stiri (fara cheie API):**
+- `websearch.py`: dispecer `search(q)` bing -> wikipedia -> marginalia, cu retry/backoff;
+  `bing()` cu `setlang=en` (`mkt` dadea 0 rezultate), `wikipedia()` (API MediaWiki),
+  `marginalia()`, `ddg()` cu detectie CAPTCHA; `topical(q)` = stiri + web.
+- `newsfeed.py`: `gnews()` Google News RSS (100+ stiri cu pubDate, gratuit), `bingnews()`,
+  `rss()`, `latest()`; dict `FEEDS` (digi24/hotnews/agerpres/bbc/guardian).
+- scop: informatii ACTUALE gratuite (Wikipedia nu e sursa de actualitate).
+
+**Documentatie:**
+- README: sectiunea "motor JavaScript (jsengine)" + lantul suprem de scraping (quickjs nativ,
+  cele 5 functii din scraper.py, 7 patterns, CLI extins, decizia `supreme()`, de ce mini-racer
+  e imposibil pe device); punctul 7 in REGULA DE AUR (scraping -> `scraper.py` default) +
+  sectiunea SCRAPING WEB (8 comenzi, stack, wheelhouse, 3 capcane, rc=0 pe 8 URL-uri reale).
 
 ---
 
