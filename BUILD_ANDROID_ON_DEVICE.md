@@ -289,20 +289,33 @@ NDK-ul e fake prin symlink-uri; și Gradle rulează cu `VFORK` + `tmpdir` + `use
 Tot pipeline-ul e împachetat într-un modul Python care vine CU odc_agent. La instalare de la
 zero, agentul poate compila APK-uri fără nicio pregătire manuală.
 
-### Ce conține APK-ul odc_agent (617 MB, offline)
+### Ce conține APK-ul (stare 5 oct 2026 — ambii agenți au ACELAȘI payload)
+
+> Actualizat: între timp sursa s-a unificat (vezi §9). Numerele de mai jos sunt MĂSURATE
+> din APK-urile buildate (`unzip -l`), nu estimări.
 
 ```
-assets/android_build/          # uneltele (se extrag la setup)
+assets/android_build/          # uneltele (se extrag la setup in filesDir)
   openjdk-21.deb     (106 MB)  # JDK module
   gradle.deb         (149 MB)  # Gradle 9.8
   platform36.zip     ( 66 MB)  # SDK platform android-36
   buildtools36.zip   ( 64 MB)  # SDK build-tools 36.0.0
-  sqlite-jdbc-3.46.0.0.jar     # pt kapt/Room
-  android.toolchain.cmake      # pt fake-NDK
-assets/toolchain/              # clang/sysroot/ninja (181 MB)
-jniLibs/arm64-v8a/*.so         # 146 libs: java/aapt2/clang/cmake + python (425 MB)
-assets/python/android_build.py # modulul orchestrator
+  aapt2.deb, sqlite-jdbc-3.46.0.0.jar, android.toolchain.cmake
+                               # total: 7 fisiere, 381 MB
+assets/toolchain/              # 1007 MB despachetat / 6077 fisiere: clang/sysroot/deps/perl
+                               #   + rust-libs.tar 801,6 MB (librustc_driver+libLLVM+std)
+assets/python/                 # 54 MB (agent.py, android_build.py, toolchain.py, Lib/...)
+jniLibs/arm64-v8a/*.so         # 146 libs native (405 MB): java/javac/jlink/jmod/jimage/
+                               #   jar/keytool/jarsigner/aapt2/aapt2wrap (lib*_exec.so)
+                               #   + clang/cmake/ninja/rust/perl/python + absl/protobuf/fmt
 ```
+
+Rezultat: `net.sys32.agent` = **983 MB**, `net.sys32.odc_agent` = **903 MB** (același conținut;
+diferența e doar de compresie zip, din istoricul build-ului incremental). `.deb`-urile și
+`.zip`-urile sunt STORE (deja comprimate), `rust-libs.tar` e deflat (840 MB -> 292 MB).
+
+`net.sys32.javahost` NU mai e necesar: `lib*_exec.so` (java, aapt2) stau acum in `jniLibs`-ul
+fiecărei aplicații, deci fiecare e gazdă pentru propriile executabile.
 
 ### API (3 funcții)
 
@@ -333,3 +346,68 @@ Un proiect HelloWorld Android compilat cu `android_build.build()` → APK 0.8 MB
 (processDebugResources, dexBuilder, packageDebug, assembleDebug) au rulat.
 
 ---
+
+## 9. STAREA ACTUALĂ (5 oct 2026): ambii agenți identici, o singură sursă
+
+Ce s-a schimbat după ce s-a scris restul ghidului:
+
+### 9.1 O singură sursă de cod
+
+`net.sys32.agent` și `net.sys32.odc_agent` au acum **aceeași sursă**: `workspace/app/net.sys32.agent/`.
+`odc_agent/` este **generat** de `tools/make_agent_variant.sh <PKG> <LABEL> <DEST> [--flat]`
+(rescrie pachetul in 77 fișiere, redenumește directorul Kotlin, setează eticheta și
+`agent_home_dir`, iar cu `--flat` scoate layout-ul plat pt `build_apk.sh`). Detalii + tabel de
+autonomie: `readme.md` -> **OP.9**.
+
+### 9.2 Ambele APK-uri au payload-ul complet (inclusiv Rust)
+
+Compoziție măsurată identică pentru ambii (§8): toolchain 1007 MB / 6077 fișiere (cu
+`rust-libs.tar` 801,6 MB), 146 libs native (405 MB), `assets/android_build` 381 MB,
+`assets/python` 54 MB. Diferența de mărime (983 vs 903 MB) e doar compresie zip.
+
+### 9.3 Cum se construiește fiecare
+
+```bash
+# agent principal (laptop, Gradle):
+cd workspace/app && ./build_app.sh
+
+# odc_agent — ACUM se poate construi și pe LAPTOP (Gradle), nu doar pe device:
+cd odc_agent && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ANDROID_HOME=/home/gab/android \
+  ./gradlew assembleDebug          # -> app/build/outputs/apk/debug/app-debug.apk (~903 MB)
+
+# odc_agent pe DEVICE (fara PC, calea din §1-§7):
+bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_flat --flat
+adb push /tmp/var_flat/flat/{AndroidManifest.xml,res,src,assets} /data/local/tmp/apkbuild/odc_full/
+adb shell "/system/bin/sh /data/local/tmp/apkbuild/build_apk.sh /data/local/tmp/apkbuild/odc_full \
+           net.sys32.odc_agent 'ODC Agent' /data/local/tmp/apkbuild/odc.apk"
+```
+
+### 9.4 Capcane noi (fiecare = un eșec real, cu fix)
+
+| Simptom | Cauză | Fix |
+|---|---|---|
+| Gradle: `:app:compressDebugAssets > Java heap space` | task-ul decomprimă `rust-libs.tar.gz` (840 MB) și îl re-comprimă; la build de la zero are nevoie de heap | `org.gradle.jvmargs=-Xmx5120m` în `gradle.properties` |
+| După instalare curată: aplicația NU extrage nimic (`files/` are doar `profileInstalled`), fără Python | `startCore()` (care face `extractAssets`) rulează doar dacă TOATE permisiunile esențiale sunt acordate — la instalare curată lipsea `READ_MEDIA_IMAGES` | `pm grant` pentru CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION, READ_CONTACTS, READ_MEDIA_IMAGES, POST_NOTIFICATIONS + `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow` |
+| După wipe: agentul cere cheia API | cheia stă in `files/` (privat), dispare cu `pm uninstall` | scrie-o inapoi prin `run-as` (ambele aplicații sunt debuggable: build Gradle debug) sau lipește-o in UI |
+| Cei doi agenți văd aceeași conversație / același `adbkey` | `AGENT_HOME` era hardcodat `Download/Agent` pentru amândoi, iar `adb_setup.py` era lansat fără el | `agent_home_dir` per variantă (generat) + `AGENT_HOME` setat pe AMBELE `ProcessBuilder`-uri din `MainActivity.kt` |
+
+### 9.5 Instalare de la zero (reproductibil)
+
+```bash
+bash tools/wipe_device.sh            # dezinstalează net.sys32.*, golește /data/local/tmp și /sdcard
+bash tools/install_agents_fresh.sh   # push + pm install ambii, start, accessibility
+```
+
+Verificat pe SM-A366B: după wipe total (205 GB liberi) ambii agenți s-au instalat și și-au
+extras singuri payload-ul din propriul APK (`files/toolchain`, `files/python`, marker
+`.assets_v257`), fără `/data/local/tmp` și fără descărcări; au pornit Python (un subproces
+`libpyexec.so` sub fiecare aplicație) și au creat foldere separate pe `/sdcard`
+(`Download/Agent` + `Download/odc_agent`, fiecare cu `adbkey` și `workspace/`).
+
+---
+
+### 9.6 Rezumatul diferenței dintre cei doi agenți (după unificare)
+
+**Niciuna, in afara de**: `applicationId`/pachet Kotlin, eticheta afișată, folderul de pe
+`/sdcard` (`Agent` / `odc_agent`) și cheia de semnare. Codul, tool-urile (12, inclusiv
+`build_apk`), payload-ul de build și comportamentul sunt identice.

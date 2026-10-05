@@ -65,6 +65,9 @@
   (`files/python/agent.py` 235366 B cu `build_apk`, `android_build.py`, `.assets_v257`),
   pastrand `context.json` (2,7 MB) si `memory.md`; `/sdcard/Download/Agent` (5,4 GB) si
   `/sdcard/Download/odc_agent` sunt separate, fiecare cu `adbkey`-ul lui.
+- **Ghid actualizat**: `BUILD_ANDROID_ON_DEVICE.md` §8 (compozitia reala a APK-urilor, masurata)
+  + **§9 nou** (o singura sursa, ambii identici, build pe laptop vs device, capcanele noi,
+  instalarea de la zero). `readme.md` -> OP.9/OP.10, `odc_agent/README.md` (proiect GENERAT).
 - **Nota**: terminalul agentului principal apare GOL la pornire — e by design, in `agent.py`
   scrie „linia de diagnostic NU se mai afiseaza in UI la pornire" (cerut de operator: doar erorile).
 
