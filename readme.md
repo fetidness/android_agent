@@ -33,6 +33,19 @@ e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 
 ---
 
+## 💻 PC KIT — construiește odc_agent pe calculator (5 oct 2026)
+
+In `pc_kit_scripts/` sunt scripturile pentru a construi APK-ul odc_agent pe un PC:
+- `build_odc_agent.sh` — rulează pe PC: compilează + semnează `odc_agent.apk` (toate uneltele incluse).
+- `prepare_pc_kit.sh` — rulează pe device: produce kit-ul complet (sursă + unelte portabile).
+- `README.md` — instrucțiuni.
+
+Kit-ul complet (1.17 GB: sursă + jniLibs aarch64 + assets/toolchain + descărcabile) se
+produce cu `prepare_pc_kit.sh --with-downloads`. PC-ul rezultă `odc_agent.apk` complet
+funcțional offline. Detalii în `odc_agent/memory.md` și `BUILD_ANDROID_ON_DEVICE.md`.
+
+---
+
 ## 🤖 odc_agent AUTONOM (5 oct 2026) — compilează APK-uri pe device
 
 `net.sys32.odc_agent` e acum **complet autonom**: la instalare de la zero poate compila
