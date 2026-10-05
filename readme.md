@@ -40,6 +40,7 @@ e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 > fără PC.** Conține `classes.dex` 43.9 MB (Kotlin+Hilt+Compose), `libopus_jni.so` pentru
 > toate 7 ABI-urile, `libsqlcipher.so`, resurse, manifest.
 > Detalii complete în `CHANGELOG.md` (5 oct 2026) și în `odc_agent/memory.md`.
+> **Ghid complet reproductibil (end-to-end, toți pașii + capcanele): [`BUILD_ANDROID_ON_DEVICE.md`](BUILD_ANDROID_ON_DEVICE.md).**
 
 ### Ce funcționează dovedit
 - **Gradle 9.8 + AGP 9.0.1 + Kotlin 2.1.21 + Compose + kapt + Hilt + Room** configurează
