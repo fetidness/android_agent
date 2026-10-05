@@ -9,6 +9,36 @@
 
 ---
 
+### 2026-10-05 (WIPE TOTAL + INSTALARE DE LA ZERO A AMBILOR AGENTI)
+
+> Telefonul a fost golit complet si ambii agenti reinstalati de la zero: dovada ca instalarea
+> e autonoma si independenta.
+
+- **Stergere totala**: dezinstalate toate 5 aplicatiile `net.sys32.*`, golit `/data/local/tmp`
+  (9,7 GB de unelte/proiecte) si TOT `/sdcard` -> /data de la 47 GB la 17 GB folositi (205 GB liberi).
+  Script reproductibil: `tools/wipe_device.sh`.
+- **odc_agent are acum ACELASI payload ca agentul principal** (inclusiv Rust):
+  `rust-libs.tar` 801,6 MB (`librustc_driver` + `libLLVM` + std) -> compozitia identica:
+  toolchain 1007 MB / 6077 fisiere, 146 libs native, android_build 381 MB, python 54 MB.
+  odc_agent se construieste acum cu **Gradle pe laptop** (nu doar pe device) -> e si debuggable.
+- **Fix build**: `compressDebugAssets` (care decomprima `rust-libs.tar.gz` -> 840 MB si il
+  re-comprima) murea cu `Java heap space` la build de la zero -> `org.gradle.jvmargs=-Xmx5120m`.
+- **Instalare curata**: `tools/install_agents_fresh.sh` (push + `pm install -r` ambii, start,
+  accessibility). Ambele `Success`; ambele au extras singure payload-ul din propriul APK
+  (`files/toolchain`, `files/python`, `files/home`, marker `.assets_v257`) — fara
+  `/data/local/tmp`, fara descarcari.
+- **Capcana de onboarding (de stiut)**: `startCore()` (care face extragerea) ruleaza doar dupa
+  ce TOATE permisiunile esentiale sunt acordate (CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION,
+  READ_CONTACTS, READ_MEDIA_IMAGES, POST_NOTIFICATIONS) — la instalare curata, fara
+  READ_MEDIA_IMAGES, aplicatia asteapta si NU extrage nimic. Acordat prin `pm grant`.
+- **Cheia API** scrisa in ambele (`files/python/key.txt` + `files/home/key.txt`) prin `run-as`
+  (posibil acum pentru ambele, fiind debuggable) -> ambele au pornit Python.
+- **Verificat final**: 2 pachete instalate, 2 procese `libpyexec.so` (unul sub fiecare aplicatie),
+  `/sdcard/Download/Agent` si `/sdcard/Download/odc_agent` separate, fiecare cu `adbkey`,
+  `adbkey.pub` si `workspace/` propriu; crash buffer gol.
+
+---
+
 ### 2026-10-05 (AMBII AGENTI EGALI SI INDEPENDENTI LA INSTALARE)
 
 > `net.sys32.agent` si `net.sys32.odc_agent` sunt acum functionali identic dupa instalare:

@@ -1163,6 +1163,25 @@ proaspat trebuie sa le copieze din nou (vezi si `tools/backup_device_tools.sh`).
 
 ---
 
+### OP.10 — WIPE TOTAL + REINSTALARE DE LA ZERO
+
+```bash
+bash tools/wipe_device.sh            # dezinstaleaza net.sys32.*, goleste /data/local/tmp si /sdcard
+bash tools/install_agents_fresh.sh   # push + install ambii agenti, start, accessibility
+```
+
+Capcane la instalare curata (dovedite):
+- `startCore()` (extragerea assets) ruleaza **doar** daca TOATE permisiunile esentiale sunt
+  acordate: CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION, READ_CONTACTS, READ_MEDIA_IMAGES,
+  POST_NOTIFICATIONS. Fara ele aplicatia asteapta si NU extrage nimic:
+  `for p in net.sys32.agent net.sys32.odc_agent; do for x in READ_MEDIA_IMAGES CAMERA RECORD_AUDIO ACCESS_FINE_LOCATION READ_CONTACTS POST_NOTIFICATIONS; do adb shell pm grant $p android.permission.$x; done; adb shell appops set $p MANAGE_EXTERNAL_STORAGE allow; done`
+- dupa un wipe, cheia API dispare (sta in `files/`, privat) -> se scrie inapoi prin `run-as`
+  (ambele aplicatii sunt debuggable: build-ul Gradle debug) SAU se lipeste in UI.
+- build de la zero cu `rust-libs.tar.gz`: `compressDebugAssets` are nevoie de heap
+  (`org.gradle.jvmargs=-Xmx5120m`), altfel `Java heap space`.
+
+---
+
 ### REZOLVAREA PROBLEMELOR FRECVENTE
 
 | Simptom | Cauza | Fix |
