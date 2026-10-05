@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """SETUP ADB AUTOMAT cu CHEIE PERSISTENTA.
-Cheia se salveaza in /sdcard/Download/Agent/ (supravietuieste reinstalarilor!).
+Cheia se salveaza in /sdcard/Download/<folder aplicatiei>/ (supravietuieste reinstalarilor!).
+Folderul vine din AGENT_HOME (setat de aplicatie); fiecare agent are folderul lui, ca sa nu
+imparta adbkey-ul cu celalalt.
 La pornire: load din sdcard SAU genereaza + salveaza acolo."""
 import ctypes, os, sys, struct, base64, shutil, socket, time
 
 F = "/data/data/net.sys32.agent/files"
 LIB = F + "/libs"
-# ★ cheile PERSISTENTE (nu se sterg la uninstall)
-PERSIST = "/sdcard/Download/Agent"
+# ★ cheile PERSISTENTE (nu se sterg la uninstall); folder PER APLICATIE
+PERSIST = (os.environ.get("AGENT_HOME") or "").strip() or "/sdcard/Download/Agent"
 KEY = PERSIST + "/adbkey"          # privata
 PUBC = PERSIST + "/adbkey.pub"     # publica (format ADB)
 # copii de lucru (locale, rapide)

@@ -9,6 +9,37 @@
 
 ---
 
+### 2026-10-05 (AMBII AGENTI EGALI SI INDEPENDENTI LA INSTALARE)
+
+> `net.sys32.agent` si `net.sys32.odc_agent` sunt acum functionali identic dupa instalare:
+> fiecare are TOATE uneltele (inclusiv compilare de APK-uri, offline) si propriul spatiu pe
+> /sdcard. Verificat pe device.
+
+- **Workspace + adbkey PER APLICATIE**: `res/values/strings.xml` -> `agent_home_dir`
+  (canonica `Agent` -> `/sdcard/Download/Agent`; varianta `odc_agent` -> `/sdcard/Download/odc_agent`),
+  setat automat de `make_agent_variant.sh`. Inainte ambii foloseau acelasi folder.
+- **Bug gasit si reparat**: `adb_setup.py` era lansat de Kotlin intr-un proces separat **fara**
+  `AGENT_HOME` -> cadea pe fallback-ul hardcodat si cheia adb ajungea tot in folderul celuilalt.
+  Acum ambele lansari de Python din `MainActivity.kt` seteeaza acelasi `AGENT_HOME`.
+- **Agentul principal egalat cu odc_agent** (avea codul de build, dar nu payload-ul):
+  +126 libs native in `jniLibs/arm64-v8a/` (libjava_exec, libjavac_exec, libjlink_exec,
+  libaapt2_exec, libaapt2wrap_exec + absl/protobuf/fmt/expat/iconv/jpeg/lcms2/png/turbojpeg/z),
+  +`assets/android_build/` (7 fisiere, 381 MB: openjdk-21.deb, gradle.deb, platform36.zip,
+  buildtools36.zip, aapt2.deb, sqlite-jdbc, android.toolchain.cmake; md5 identic cu device).
+  => **APK principal: 983 MB** (era 664), 146 libs.
+- **Marker assets**: `.assets_v256` -> `.assets_v257`; `.gitignore` pentru
+  `workspace/.../assets/android_build/` (fisierele mari nu se comit).
+- **Verificat E2E pe device**: ambele APK-uri buildate (`BUILD SUCCESSFUL` Gradle / `BUILD OK`
+  pe device) si instalate (`Success`, lastUpdateTime 12:20) -> ambele aplicatii pornesc si
+  Python ruleaza ca subproces al fiecareia; agentul principal a re-extras codul unificat
+  (`files/python/agent.py` 235366 B cu `build_apk`, `android_build.py`, `.assets_v257`),
+  pastrand `context.json` (2,7 MB) si `memory.md`; `/sdcard/Download/Agent` (5,4 GB) si
+  `/sdcard/Download/odc_agent` sunt separate, fiecare cu `adbkey`-ul lui.
+- **Nota**: terminalul agentului principal apare GOL la pornire — e by design, in `agent.py`
+  scrie „linia de diagnostic NU se mai afiseaza in UI la pornire" (cerut de operator: doar erorile).
+
+---
+
 ### 2026-10-05 (AGENTII UNIFICATI: O SINGURA SURSA, AMBII AU `build_apk`)
 
 > `net.sys32.agent` si `net.sys32.odc_agent` au acum **aceeasi sursa de cod**. `odc_agent/`

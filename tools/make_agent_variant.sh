@@ -51,6 +51,13 @@ sed -i "s|<string name=\"app_name\">Agent</string>|<string name=\"app_name\">$LA
        "$DEST/app/src/main/res/values/strings.xml"
 grep -q "<string name=\"app_name\">$LABEL</string>" "$DEST/app/src/main/res/values/strings.xml" \
     || { echo "EROARE: app_name nu s-a schimbat"; exit 1; }
+# folderul de pe /sdcard (workspace + adbkey) - PER APLICATIE, ca agentii sa nu si-l imparta
+HOMEDIR="${AGENT_HOME_DIR:-${PKG##*.}}"
+sed -i "s|<string name=\"agent_home_dir\" translatable=\"false\">[^<]*</string>|<string name=\"agent_home_dir\" translatable=\"false\">$HOMEDIR</string>|" \
+       "$DEST/app/src/main/res/values/strings.xml"
+grep -q "agent_home_dir\" translatable=\"false\">$HOMEDIR<" "$DEST/app/src/main/res/values/strings.xml" \
+    || { echo "EROARE: agent_home_dir nu s-a schimbat"; exit 1; }
+echo "      folder sdcard: Download/$HOMEDIR"
 
 if [ "$MODE" = "--flat" ]; then
   echo "[5/5] layout PLAT pentru build_apk.sh (device)"

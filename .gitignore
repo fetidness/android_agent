@@ -97,3 +97,7 @@ odc_agent/app/build/
 odc_agent/app/src/main/assets/toolchain/
 odc_agent/app/src/main/assets/android_build/
 odc_agent/app/src/main/jniLibs/
+
+# ---- assets de BUILD ale agentului principal (JDK/Gradle/SDK, ~381 MB) ----
+# acelasi payload ca in odc_agent; se copiaza din APK-ul odc sau din /data/local/tmp/apkbuild
+workspace/app/net.sys32.agent/app/src/main/assets/android_build/

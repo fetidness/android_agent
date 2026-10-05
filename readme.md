@@ -1123,6 +1123,44 @@ APK = md5 din sursa generata (`184daeca…`).
 - `build_apk.sh` scrie in directorul proiectului (`res.zip`, `base.apk`, `classes`, `dex`,
   `stage`) si creeaza keystore-ul in `$PROJ/../release.keystore`.
 
+**Spatiu separat pe /sdcard (workspace + adbkey) — 5 oct**
+
+Fiecare aplicatie are folderul ei pe sdcard, dat de `res/values/strings.xml` -> `agent_home_dir`
+(canonica: `Agent` -> `/sdcard/Download/Agent`; varianta: `odc_agent` -> `/sdcard/Download/odc_agent`).
+Generatorul il seteaza singur (ultimul segment al pachetului; se poate forta cu `AGENT_HOME_DIR=`).
+
+Inainte ambii agenti foloseau `/sdcard/Download/Agent` (Kotlinul scria `AGENT_HOME` hardcodat),
+deci odc_agent vedea **aceeasi conversatie** ca agentul principal si imparteau acelasi `adbkey`.
+Fixat in **doua** locuri din `MainActivity.kt` (ambele lansari de Python):
+- `pb.environment()["AGENT_HOME"] = agentHome.absolutePath` (procesul `agent.py`);
+- `setup.environment()["AGENT_HOME"] = agentHome.absolutePath` — `adb_setup.py` rula **fara**
+  `AGENT_HOME` si cadea pe fallback-ul hardcodat (`/sdcard/Download/Agent`), deci cheia ajungea
+  tot in folderul celuilalt;
+
+plus in `adb_setup.py`: `PERSIST = os.environ["AGENT_HOME"] or "/sdcard/Download/Agent"`.
+
+Verificat pe device: `/sdcard/Download/odc_agent/workspace` creat de odc_agent (Python-ul lui
+ruleaza ca subproces al `net.sys32.odc_agent`), iar `/sdcard/Download/Agent` (5,4 GB) neatins.
+
+**Autonomia la instalare (stare 5 oct, DUPA completare)**
+
+| Ce | `net.sys32.agent` | `net.sys32.odc_agent` |
+|---|---|---|
+| `agent.py` identic (12 tool-uri, inclusiv `build_apk`) | DA | DA |
+| toolchain nativ (clang/cmake/ninja/rust/python/perl) | DA | DA |
+| stack JVM pt `build_apk` (java/javac/jlink/aapt2 ca `lib*_exec.so` + absl/protobuf/fmt) | DA | DA |
+| 146 libs native in APK | DA (983 MB APK) | DA (627 MB APK) |
+| `assets/android_build` (openjdk-21.deb 106 MB, gradle.deb 149 MB, platform36 65 MB, buildtools36 63 MB, sqlite-jdbc 13 MB) | DA (~396 MB) | DA |
+| workspace + adbkey propriu pe /sdcard | `/sdcard/Download/Agent` | `/sdcard/Download/odc_agent` |
+| => complet autonom si INDEPENDENT dupa instalare | **DA** | **DA** |
+
+Cum s-a egalizat agentul principal: cele 126 libs care lipseau s-au copiat in
+`app/src/main/jniLibs/arm64-v8a/` (sursa pe device: `/data/local/tmp/apkbuild/javahost/lib/arm64-v8a/`,
+130 fisiere; NU s-a suprascris `libc++_shared.so` care exista deja), iar `assets/android_build/`
+(7 fisiere, 381 MB, md5 identic) s-a extras din APK-ul odc. Fisierele NU se comit
+(`.gitignore`: `workspace/.../assets/android_build/` + `*.so` + `lib*_exec.so`), deci un clone
+proaspat trebuie sa le copieze din nou (vezi si `tools/backup_device_tools.sh`).
+
 ---
 
 ### REZOLVAREA PROBLEMELOR FRECVENTE

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Agent</string>
+    <!-- ★ folderul acestei aplicatii pe /sdcard (Download/<agent_home_dir>): workspace-ul si
+         adbkey-ul sunt PER APLICATIE, ca cei doi agenti sa NU le imparta.
+         Se schimba automat de tools/make_agent_variant.sh pentru fiecare varianta. -->
+    <string name="agent_home_dir" translatable="false">Agent</string>
     <string name="accessibility_description">Permite agentului sa citeasca ecranul, sa scrie text si sa apese butoane in alte aplicatii (necesar pentru automatizare fara root).</string>
 </resources>

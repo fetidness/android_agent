@@ -797,7 +797,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v254")
+        val stamp = File(filesDir, ".assets_v257")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
@@ -1032,6 +1032,12 @@ class MainActivity : AppCompatActivity() {
                     if (dynSrc.exists()) dynSrc.copyRecursively(dynDst, overwrite = true)
                 }
 
+                // ★ folderul acestei aplicatii pe /sdcard (Download/<agent_home_dir>): workspace-ul
+                //   si adbkey-ul sunt PER APLICATIE, ca cei doi agenti sa nu si le imparta.
+                val agentHome = File(
+                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                    getString(R.string.agent_home_dir))
+
                 // ★ SETUP ADB AUTOMAT: genereaza cheia + cert + libs la prima pornire
                 try {
                     val setup = ProcessBuilder(py.absolutePath, "adb_setup.py")
@@ -1040,6 +1046,9 @@ class MainActivity : AppCompatActivity() {
                     setup.environment()["PYTHONHOME"] = pyHome.absolutePath
                     setup.environment()["HOME"] = home.absolutePath
                     setup.environment()["PATH"] = "/system/bin:/vendor/bin"
+                    // ★ OBLIGATORIU: altfel adb_setup cade pe fallback (/sdcard/Download/Agent) si
+                    //   cei doi agenti impart acelasi adbkey persistent
+                    setup.environment()["AGENT_HOME"] = agentHome.absolutePath
                     val sp = setup.start()
                     val sout = sp.inputStream.bufferedReader().readText()
                     sp.waitFor()
@@ -1076,7 +1085,8 @@ class MainActivity : AppCompatActivity() {
                 pb.environment()["TERM"] = "xterm-256color"
                 pb.environment()["ANDROID_BRIDGE"] = File(filesDir, "bridge.sock").absolutePath
                 pb.environment()["AGENT_BRIDGE_PORT_FILE"] = File(filesDir, "bridge.port").absolutePath
-pb.environment()["AGENT_HOME"] = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "Agent").absolutePath
+                // ★ folderul de pe sdcard e per aplicatie (vezi agentHome mai sus)
+                pb.environment()["AGENT_HOME"] = agentHome.absolutePath
                 pb.environment()["AGENT_COLS"] = run {
                     val test = android.widget.TextView(this@MainActivity).apply {
                         textSize = fontSizeSp; typeface = mono
