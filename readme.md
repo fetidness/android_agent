@@ -1012,6 +1012,39 @@ git log --format='%h|%ad|%an|%s' --date=short > temp/all_commits.txt
 
 ---
 
+### OP.8 — BACKUP UNELTE DE PE DEVICE PE LAPTOP (`tools/backup_device_tools.sh`)
+
+Backup-ul complet al uneltelor de pe Samsung (cele care NU sunt in git) se face cu:
+
+```bash
+cd /home/gab/Desktop/android_agent
+adb devices            # trebuie sa apara SM_A366B, altfel: adb tcpip 5555 + adb connect <ip>
+bash tools/backup_device_tools.sh
+```
+
+Rezultat in `build/device-backup/` (gitignored) + un tar deja extras:
+
+| Arhiva | Sursa pe device | MB | Continut |
+|---|---|---|---|
+| `device-tools-backup/apkbuild-tools.tar` | `/data/local/tmp/apkbuild` | 806 | jdk, kotlin, d8, aapt2, apksigner, gradle, sdk, javahost, tlib, classpath, aar_res, android.jar, build_apk.sh, jrun.sh, release.keystore |
+| `device-backup/odc-build-inputs.tar` | `/data/local/tmp/odcassets` + `odclibs` | 1459 | assets (python + toolchain cu rust-libs.tar) + `lib/arm64-v8a/*.so` — exact inputurile pentru build-ul APK-ului odc_agent |
+| `device-backup/app-toolchain.tar` | `files/toolchain` | 1856 | toolchain nativ de runtime (clang/cmake/ninja, deps, rust, sysroot, perl) |
+| `device-backup/app-state.tar` | `files/` | 300 | codul Python VIU (`python/agent.py`), `pyhome/`, `site_packages_keep/`, `home/`, `memory.md` — FARA secrete |
+| `device-backup/hdbuild-gradle.tar` | `files/hdbuild` | 2625 | stack Gradle complet (jdk/gradle/sdk cu platforma android-36 + platform-tools, `gradlehome` = cache OFFLINE, tlib, hdvoice_proj, logurile de build) |
+| `device-backup/sdcard-repo.tar` | `/sdcard/.../workspace/android_agent` | 69 | clone-ul git de pe telefon |
+
+Excluse intentionat: proiectele si iesirile (`odc*/`, `*.apk`, `work*/`, `agent2/`, `tmp/`),
+`gradlehome`-ul din apkbuild (cache duplicat), si **secretele** (`files/home/.ssh`, `key.txt`).
+
+Verificare: `tools/DEVICE_BACKUP_MANIFEST.md` contine SHA256 pentru fiecare arhiva, set-diff-ul
+fata de listarea device-ului (0 diferente neintentionate) si md5-uri comparate device vs arhiva.
+
+⚠ La restaurare: symlink-urile din `jdk/bin/java|javac` si `hdbuild/testbin` sunt ABSOLUTE catre
+`/data/app/~~<hash>==/net.sys32.javahost-<hash>==/lib/arm64/*.so` → **mor la fiecare reinstalare**
+a javahost-ului. Re-creeaza-le dupa restore (vezi §4, capcana *symlink rupt*).
+
+---
+
 ### REZOLVAREA PROBLEMELOR FRECVENTE
 
 | Simptom | Cauza | Fix |

@@ -9,6 +9,32 @@
 
 ---
 
+### 2026-10-05 (BACKUP COMPLET AL UNELTELOR DE PE SAMSUNG PE LAPTOP)
+
+> Toate uneltele de build care traiesc DOAR pe telefon (nu sunt in git) au fost salvate local
+> in `build/device-backup/` + `build/device-tools-backup/`, cu script reproductibil.
+
+- **Script nou `tools/backup_device_tools.sh`** — face 5 arhive prin `adb exec-out` + `tar cf -`
+  (stream direct, fara sa umple discul telefonului), cu `run-as` pentru stocarea privata.
+- **Total ~6.4 GB in 6 arhive**: `apkbuild-tools.tar` (806 MB — jdk/kotlin/d8/aapt2/gradle/sdk/
+  javahost/tlib/release.keystore din `/data/local/tmp/apkbuild`), `odc-build-inputs.tar`
+  (1459 MB — `odcassets` + `odclibs` = exact inputurile pentru build-ul APK-ului odc_agent),
+  `app-toolchain.tar` (1856 MB — clang/cmake/ninja/deps/rust/sysroot),
+  `app-state.tar` (300 MB — `python/agent.py`, `pyhome`, `site_packages_keep`, `memory.md`),
+  `hdbuild-gradle.tar` (2625 MB — stack-ul Gradle cu platforma android-36 completa si
+  `gradlehome` = cache OFFLINE), `sdcard-repo.tar` (69 MB — clone-ul git de pe telefon).
+- **Excluse**: proiectele/iesirile (`odc*/`, `*.apk`, `work*/`, `tmp/`) si **secretele**
+  (`files/home/.ssh`, `key.txt`) — nicio cheie in arhive.
+- **Verificat**: `tar tf` rc=0 pe fiecare arhiva; set-diff fata de `find` pe device
+  (hdbuild 66778/66770 = exact cele 8 excluderi intentionate; app-state 10361/10361 = 0
+  diferente; toolchain/odc-inputs/repo identice); md5 identic device vs arhiva pe 15 fisiere
+  (rust-libs.tar, android.jar, libpython3.14.so, fileHashes.bin, agent.py, memory.md...);
+  224+18+2 symlink-uri pastrate. Raport: `tools/DEVICE_BACKUP_MANIFEST.md`.
+- **Documentat** in `readme.md` -> OP.8 (backup/restore + capcana symlink-urilor absolute
+  catre `/data/app/~~<hash>==/...`, care mor la reinstalarea javahost-ului).
+
+---
+
 ### 2026-10-05 (odc_agent AUTONOM: compilează APK-uri pe device, complet offline)
 
 > **odc_agent (`net.sys32.odc_agent`) e acum complet autonom** — la instalare de la zero poate
