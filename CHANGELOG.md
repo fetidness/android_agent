@@ -9,6 +9,33 @@
 
 ---
 
+### 2026-10-05 (odc_agent AUTONOM: compilează APK-uri pe device, complet offline)
+
+> **odc_agent (`net.sys32.odc_agent`) e acum complet autonom** — la instalare de la zero poate
+> compila aplicații Android (APK) direct pe telefon, offline. APK 617 MB, instalat + rulat.
+
+**Ce s-a adăugat în odc_agent:**
+- **Toate uneltele împachetate în APK** (zero descărcări): JDK module (openjdk-21.deb),
+  Gradle 9.8, SDK platform+build-tools, sqlite-jdbc 3.46, toolchain (clang/sysroot/ninja),
+  + 146 libs native în jniLibs (java/aapt2/clang/cmake/python).
+- **Modul nou `android_build.py`** (integrat ca tool `build_apk` în agent): `setup()` extrage
+  uneltele în filesDir, `build(dir)` compilează proiectul → APK, `verify(apk)` verifică.
+- **`build()` e complet automat**: scrie gradle.properties (VFORK + aapt2 override),
+  înlocuiește aapt2-ul x86_64 din Maven cache, rulează Gradle cu VFORK propagat.
+
+**Capcane rezolvate (toate dovedite):**
+- jlink/javac lansate de AGP prin `jspawnhelper` → `org.gradle.jvmargs` cu VFORK în
+  gradle.properties al proiectului + `JAVA_TOOL_OPTIONS`.
+- aapt2 daemon (Maven x86_64) → symlink la javahost + `android.aapt2FromMavenOverride`.
+- nativeLibraryDir: `glob()`/`os.listdir("/data/app")` blocate de SELinux → citit din
+  `TC_NATIVE` (env setat de MainActivity) sau `/proc/self/maps`.
+- libc++ (`__*`) eliminat de AAPT2 → împachetat în `libcxx_full.zip`.
+
+**Dovedit E2E:** proiect HelloWorld Android compilat cu `android_build.build()` → APK 0.8 MB,
+instalat. Toate task-urile Gradle (aapt2, dex, packageDebug, assembleDebug) au rulat.
+
+---
+
 ### 2026-10-05 (VOCISHD COMPILAT CU SUCCES PE DEVICE - BUILD SUCCESSFUL!)
 
 > **REUȘIT: `assembleDebug` COMPLET pe telefon.** APK-ul VocisHD (net.sys32.vocis, v2.89,

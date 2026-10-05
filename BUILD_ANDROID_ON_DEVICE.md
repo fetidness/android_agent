@@ -280,3 +280,56 @@ NDK-ul e fake prin symlink-uri; și Gradle rulează cu `VFORK` + `tmpdir` + `use
 
 ---
 *Document generat pe device, 5 oct 2026. Reproducibil cu `odc_agent/memory.md` + acest ghid.*
+
+
+---
+
+## 8. AUTOMATIZARE COMPLETĂ (modulul `android_build.py`)
+
+Tot pipeline-ul e împachetat într-un modul Python care vine CU odc_agent. La instalare de la
+zero, agentul poate compila APK-uri fără nicio pregătire manuală.
+
+### Ce conține APK-ul odc_agent (617 MB, offline)
+
+```
+assets/android_build/          # uneltele (se extrag la setup)
+  openjdk-21.deb     (106 MB)  # JDK module
+  gradle.deb         (149 MB)  # Gradle 9.8
+  platform36.zip     ( 66 MB)  # SDK platform android-36
+  buildtools36.zip   ( 64 MB)  # SDK build-tools 36.0.0
+  sqlite-jdbc-3.46.0.0.jar     # pt kapt/Room
+  android.toolchain.cmake      # pt fake-NDK
+assets/toolchain/              # clang/sysroot/ninja (181 MB)
+jniLibs/arm64-v8a/*.so         # 146 libs: java/aapt2/clang/cmake + python (425 MB)
+assets/python/android_build.py # modulul orchestrator
+```
+
+### API (3 funcții)
+
+```python
+import android_build
+android_build.setup()                     # extrage toate uneltele in filesDir (~5-10 min, o data)
+apk = android_build.build("/path/project") # compileaza -> calea APK
+android_build.verify(apk)                 # {ok, size_mb, has_dex, has_arsc, has_manifest}
+```
+
+### Ca tool al agentului
+
+`android tool=... action=...` — de fapt tool-ul se cheamă `build_apk`:
+- `build_apk action=setup`
+- `build_apk action=build dir=/path/to/project`
+- `build_apk action=verify apk=/path/to.apk`
+
+### Ce face `build()` automat (ca să nu fie nevoie de setup manual al proiectului)
+
+1. Scrie `gradle.properties` în proiect cu VFORK + tmpdir + aapt2 override (dacă lipsesc).
+2. Înlocuiește aapt2-ul x86_64 din Maven transforms cache cu symlink la al nostru.
+3. Rulează Gradle cu `JAVA_TOOL_OPTIONS` (VFORK propagat la daemon + procese copil).
+
+### Dovedit E2E
+
+Un proiect HelloWorld Android compilat cu `android_build.build()` → APK 0.8 MB
+(classes.dex + resources.arsc + manifest), INSTALAT pe device. Toate task-urile Gradle
+(processDebugResources, dexBuilder, packageDebug, assembleDebug) au rulat.
+
+---

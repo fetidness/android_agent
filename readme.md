@@ -33,6 +33,16 @@ e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 
 ---
 
+## 🤖 odc_agent AUTONOM (5 oct 2026) — compilează APK-uri pe device
+
+`net.sys32.odc_agent` e acum **complet autonom**: la instalare de la zero poate compila
+aplicații Android (APK) direct pe telefon, **offline** (toate uneltele vin în APK, 617 MB).
+Modul: `android_build.py` (tool `build_apk`: setup / build dir=<proiect> / verify).
+Dovedit E2E: HelloWorld Android compilat → APK 0.8 MB, instalat. Toate detaliile în
+`BUILD_ANDROID_ON_DEVICE.md` §8 și în `odc_agent/memory.md`.
+
+---
+
 ## 🏆 BUILD VOCISHD PE DEVICE — REUȘIT COMPLET (5 oct 2026)
 
 > **REUȘIT: `assembleDebug` COMPLET pe telefon!** APK-ul VOCISHD (`net.sys32.vocis`, v2.89,
