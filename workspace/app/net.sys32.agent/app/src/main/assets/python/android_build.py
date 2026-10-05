@@ -1,0 +1,449 @@
+#!/usr/bin/env python3
+"""
+android_build.py - COMPILARE APK PE DEVICE, COMPLET OFFLINE.
+Toate uneltele vin cu APK-ul (assets/android_build/ + jniLibs/*.so). ZERO descarcari.
+
+Arhitectura (vezi BUILD_ANDROID_ON_DEVICE.md):
+  - Binararele EXECUTABILE (java, aapt2) sunt in APK lib/arm64 ca lib*_exec.so
+    (SELinux permite exec doar de acolo).
+  - Restul (modulele JDK, Gradle, SDK, NDK, sqlite) se extrag din assets in filesDir.
+
+Folosire:
+  import android_build
+  android_build.setup()                      # extrage tot (o singura data)
+  apk = android_build.build("/path/project")
+  print(android_build.verify(apk))
+"""
+import os, sys, shutil, subprocess, zipfile, tarfile, io, time, glob, json
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# _HERE = <filesDir>/python ; filesDir = parintele
+F = os.path.dirname(os.path.dirname(_HERE))
+# caz: python e in <filesDir>/python
+if not os.path.isdir(F):
+    F = "/data/data/net.sys32.agent/files"
+
+BUILD = F + "/android_build"
+ASSETS = _HERE + "/../assets/android_build"      # langa python/ sunt assets? de obicei nu
+# assets-ul real ajunge in filesDir la prima rulare (MainActivity le copiaza) - incercam mai multe
+def _assets_dir():
+    for c in [F + "/assets/android_build",
+              os.path.dirname(F) + "/assets/android_build",
+              _HERE + "/../../assets/android_build"]:
+        if os.path.isdir(c): return c
+    return F + "/assets/android_build"
+
+JDK = BUILD + "/jdk"
+GRADLE = BUILD + "/gradle"
+GRADLEHOME = BUILD + "/gradlehome"
+SDK = BUILD + "/sdk"
+TC = F + "/toolchain"
+TMP = BUILD + "/tmp"
+NATIVE = None    # nativeLibraryDir (lib*_exec.so), setat in _find_javahost_lib
+
+def log(*a): print("[android_build]", *a, flush=True)
+
+def _find_javahost_lib():
+    """nativeLibraryDir al acestei aplicatii (contine lib*_exec.so).
+       glob() NU functioneaza pe /data/app (SELinux blocheaza scandir) - citim /proc/self/maps."""
+    global NATIVE
+    if NATIVE: return NATIVE
+    # 1) TC_NATIVE din env (setat de MainActivity = applicationInfo.nativeLibraryDir) - CEL MAI SIGUR
+    tn = os.environ.get("TC_NATIVE")
+    if tn and os.path.exists(tn + "/libjava_exec.so"):
+        NATIVE = tn; return tn
+    import re as _re
+    try:
+        for line in open("/proc/self/maps"):
+            m = _re.search(r"(/data/app/[^\s]+/lib/arm64)/", line)
+            if m:
+                d = m.group(1)
+                if os.path.exists(d + "/libjava_exec.so"):
+                    NATIVE = d; return d
+    except Exception: pass
+    # fallback: 'pm path <pkg>' (shell) pentru APK-uri cunoscute
+    for pkg in ["net.sys32.agent", "net.sys32.javahost"]:
+        try:
+            out = subprocess.run(["pm", "path", pkg], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                if line.startswith("package:"):
+                    apk = line[len("package:"):].strip()
+                    d = apk.rsplit("/", 1)[0] + "/lib/arm64"
+                    if os.path.exists(d + "/libjava_exec.so"):
+                        NATIVE = d; return d
+        except Exception: pass
+    return None
+
+def _ar_members(path):
+    with open(path, "rb") as f:
+        assert f.read(8) == b"!<arch>\n"
+        out = []
+        while True:
+            hdr = f.read(60)
+            if len(hdr) < 60: break
+            nm = hdr[0:16].decode(errors="ignore").strip().rstrip("/")
+            try: size = int(hdr[48:58].decode().strip())
+            except: break
+            off = f.tell(); out.append((nm, size, off)); f.seek(off + size + (size % 2))
+        return out
+
+def _deb_extract(deb, dest, strip_prefix=True, only=None):
+    """Extrage un .deb (ar -> data.tar.{xz,gz,zst}). only=functie(nume)->bool."""
+    raw = open(deb, "rb").read()
+    dm = [m for m in _ar_members(deb) if m[0].startswith("data.tar")][0]
+    n, s, o = dm; blob = raw[o:o + s]
+    mode = "r:xz" if blob[:6] == b"\xfd7zXZ\x00" else ("r:gz" if blob[:2] == b"\x1f\x8b" else "r:zst")
+    os.makedirs(dest, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(blob), mode=mode) as tf:
+        for m in tf.getmembers():
+            nm = m.name
+            if strip_prefix:
+                for pre in ["data/data/com.termux/files/usr/", "./data/data/com.termux/files/usr/"]:
+                    if nm.startswith(pre):
+                        nm = nm[len(pre):]; break
+            if only and not only(nm): continue
+            m.name = nm
+            if nm.startswith("..") or nm.startswith("/"): continue
+            try: tf.extract(m, dest, filter="fully_trusted")
+            except Exception: pass
+
+def setup(force=False):
+    """Extrage TOATE uneltele din assets in filesDir. Idempotent."""
+    marker = BUILD + "/.setup_ok"
+    if os.path.exists(marker) and not force:
+        return True
+    log("setup: extrag uneltele (poate dura)...")
+    os.makedirs(BUILD, exist_ok=True); os.makedirs(TMP, exist_ok=True)
+    A = _assets_dir()
+    log("assets:", A, "exista:", os.path.isdir(A))
+    _find_javahost_lib()
+
+    # ---- 1) JDK module (din openjdk deb) ----
+    if not os.path.exists(JDK + "/lib/libjvm.so"):
+        deb = A + "/openjdk-21.deb"
+        if os.path.exists(deb):
+            _deb_extract(deb, BUILD + "/_jdk_tmp")
+            # muta lib/jvm/java-21-openjdk -> jdk
+            src = BUILD + "/_jdk_tmp/lib/jvm/java-21-openjdk"
+            if os.path.isdir(src):
+                if os.path.exists(JDK): shutil.rmtree(JDK)
+                shutil.move(src, JDK)
+                log("  JDK module extrase")
+    # JAVA_HOME/bin: symlink la lib*_exec.so din APK
+    if NATIVE and os.path.isdir(JDK + "/bin"):
+        jmap = {"java":"libjava_exec.so","jlink":"libjlink_exec.so","jmod":"libjmod_exec.so",
+                "jimage":"libjimage_exec.so","javac":"libjavac_exec.so","jar":"libjar_exec.so",
+                "keytool":"libkeytool_exec.so","jarsigner":"libjarsigner_exec.so"}
+        for tool, lib in jmap.items():
+            p = JDK + "/bin/" + tool
+            if os.path.lexists(p): os.remove(p)
+            os.symlink(NATIVE + "/" + lib, p)
+        log("  JAVA_HOME/bin -> APK libs")
+        # libs in jdk/lib (E in LD_LIBRARY_PATH-ul daemonului Gradle): symlink toate libs din APK
+        try:
+            jlib = JDK + "/lib"; os.makedirs(jlib, exist_ok=True)
+            deps = TC + "/deps/lib"; os.makedirs(deps, exist_ok=True)
+            for f in os.listdir(NATIVE):
+                if f.endswith(".so"):
+                    src = NATIVE + "/" + f
+                    for dd in (jlib, deps):
+                        dst = dd + "/" + f
+                        if not os.path.lexists(dst):
+                            try: os.symlink(src, dst)
+                            except Exception: pass
+            log("  libs -> jdk/lib + toolchain/deps/lib")
+        except Exception as e: log("  libs symlink err:", e)
+
+    # ---- 2) Gradle ----
+    if not os.path.exists(GRADLE + "/lib/gradle-launcher-9.8.0.jar"):
+        deb = A + "/gradle.deb"
+        if os.path.exists(deb):
+            _deb_extract(deb, BUILD + "/_gr_tmp", only=lambda n: n.startswith("opt/gradle"))
+            src = BUILD + "/_gr_tmp/opt/gradle"
+            if os.path.isdir(src):
+                if os.path.exists(GRADLE): shutil.rmtree(GRADLE)
+                shutil.move(src, GRADLE)
+                log("  Gradle extras")
+    # libnative-platform.so din jar
+    lp = GRADLE + "/lib/libnative-platform.so"
+    if not os.path.exists(lp):
+        jars = glob.glob(GRADLE + "/lib/native-platform-linux-aarch64*.jar")
+        for j in jars:
+            try:
+                with zipfile.ZipFile(j) as z:
+                    for n in z.namelist():
+                        if n.endswith(".so"):
+                            d = z.read(n); outp = GRADLE + "/lib/" + os.path.basename(n)
+                            open(outp, "wb").write(d); os.chmod(outp, 0o755)
+            except Exception: pass
+        log("  libnative-platform extras")
+
+    # ---- 3) SDK ----
+    plat = SDK + "/platforms/android-36"
+    if not os.path.exists(plat + "/android.jar"):
+        zp = A + "/platform36.zip"
+        if os.path.exists(zp):
+            with zipfile.ZipFile(zp) as z:
+                for name in z.namelist():
+                    if name.startswith("android-36/") and not name.endswith("/"):
+                        rel = name[len("android-36/"):]
+                        dst = os.path.join(plat, rel)
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        with z.open(name) as s, open(dst, "wb") as o:
+                            o.write(s.read())
+            log("  SDK platform extras")
+    # package.xml platforma
+    px = plat + "/package.xml"
+    if not os.path.exists(px):
+        open(px, "w").write('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" '
+            'xmlns:ns5="http://schemas.android.com/sdk/android/repo/repository2/03" '
+            'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            '<license id="android-sdk-license" type="text">8933bad161af4178b1185d1a37fbf41ea5269c55</license>'
+            '<localPackage path="platforms;android-36" obsolete="false">'
+            '<type-details xsi:type="ns5:platformDetailsType"><api-level>36</api-level><codename></codename></type-details>'
+            '<revision><major>1</major></revision><display-name>Android SDK Platform 36</display-name>'
+            '</localPackage></ns2:repository>')
+    # build-tools
+    bt = SDK + "/build-tools/36.0.0"
+    if not os.path.exists(bt + "/aapt2") and not os.path.islink(bt + "/aapt2"):
+        zp = A + "/buildtools36.zip"
+        if os.path.exists(zp):
+            os.makedirs(bt, exist_ok=True)
+            with zipfile.ZipFile(zp) as z:
+                root = z.namelist()[0].split("/")[0]
+                for name in z.namelist():
+                    if name.startswith(root + "/") and not name.endswith("/"):
+                        rel = name[len(root + "/"):]
+                        dst = os.path.join(bt, rel)
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        with z.open(name) as s, open(dst, "wb") as o:
+                            o.write(s.read())
+            log("  SDK build-tools extras")
+    # licenses
+    lic = SDK + "/licenses"; os.makedirs(lic, exist_ok=True)
+    open(lic + "/android-sdk-license", "w").write(
+        "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n"
+        "24333f8a63b6825ea9c5514f83c2829b004d1fee\n")
+    open(lic + "/android-sdk-preview-license", "w").write("\n84831b9409646a918e30573bab4c9c91346d8abd\n")
+
+    # ---- 4) aapt2 in build-tools + fake aapt2 (override) ----
+    if NATIVE:
+        pa = bt + "/aapt2"
+        if os.path.lexists(pa): os.remove(pa)
+        os.symlink(NATIVE + "/libaapt2_exec.so", pa)
+        # dir aapt2 (fara .so) pt aapt2FromMavenOverride
+        ad = BUILD + "/aapt2bin"; os.makedirs(ad, exist_ok=True)
+        ap = ad + "/aapt2"
+        if os.path.lexists(ap): os.remove(ap)
+        os.symlink(NATIVE + "/libaapt2_exec.so", ap)
+
+    # ---- 4b) toolchain (extras din assets/toolchain + symlink-uri bin) ----
+    A_tc = A + "/toolchain"
+    if os.path.isdir(A_tc) and not os.path.exists(TC + "/sysroot/usr/include"):
+        log("  extrag toolchain (sysroot/deps/lib/cmake)...")
+        os.makedirs(TC, exist_ok=True)
+        for item in os.listdir(A_tc):
+            s = A_tc + "/" + item; d = TC + "/" + item
+            if os.path.exists(d): continue
+            try:
+                if os.path.isdir(s): shutil.copytree(s, d, symlinks=False)
+                else: shutil.copy(s, d)
+            except Exception as e: log("  toolchain copy err:", item, e)
+    # libc++ (folderele __* sunt in ZIP, AAPT2 le elimina din assets)
+    zf = A_tc + "/libcxx_full.zip"
+    incv1 = TC + "/sysroot/usr/include/c++/v1"
+    if os.path.exists(zf) and not os.path.isdir(incv1):
+        try:
+            os.makedirs(incv1, exist_ok=True)
+            with zipfile.ZipFile(zf) as z:
+                z.extractall(TC + "/sysroot/usr/include")
+            log("  libc++ extras din zip")
+        except Exception as e: log("  libcxx err:", e)
+    # symlink-uri bin (clang/cmake/ninja/etc -> APK libs)
+    if NATIVE:
+        os.makedirs(TC + "/bin", exist_ok=True)
+        bmap = {"clang":"libclang_exec.so","clang++":"libclang_exec.so","clang-21":"libclang_exec.so",
+                "clang++-21":"libclang_exec.so","ld.lld":"liblld_exec.so","lld":"liblld_exec.so",
+                "ar":"libllvmar_exec.so","ranlib":"libllvmranlib_exec.so","strip":"libllvmstrip_exec.so",
+                "nm":"libllvmnm_exec.so","cmake":"libcmake_exec.so","ninja":"libninja_exec.so",
+                "make":"libmake_exec.so","perl":"libperl_exec.so","pkgconf":"libpkgconf_exec.so",
+                "pkg-config":"libpkgconf_exec.so","flang":"libflang_exec.so"}
+        for name, lib in bmap.items():
+            p2 = TC + "/bin/" + name
+            src = NATIVE + "/" + lib
+            if os.path.exists(src):
+                if os.path.lexists(p2): os.remove(p2)
+                os.symlink(src, p2)
+
+    # ---- 5) fake-NDK ----
+    ndk = TC + "/ndk"
+    pn = ndk + "/toolchains/llvm/prebuilt/linux-x86_64"
+    os.makedirs(pn + "/bin", exist_ok=True)
+    open(ndk + "/source.properties", "w").write("Pkg.Desc = Android NDK (offline)\nPkg.Revision = 27.1.12297006\n")
+    os.makedirs(ndk + "/build/cmake", exist_ok=True)
+    tccmake = TC + "/tmp/android.toolchain.cmake"
+    if os.path.exists(tccmake):
+        shutil.copy(tccmake, ndk + "/build/cmake/android.toolchain.cmake")
+    for name in ["clang","clang++","ld","ld.lld","ar","ranlib","strip","nm",
+                 "llvm-strip","llvm-ar","llvm-ranlib","llvm-nm"]:
+        srcn = name.replace("llvm-","")
+        src = TC + "/bin/" + srcn
+        dst = pn + "/bin/" + name
+        if os.path.exists(src):
+            if os.path.lexists(dst): os.remove(dst)
+            os.symlink(src, dst)
+    sr = pn + "/sysroot"
+    if os.path.islink(sr): os.remove(sr)
+    elif os.path.isdir(sr): import shutil as _sh; _sh.rmtree(sr, ignore_errors=True)
+    if not os.path.lexists(sr):
+        os.symlink(TC + "/sysroot", sr)
+
+    # ---- 6) cmake/ninja in SDK ----
+    cm = SDK + "/cmake/3.22.1/bin"; os.makedirs(cm, exist_ok=True)
+    for t in ["cmake","ninja"]:
+        src = TC + "/bin/" + t
+        if os.path.exists(src):
+            p = cm + "/" + t
+            if os.path.lexists(p): os.remove(p)
+            os.symlink(src, p)
+
+    # ---- 7) libs aapt2 in toolchain/deps/lib (LD path-ul daemonului) ----
+    deps = TC + "/deps/lib"; os.makedirs(deps, exist_ok=True)
+    if NATIVE:
+        for f in os.listdir(NATIVE):
+            if f.endswith(".so") and not any(x in f for x in ["java","python","aapt2","llvm","clang","cmake","ninja","perl","rust","make","cargo","flang","pkgconf","lld","patchelf","maturin","shwrap","ccrust"]):
+                dst = deps + "/" + f
+                if not os.path.exists(dst):
+                    try: os.symlink(NATIVE + "/" + f, dst)
+                    except Exception: pass
+    # glibc shim
+    for name, tgt in [("libm.so.6","/system/lib64/libm.so"),("libpthread.so.0","/system/lib64/libc.so"),
+                      ("libdl.so.2","/system/lib64/libdl.so"),("libc.so.6","/system/lib64/libc.so")]:
+        p = deps + "/" + name
+        if not os.path.lexists(p):
+            try: os.symlink(tgt, p)
+            except Exception: pass
+
+    # ---- 8) sqlite-jdbc 3.46 (pt kapt/Room) + dir org.sqlite.lib.path ----
+    sq = BUILD + "/sqlitedir"; os.makedirs(sq, exist_ok=True)
+    sqj = A + "/sqlite-jdbc-3.46.0.0.jar"
+    if os.path.exists(sqj):
+        try:
+            with zipfile.ZipFile(sqj) as z:
+                so = [n for n in z.namelist() if "Linux-Android/aarch64/libsqlitejdbc.so" in n]
+                if so:
+                    open(sq + "/libsqlitejdbc.so", "wb").write(z.read(so[0]))
+                    os.chmod(sq + "/libsqlitejdbc.so", 0o755)
+                    log("  sqlite-jdbc Android extras")
+        except Exception as e: log("  sqlite err:", e)
+
+    # ---- 9) keystore debug ----
+    kd = BUILD + "/.android"; os.makedirs(kd, exist_ok=True)
+    ks = kd + "/debug.keystore"
+    if not os.path.exists(ks) and NATIVE:
+        _env_run([JDK + "/bin/keytool","-genkeypair","-keystore",ks,"-alias","androiddebugkey",
+                  "-storepass","android","-keypass","android","-keyalg","RSA","-keysize","2048",
+                  "-validity","10000","-dname","CN=Android Debug,O=Android,C=US"])
+
+    open(marker, "w").write(str(time.time()))
+    log("setup OK")
+    return True
+
+def _env(jh_lib=None):
+    jh_lib = jh_lib or NATIVE or _find_javahost_lib()
+    env = dict(os.environ)
+    env["JAVA_HOME"] = JDK
+    env["GRADLE_USER_HOME"] = GRADLEHOME
+    env["ANDROID_HOME"] = SDK; env["ANDROID_SDK_ROOT"] = SDK
+    env["HOME"] = BUILD; env["TMPDIR"] = TMP
+    env["PATH"] = f"{TC}/bin:{F}/tmp:{env.get('PATH','')}"
+    ld = f"{BUILD}/tlib:{TMP}:{GRADLE}/lib:{TC}/deps/lib"
+    if jh_lib: ld += f":{jh_lib}"
+    ld += f":{JDK}/lib:{JDK}/lib/server"
+    env["LD_LIBRARY_PATH"] = ld
+    env["JAVA_TOOL_OPTIONS"] = (f"-Duser.home={BUILD} -Djdk.lang.Process.launchMechanism=VFORK "
+                                f"-Djava.io.tmpdir={TMP}")
+    return env
+
+def _env_run(cmd, timeout=120):
+    r = subprocess.run(cmd, env=_env(), capture_output=True, text=True, timeout=timeout)
+    return r
+
+def build(project_dir, task="assembleDebug", timeout=3600):
+    setup()
+    _find_javahost_lib()
+    env = _env()
+    launcher = GRADLE + "/lib/gradle-launcher-9.8.0.jar"
+    if not os.path.exists(launcher):
+        log("EROARE: gradle-launcher lipsa"); return None
+    cmd = [JDK + "/bin/java",
+           f"-Duser.home={BUILD}", "-Djdk.lang.Process.launchMechanism=VFORK",
+           f"-Djava.io.tmpdir={TMP}", f"-Djava.library.path={TMP}:{GRADLE}/lib",
+           "-cp", launcher, "org.gradle.launcher.GradleMain", task]
+    # asigura gradle.properties cu VFORK + aapt2 override + tmpdir (altfel jlink/aapt2 esueaza)
+    try:
+        gp = os.path.join(project_dir, "gradle.properties")
+        props = ""
+        if os.path.exists(gp): props = open(gp).read()
+        add = []
+        if "jdk.lang.Process.launchMechanism" not in props:
+            add.append("org.gradle.jvmargs=-Xmx2g -Djava.io.tmpdir=" + TMP +
+                       " -Djdk.lang.Process.launchMechanism=VFORK -Duser.home=" + BUILD)
+        if "aapt2FromMavenOverride" not in props:
+            add.append("android.aapt2FromMavenOverride=" + BUILD + "/aapt2bin/aapt2")
+        if "org.gradle.daemon" not in props:
+            add.append("org.gradle.daemon=false")
+        if add:
+            with open(gp, "a") as f: f.write("\n" + "\n".join(add) + "\n")
+        # asigura aapt2bin/aapt2 (symlink fara .so)
+        ad = BUILD + "/aapt2bin"
+        try: os.makedirs(ad, exist_ok=True)
+        except Exception: pass
+        ap = ad + "/aapt2"
+        if NATIVE and not os.path.lexists(ap):
+            try: os.symlink(NATIVE + "/libaapt2_exec.so", ap)
+            except Exception: pass
+    except Exception as e: log("gradle.properties warn:", e)
+    # inlocuieste aapt2 din Maven transforms cache cu symlink la al nostru (AGP il descarca x86_64)
+    if NATIVE:
+        try:
+            for a in glob.glob(GRADLEHOME + "/caches/**/aapt2-*-linux/aapt2", recursive=True):
+                if not os.path.islink(a):
+                    try: os.rename(a, a + ".x86.bak")
+                    except Exception: pass
+                if os.path.lexists(a): os.remove(a)
+                os.symlink(NATIVE + "/libaapt2_exec.so", a)
+        except Exception as e: log("aapt2 cache warn:", e)
+    log("build:", project_dir, task)
+    r = subprocess.run(cmd, cwd=project_dir, env=env, capture_output=True, text=True, timeout=timeout)
+    ok = "BUILD SUCCESSFUL" in r.stdout
+    log("BUILD SUCCESSFUL" if ok else "BUILD FAILED")
+    if not ok:
+        log(r.stdout[-3000:]); log("ERR:", r.stderr[-800:])
+    apks = sorted(glob.glob(project_dir + "/app/build/outputs/apk/**/*.apk", recursive=True), key=os.path.getmtime)
+    return apks[-1] if (apks and ok) else None
+
+def verify(apk):
+    if not apk or not os.path.exists(apk):
+        return {"ok": False, "error": "apk lipsa"}
+    out = {"ok": True, "path": apk, "size_mb": round(os.path.getsize(apk)/1e6, 1)}
+    try:
+        with zipfile.ZipFile(apk) as z:
+            names = z.namelist()
+            out["has_dex"] = any(n.startswith("classes") and n.endswith(".dex") for n in names)
+            out["has_arsc"] = "resources.arsc" in names
+            out["has_manifest"] = "AndroidManifest.xml" in names
+            out["libs"] = len([n for n in names if n.startswith("lib/")])
+            out["files"] = len(names)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return out
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("folosire: android_build.py setup|build <dir>|verify <apk>"); sys.exit(1)
+    c = sys.argv[1]
+    if c == "setup": print(json.dumps({"ok": setup()}))
+    elif c == "build": apk = build(sys.argv[2]); print(json.dumps(verify(apk) if apk else {"ok": False}))
+    elif c == "verify": print(json.dumps(verify(sys.argv[2]), indent=2))

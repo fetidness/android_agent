@@ -9,6 +9,39 @@
 
 ---
 
+### 2026-10-05 (AGENTII UNIFICATI: O SINGURA SURSA, AMBII AU `build_apk`)
+
+> `net.sys32.agent` si `net.sys32.odc_agent` au acum **aceeasi sursa de cod**. `odc_agent/`
+> este GENERAT, nu mai e mentinut de mana.
+
+- **Inventar dovedit**: dupa normalizarea numelui de pachet, cele 15 module Kotlin si toate
+  fisierele Python sunt IDENTICE intre cei doi agenti; fisierele Gradle/manifest nu difera deloc.
+  Singurele diferente reale: `android_build.py` (doar odc), tool-ul `build_apk` (doar odc) si
+  `build.py` (odc folosea `nativeLibraryDir` dinamic in loc de hash hardcodat).
+- **Script nou `tools/make_agent_variant.sh`** — genereaza o varianta (Gradle sau `--flat` pentru
+  `build_apk.sh`) din sursa canonica `workspace/app/net.sys32.agent/`: rescrie pachetul in 77
+  fisiere, redenumeste directorul Kotlin, seteaza eticheta, iar la `--flat` injecteaza
+  `package=` + `<uses-sdk>` in manifest.
+- **Unificat in agentul principal**: `assets/python/android_build.py`, `build.py` dinamic,
+  tool-ul `build_apk` (lista de tool-uri: 11 -> 12) si `build_apk.sh` in sursa canonica
+  (versiunea corecta, cu ambalarea `lib/` pentru jniLibs).
+- **BUG REPARAT — odc_agent nu putea porni**: `agent.py` avea 3 coruptii pe intrarea `build_apk`
+  (prefix `{"type":"function","function":` duplicat, intrarea `read` fara prefix, o acolada `}`
+  in plus dupa descriere) => `SyntaxError` la import => creierul Python al odc_agent nu pornea
+  deloc, desi `build_apk` era in APK. Acum lista se parseaza (12 tool-uri verificate in JSON).
+- **Verificat E2E pe device**: `bash tools/make_agent_variant.sh … --flat` -> push in
+  `/data/local/tmp/apkbuild/odc_full` -> `build_apk.sh` -> **BUILD OK** (299 clase Kotlin,
+  dex 8.7 MB, 146 libs native, assets ~600 MB) -> APK **627 MB** semnat -> `pm install -r`
+  = `Success` -> aplicatia porneste si Python ruleaza (`Configuring... DONE`, cere cheia
+  DeepSeek). `md5(agent.py)` din APK == md5 din sursa generata (`184daeca…`).
+- **Marker assets**: `.assets_v253` -> `.assets_v254` (assets s-au schimbat, obligatoriu).
+- **`.gitignore`**: fisierele mari generate de odc_agent nu se comit
+  (`assets/toolchain/`, `assets/android_build/`, `jniLibs/`).
+- **`odc_agent/README.md`** rescris: proiect GENERAT + cum se regenereaza + regulile.
+- `readme.md` -> **OP.9** cu procedura completa de unificare/regenerare/build.
+
+---
+
 ### 2026-10-05 (BACKUP COMPLET AL UNELTELOR DE PE SAMSUNG PE LAPTOP)
 
 > Toate uneltele de build care traiesc DOAR pe telefon (nu sunt in git) au fost salvate local

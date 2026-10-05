@@ -90,3 +90,10 @@ odc_agent/gradle/wrapper/gradle-wrapper.jar
 odc_agent/gradlew
 odc_agent/gradlew.bat
 odc_agent/app/build/
+
+# ---- odc_agent e GENERAT din sursa canonica: tools/make_agent_variant.sh ----
+# fisierele mari (toolchain nativ, libs native, uneltele de build) NU se comit,
+# exact ca la agentul principal - pe device sunt in filesDir/odcassets, nu in git
+odc_agent/app/src/main/assets/toolchain/
+odc_agent/app/src/main/assets/android_build/
+odc_agent/app/src/main/jniLibs/

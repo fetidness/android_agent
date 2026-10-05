@@ -25,8 +25,13 @@ def _sh(cmd, timeout=120):
 
 
 TPM = "/data/local/tmp/tpm/usr"                       # clang + header-e + libs
-APP_LIB = ("/data/app/~~EiKG4WRW2l4No1sMw8fAdw==/"
-           "net.sys32.agent-ccx5_u8wk-sEPxPW4EMMpg==/lib/arm64")  # libpython
+def _find_app_lib():
+    """Gaseste nativeLibraryDir real al aplicatiei (hash-ul se schimba la reinstalare)."""
+    import glob as _g
+    hits = _g.glob("/data/app/*/net.sys32.agent*/lib/arm64")
+    return hits[0] if hits else "/data/app/~~x==/net.sys32.agent-x==/lib/arm64"
+
+APP_LIB = _find_app_lib()  # libpython (cale dinamica)
 SITE = ("/data/user/0/net.sys32.agent/files/pyhome/lib/python3.14/site-packages")
 LIBS = "/data/user/0/net.sys32.agent/files/libs"      # unde linker-ul vede .so
 EXT_SUFFIX = ".cpython-314-aarch64-linux-android.so"

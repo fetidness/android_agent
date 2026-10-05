@@ -1058,6 +1058,73 @@ a javahost-ului. Re-creeaza-le dupa restore (vezi §4, capcana *symlink rupt*).
 
 ---
 
+### OP.9 — UNIFICARE: O SINGURA SURSA PENTRU AMBII AGENTI
+
+Cei doi agenti (`net.sys32.agent` si `net.sys32.odc_agent`) au acum **o singura sursa de cod**:
+`workspace/app/net.sys32.agent/`. Verificat mecanic: dupa normalizarea numelui de pachet, cele
+15 module Kotlin si toate fisierele Python sunt **identice** intre ei, iar fisierele Gradle si
+manifestul nu difera deloc.
+
+**`odc_agent/` e GENERAT** cu:
+
+```bash
+cd /home/gab/Desktop/android_agent
+bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_odc           # Gradle
+bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_flat --flat   # pt build_apk.sh
+```
+
+Generatorul face fix 4 lucruri (restul vine 1:1 din sursa canonica):
+1. rescrie `net.sys32.agent` -> `<PKG>` in toate fisierele text (77 la ultima rulare);
+2. redenumeste directorul Kotlin `java/net/sys32/agent` -> `java/net/sys32/<pkg>`;
+3. seteaza eticheta afisata (`app_name` + toate `android:label="..."`);
+4. cu `--flat`: layout plat (`AndroidManifest.xml` + `res/` + `src/` + `assets/`) si injecteaza
+   in manifest `package="..."` + `<uses-sdk minSdk 26 targetSdk 34/>` (obligatorii la build-ul
+   manual cu `build_apk.sh`; AGP le respinge, deci nu sunt in sursa canonica).
+
+**Ce s-a UNIT** (odc avea, agentul principal nu):
+
+| Element | Inainte | Acum |
+|---|---|---|
+| tool `build_apk` (compilare APK pe device, offline) | doar in odc | **ambii** |
+| `assets/python/android_build.py` | doar in odc | **ambii** |
+| `build.py` cu `nativeLibraryDir` dinamic (`glob`) | doar in odc | **ambii** |
+| `build_apk.sh` cu ambalarea `lib/` (jniLibs) | doar pe device, in repo era versiunea veche | **reparat + in sursa canonica** |
+
+**Bug reparat (odc_agent nu putea porni):** `agent.py` din odc avea 3 coruptii pe intrarea
+`build_apk` din lista de tool-uri — prefixul `{"type":"function","function":` duplicat, intrarea
+`read` ramasa fara prefix si o acolada `}` in plus dupa descriere. Rezultat: `T=[...]` neinchis
+-> `SyntaxError` la import -> creierul Python nu pornea din acel fisier (desi `build_apk` era
+prezent in APK). Acum: `py_compile` OK si lista se parseaza ca JSON (12 tool-uri, verificat).
+
+**Cum se construieste fiecare:**
+
+```bash
+# agentul principal (Gradle, pe laptop):
+cd workspace/app && ./build_app.sh                 # assembleDebug + install + start
+
+# odc_agent (fara PC, pe device) — vezi si odc_agent/README.md:
+bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_flat --flat
+adb push /tmp/var_flat/flat/{AndroidManifest.xml,res,src,assets} /data/local/tmp/apkbuild/odc_full/
+adb shell "/system/bin/sh /data/local/tmp/apkbuild/build_apk.sh /data/local/tmp/apkbuild/odc_full \
+           net.sys32.odc_agent 'ODC Agent' /data/local/tmp/apkbuild/odc_uni.apk"
+adb shell 'pm install -r --bypass-low-target-sdk-block /data/local/tmp/apkbuild/odc_uni.apk'
+```
+
+**Verificat E2E (5 oct):** build pe device `BUILD OK` (299 clase Kotlin, dex 8.7 MB, 146 libs
+native, assets 600 MB) -> APK **627 MB** semnat -> `Success` la instalare -> aplicatia porneste
+si Python ruleaza (ajunge la `Configuring... DONE` + cere cheia DeepSeek). `md5(agent.py)` din
+APK = md5 din sursa generata (`184daeca…`).
+
+**Capcane:**
+- La orice modificare de assets -> incrementeaza `.assets_vNN` (acum `.assets_v254`), altfel
+  fisierele noi NU ajung in `filesDir` pe device.
+- Fisierele mari generate NU se comit (vezi `.gitignore`): `odc_agent/.../assets/toolchain/`,
+  `assets/android_build/`, `jniLibs/`.
+- `build_apk.sh` scrie in directorul proiectului (`res.zip`, `base.apk`, `classes`, `dex`,
+  `stage`) si creeaza keystore-ul in `$PROJ/../release.keystore`.
+
+---
+
 ### REZOLVAREA PROBLEMELOR FRECVENTE
 
 | Simptom | Cauza | Fix |
