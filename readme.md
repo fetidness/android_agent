@@ -33,11 +33,13 @@ e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
 
 ---
 
-## 🚀 BUILD VOCISHD PE DEVICE (5 oct 2026) — Gradle+AGP+NDK pe telefon (~95%)
+## 🏆 BUILD VOCISHD PE DEVICE — REUȘIT COMPLET (5 oct 2026)
 
-**Al treilea experiment: compilarea APK-ului VOCISHD (`net.sys32.vocis`, repo `hdvoice`)
-direct pe telefon.** Rezultat: **~95%** (39 task-uri Android executate), blocat doar la
-aapt2 în mod daemon. Detalii complete în `CHANGELOG.md` (5 oct 2026) și în `odc_agent/memory.md`.
+> **REUȘIT: `assembleDebug` COMPLET pe telefon!** APK-ul VOCISHD (`net.sys32.vocis`, v2.89,
+> **38 MB**) compilat, semnat, instalat și RULAT pe device — **58 task-uri, BUILD SUCCESSFUL,
+> fără PC.** Conține `classes.dex` 43.9 MB (Kotlin+Hilt+Compose), `libopus_jni.so` pentru
+> toate 7 ABI-urile, `libsqlcipher.so`, resurse, manifest.
+> Detalii complete în `CHANGELOG.md` (5 oct 2026) și în `odc_agent/memory.md`.
 
 ### Ce funcționează dovedit
 - **Gradle 9.8 + AGP 9.0.1 + Kotlin 2.1.21 + Compose + kapt + Hilt + Room** configurează
@@ -66,13 +68,18 @@ APK-ul gazdă dedicat.
 7. kapt `ExceptionInInitializerError` (SQLite-jdbc x86_64) → `room.verifier=false`
 8. keystore debug lipsă → generat + `-Duser.home=<filesDir>`
 
-### BLOCAJ RĂMAS (unicul): aapt2 daemon
-AGP 9 lansează **`aapt2 daemon`** (mod server) pentru transform-urile AAR (play-services,
-media3...). Aapt2-ul Termux 2.20 (aarch64, singurul care rulează) **nu are `--daemon`**;
-aapt2-ul oficial (cu daemon) e **x86_64** → „AAPT2 Daemon startup failed".
-`android.enableAapt2Daemon=false` nu ajută în AGP 9.
-Opțiuni neîncercate: **box64** (translare x86_64), **downgrade AGP**, **compilare aapt2 din
-sursă cu daemon pentru ARM**.
+### REZOLVĂRI FINALE (aapt2 daemon + kapt SQLite)
+**aapt2 daemon:** AGP descarcă aapt2 din Maven la
+`gradlehome/caches/9.8.0/transforms/<hash>/transformed/aapt2-9.0.1-<rev>-linux/aapt2`.
+Îl înlocuiești cu un **symlink** la `javahost/libaapt2_exec.so` (+ libs în
+`toolchain/deps/lib`, care e în LD_LIBRARY_PATH-ul daemonului Gradle) →
+`android.aapt2FromMavenOverride=<symlink fără .so>`.
+
+**kapt SQLite:** `sqlite-jdbc 3.41.2.2` NU are natives Android (0 bytes), iar SQLite detecta
+OS='Linux' → lua varianta glibc (cere `libm.so.6`). **`sqlite-jdbc 3.46.0.0`** are
+`Linux-Android/aarch64/libsqlitejdbc.so` real (depinde doar de libs de sistem) →
+`-Dorg.sqlite.lib.path=<DIRECTOR cu libsqlitejdbc.so>` (director, nu fișier!) +
+`-Dorg.sqlite.tmpdir`.
 
 ### Comanda de build (rezumat)
 ```

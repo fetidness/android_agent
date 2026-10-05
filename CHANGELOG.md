@@ -9,7 +9,38 @@
 
 ---
 
-### 2026-10-05 (BUILD VOCISHD PE DEVICE: Gradle+AGP+CMake+Opus funcțional ~95%)
+### 2026-10-05 (VOCISHD COMPILAT CU SUCCES PE DEVICE - BUILD SUCCESSFUL!)
+
+> **REUȘIT: `assembleDebug` COMPLET pe telefon.** APK-ul VocisHD (net.sys32.vocis, v2.89,
+> 38 MB) compilat, semnat, instalat și RULAT pe device. 58 task-uri, BUILD SUCCESSFUL.
+
+**Rezultat final:** APK 38 MB (89 MB despachetat, 545 fișiere), conține `classes.dex`
+(43.9 MB — Kotlin + Hilt + Compose), `libopus_jni.so` pentru **toate 7 ABI-urile**
+(arm64-v8a, armeabi-v7a, armeabi, mips, mips64, x86, x86_64), `libsqlcipher.so`,
+`resources.arsc`, `AndroidManifest.xml`. Instalat + pornit fără crash (PID viu).
+
+**Toate barierele rezolvate (în ordine):**
+1. java/jlink/jmod/javac → ambalate în APK ca `lib*_exec.so` (APK-gazdă `net.sys32.javahost`)
+2. Gradle daemon fork (`jspawnhelper`) → `-Djdk.lang.Process.launchMechanism=VFORK`
+3. `java.io.tmpdir` + `user.home` (compilate Termux) → redirecționate
+4. cmake/aapt2 x86_64 ale AGP → symlink la variantele **aarch64** ale noastre
+5. fake-NDK prin symlink-uri + `llvm-strip`/`llvm-ar`/`llvm-ranlib`/`llvm-nm`
+6. SDK scriibil → `filesDir`
+7. **aapt2 daemon** → AGP descarcă aapt2 din Maven la
+   `transforms/<hash>/aapt2-9.0.1-<rev>-linux/aapt2`; îl înlocuiești cu symlink la
+   `javahost/libaapt2_exec.so` + libs în `toolchain/deps/lib` (care e în LD_LIBRARY_PATH-ul
+   daemonului Gradle)
+8. **kapt SQLite** → `sqlite-jdbc 3.41` NU are natives Android (0 bytes);
+   **`sqlite-jdbc 3.46.0.0`** ARE `Linux-Android/aarch64/libsqlitejdbc.so` real →
+   `-Dorg.sqlite.lib.path=<DIRECTOR cu libsqlitejdbc.so>` (director, nu fișier!)
+
+**Concluzie:** build-ul Android complet (Gradle + AGP + Kotlin + Compose + Hilt + Room +
+kapt + **cod nativ C/NDK**) **FUNCȚIONEAZĂ pe device, fără PC**. Toate capcanele
+SELinux/x86_64 rezolvate.
+
+---
+
+### 2026-10-05 (ISTORIC: VOCISHD pe device — etapa intermediară ~95%, vezi mai sus succesul final)
 
 > **Al treilea experiment major: compilarea APK-ului VOCISHD (`net.sys32.vocis`,
 > repo `hdvoice`) DIRECT PE TELEFON**, fără PC/Gradle pe PC. Rezultat: build-ul ajunge
