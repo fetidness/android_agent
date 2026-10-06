@@ -204,13 +204,16 @@ class MainActivity : AppCompatActivity() {
                 if (scrollY < oldScrollY) {
                     // userul a derulat SUS -> oprim urmarirea
                     followTail = false
-                } else if (scrollY > oldScrollY && dist <= 24) {
+                } else if (scrollY > oldScrollY && dist <= 32) {
                     // userul a derulat JOS si a ajuns (aproape) la fund -> reluam
                     followTail = true
                 }
             }
-            // daca suntem EFECTIV la fund (prin orice mijloc), urmarirea reia de la sine
-            if (!programmaticScroll && dist <= 8) followTail = true
+            // daca suntem EFECTIV la fund (prin orice mijloc), urmarirea reia de la sine.
+            // pragul e mai generos (32px): dupa trunchierea textului (MAX_UI_CHARS) si pe
+            // ecrane mici, 'dist' poate rămâne 10-25px chiar cand esti vizual la fund,
+            // iar pragul vechi de 8px facea auto-scroll-ul sa "moara" fara motiv.
+            if (!programmaticScroll && dist <= 32) followTail = true
         }
 
         val row = LinearLayout(this).apply {
@@ -441,7 +444,7 @@ class MainActivity : AppCompatActivity() {
             sb.append(Ansi.toSpannable(s))
             output.text = sb
         } catch (_: Exception) {}
-        scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
+        scrollToBottom()
     }
 
     fun appendAnsi(s: String) {
@@ -449,11 +452,13 @@ class MainActivity : AppCompatActivity() {
         // PERFORMANTA: TextView-ul creste nelimitat -> la revenirea din background
         // Android re-layout-uieste TOT textul (ecran negru + lag). Tinem doar ultimele
         // MAX_UI_CHARS caractere, taiind din cap (spannable-ul ramane mic si rapid).
+        var truncated = false
         try {
             val cur = output.text
             if (cur.length > MAX_UI_CHARS) {
                 val keep = cur.subSequence(cur.length - MAX_UI_KEEP, cur.length)
                 output.text = android.text.SpannableStringBuilder(keep)
+                truncated = true
             }
         } catch (_: Exception) {}
 
@@ -465,14 +470,31 @@ class MainActivity : AppCompatActivity() {
 
         // urmarim coada DOAR daca userul nu a derulat manual in sus (followTail).
         // Daca a derulat sus, textul nou creste SUB pozitia lui, fara sa-l miste.
-        if (followTail) {
-            scroll.post {
-                if (!followTail) return@post
-                programmaticScroll = true
-                scroll.fullScroll(ScrollView.FOCUS_DOWN)
-                scroll.postDelayed({ programmaticScroll = false }, 60)
-            }
+        if (followTail) scrollToBottom()
+    }
+
+    /** ★ Deruleaza la fund DUPA ce TextView-ul si-a recalculat inaltimea.
+     *  Inainte se facea un singur scroll.post { fullScroll } - dar la pasul acela
+     *  TextView-ul putea sa NU fi terminat layout-ul, deci fullScroll ajungea la
+     *  fundul VECHI -> textul nou ramanea sub marginea de jos (auto-scroll "rupt").
+     *  Acum: (1) post imediat, (2) al doilea post dupa layout, (3) un retry scurt.
+     *  programmaticScroll se elibereaza dupa ce layout-ul s-a linistit, nu dupa un
+     *  timp fix care putea expira prea devreme pe text mare/ANSI. */
+    private fun scrollToBottom() {
+        if (!followTail) return
+        programmaticScroll = true
+        val doScroll = Runnable {
+            if (!followTail) return@Runnable
+            scroll.fullScroll(ScrollView.FOCUS_DOWN)
         }
+        scroll.post(doScroll)
+        output.post(doScroll)               // dupa ce TextView-ul e re-layoutat
+        scroll.postDelayed(doScroll, 32)    // a doua sansa (text greu/ANSI)
+        scroll.postDelayed({
+            // eliberam abia dupa ce layout-ul s-a asezat; thencorectam si deriva
+            if (followTail) scroll.fullScroll(ScrollView.FOCUS_DOWN)
+            scroll.postDelayed({ programmaticScroll = false }, 32)
+        }, 96)
     }
 
     // Opreste generarea curenta: trimite SIGINT procesului Python. Agentul prinde
@@ -592,6 +614,11 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (!coreStarted && allEssentialPermsGranted()) {
             root.postDelayed({ startCore() }, 800)
+        }
+        // ★ La revenirea in prim-plan, Android re-layoutuieste tot TextView-ul (poate dura):
+        // daca urmaream coada, ne asezam la fund DUPA layout, nu inainte.
+        if (followTail) {
+            scroll.postDelayed({ if (followTail) scrollToBottom() }, 120)
         }
     }
 
