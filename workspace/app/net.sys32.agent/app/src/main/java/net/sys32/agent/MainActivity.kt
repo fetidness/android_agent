@@ -448,6 +448,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun appendAnsi(s: String) {
+        // ★ FIX 2026-10-06: masuram DACA eram la fund INAINTE de a adauga textul.
+        // Dupa append, contentH creste (cu o linie intreaga) -> un atBottom() facut DUPA
+        // ar returna fals (dist = lineHeight > 32) si nu ar mai re-arma urmarirea.
+        val wasAtBottom = atBottom()
         output.append(Ansi.toSpannable(s))
         // PERFORMANTA: TextView-ul creste nelimitat -> la revenirea din background
         // Android re-layout-uieste TOT textul (ecran negru + lag). Tinem doar ultimele
@@ -468,9 +472,28 @@ class MainActivity : AppCompatActivity() {
             setTaskScreenOn(false)
         }
 
+        // ★ FIX 2026-10-06: daca textul a fost TRUNCHIAT, pozitia de scroll se reseteaza
+        // (output.text e inlocuit) -> daca urmaream coada, ne asezam imediat la fund ca sa
+        // nu rămâne continutul sub marginea de jos dupa trunchiere.
+        if (truncated) scrollToBottom(force = true)
+
+        // ★ FIX 2026-10-06 (auto-scroll "moare" si nu se mai re-arma):
+        // Re-armam urmarirea cozii daca suntem EFECTIV la fund. Inainte re-armarea se
+        // facea DOAR in listener-ul de scroll - dar daca scroll-ul era blocat (nimic nu
+        // se misca) nu mai venea niciun eveniment -> followTail rămânea false pe vecie
+        // si textul curgea sub marginea de jos. Acum verificam activ la fiecare text nou.
+        if (!followTail && !programmaticScroll && wasAtBottom) followTail = true
+
         // urmarim coada DOAR daca userul nu a derulat manual in sus (followTail).
         // Daca a derulat sus, textul nou creste SUB pozitia lui, fara sa-l miste.
         if (followTail) scrollToBottom()
+    }
+
+    /** ★ true daca suntem (aproape) la fundul listei (dist <= 32px). */
+    private fun atBottom(threshold: Int = 32): Boolean {
+        val child = scroll.getChildAt(0) ?: return true
+        val dist = child.bottom - scroll.height - scroll.scrollY
+        return dist <= threshold
     }
 
     /** ★ Deruleaza la fund DUPA ce TextView-ul si-a recalculat inaltimea.
@@ -480,11 +503,13 @@ class MainActivity : AppCompatActivity() {
      *  Acum: (1) post imediat, (2) al doilea post dupa layout, (3) un retry scurt.
      *  programmaticScroll se elibereaza dupa ce layout-ul s-a linistit, nu dupa un
      *  timp fix care putea expira prea devreme pe text mare/ANSI. */
-    private fun scrollToBottom() {
-        if (!followTail) return
+    private fun scrollToBottom(force: Boolean = false) {
+        // force=true: ignoram guard-ul followTail (folosit dupa TRUNCHIERE, cand textul
+        // e inlocuit si pozitia se reseteaza - altfel continutul rămânea sub margine).
+        if (!followTail && !force) return
         programmaticScroll = true
         val doScroll = Runnable {
-            if (!followTail) return@Runnable
+            if (!followTail && !force) return@Runnable
             scroll.fullScroll(ScrollView.FOCUS_DOWN)
         }
         scroll.post(doScroll)
@@ -492,7 +517,7 @@ class MainActivity : AppCompatActivity() {
         scroll.postDelayed(doScroll, 32)    // a doua sansa (text greu/ANSI)
         scroll.postDelayed({
             // eliberam abia dupa ce layout-ul s-a asezat; thencorectam si deriva
-            if (followTail) scroll.fullScroll(ScrollView.FOCUS_DOWN)
+            if (followTail || force) scroll.fullScroll(ScrollView.FOCUS_DOWN)
             scroll.postDelayed({ programmaticScroll = false }, 32)
         }, 96)
     }
@@ -1172,6 +1197,12 @@ class MainActivity : AppCompatActivity() {
         // NU afisam ecou aici: agentul afiseaza el linia "You > <mesaj>" in _task_head.
         btnStop.visibility = View.VISIBLE
         setTaskScreenOn(true)
+        // ★ FIX 2026-10-06 (auto-scroll "sare mai sus" la un task nou):
+        // urmarirea cozii se OPREA cand userul derula sus (followTail=false) si NU se mai
+        // re-arma la taskul urmator -> textul curgea SUB marginea de jos, scroll blocat.
+        // La fiecare mesaj trimis reluam urmarirea cozii (userul vrea sa vada raspunsul nou).
+        followTail = true
+        scrollToBottom()
         try { pyIn?.write(t + "\n"); pyIn?.flush() } catch (e: Exception) {
             appendAnsi("[write failed: $e]\n")
         }
