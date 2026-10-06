@@ -45,7 +45,7 @@ Agentul poate compila aplicatii Android (APK) direct pe telefon, **offline** —
 vin in APK. Modul: `android_build.py` (tool `build_apk`: `setup` / `build dir=<proiect>` /
 `verify apk=<fisier>` / `install apk=<fisier>|dir=<proiect>` / `selftest`).
 Dovedit E2E: HelloWorld Android compilat -> APK, instalat, rulat. Detalii in
-`BUILD_ANDROID_ON_DEVICE.md`, in `RAPORT_build_apk.md` (capcanele reale) si in memoria agentului.
+`BUILD_ANDROID_ON_DEVICE.md`, in `CHANGELOG.md` (capcanele reale) si in memoria agentului.
 
 **Robustete (ce nu mai cere intervenție manuala):**
 - `setup()` extrage singur assets-urile din `base.apk` daca nu le gaseste pe disc
@@ -160,7 +160,7 @@ device** — fiecare verigă dovedită. Rămâne o singură incompatibilitate (a
 | Toolchain nativ | `assets/toolchain/` (**1007 MB**, 6077 fisiere) + 146 libs native `lib*_exec.so` in `jniLibs/` (**405 MB**) — **NU sunt in git** (vezi `.gitignore`), se copiaza pe device |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
-| Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |
+| Istoric dezvoltare | **[`CHANGELOG.md`](CHANGELOG.md)** (faze, reguli de verificare, capcane, jurnal) |
 
 #### ★ CE S-A SCHIMBAT ESENTIAL (28 sept 2026)
 
@@ -1157,15 +1157,15 @@ cd /home/gab/Desktop/android_agent/workspace/app
 
 ### UNDE E CODUL SURSA (pe laptop, pentru dezvoltare)
 ```
-/home/gab/Desktop/android_agent/
-  agent-original-android.py                      agentul ANDROID ORIGINAL (referinta, neatins)
-  agent-original-linux.py                        agentul LINUX ORIGINAL (referinta, neatins)
-  agent-android-v2.py                            agentul ANDROID OPTIMIZAT (v2) - ACESTA e default-ul
-  agent-linux-v2.py                              agentul LINUX OPTIMIZAT (v2)
-  Documentatie_Agent_Android.md                  ACEST document
-  memory.md                                      memoria agentului desktop
+/.../android_agent/                            (clona git: git@github.com:fetidness/android_agent.git)
+  agent-linux.py                                 agentul LINUX (varianta curenta, curatata)
+  readme.md                                      ACEST document
+  BUILD_ANDROID_ON_DEVICE.md                     ghidul de build Android pe device
+  CHANGELOG.md                                   istoricul de dezvoltare
+  dist/                                          ghiduri de distributie (RESTORE.md, restore.sh)
+  tools/                                         manifest backup + scripturi instalare/probe/wipe
   workspace/app/net.sys32.agent/
-    app/src/main/assets/python/agent.py          = continutul lui agent-android-v2.py (DEFAULT la clone/build)
+    app/src/main/assets/python/agent.py          agentul VIU (ruleaza pe device) - sursa reala
     app/src/main/assets/python/adb_client.py     client ADB (super-puteri)
     app/src/main/assets/python/adb_setup.py      auto-setup
     app/src/main/assets/python/android_bridge.py bridge Python-side
@@ -1173,21 +1173,17 @@ cd /home/gab/Desktop/android_agent/workspace/app
   (workspace/build/Python-3.14.7/                sursele Python - STERSE, in .gitignore; vezi OP.6)
 ```
 
-> **Schema de nume:** `agent-<platform>-<varianta>.py` unde platforma = `android` | `linux`,
-> iar varianta = `original` (neatins) | `v2` (optimizat pentru context de 1M tokeni).
+> **Schema de nume (curatata):** a ramas UN SINGUR fisier de agent in radacina,
+> `agent-linux.py` — agentul pentru Linux/desktop. Variantele istorice
+> (`agent-original-android.py`, `agent-original-linux.py`, `agent-android-v2.py`,
+> `agent-linux-v2.py`) au fost ELIMINATE (erau inghetate din 25 sept 2026 si doar
+> induceau in eroare).
 >
-> ⚠️ **ATENTIE (corectat 3 oct 2026): `assets/python/agent.py` NU mai este copia lui
-> `agent-android-v2.py`.** Fisierele `agent-*-*.py` din radacina sunt INGHETATE la
-> 25 sept 2026 (ultimul commit `c71edc1`) si au ramas documentatie de referinta.
-> Codul VIU este `assets/python/agent.py` (3 oct, v252): 233 337 B / 3549 linii,
-> fata de 180 558 B / 2696 linii in `agent-android-v2.py` — nu sunt identice
-> (`md5`: assets `455cdb63...`, v2 rădăcină `8639f8b4...`), iar niciunul nu e
-> substring al celuilalt.
->
-> `agent.py` este numele fix pe care il cauta codul Kotlin (`ProcessBuilder(py, "agent.py")`),
-> deci versiunea care ruleaza pe device este EXCLUSIV cea din assets. Daca vrei sa
-> reeditezi agentul, editeaza `assets/python/agent.py` direct — **nu** copia
-> `agent-android-v2.py` peste el (ai pierde 853 linii de dezvoltare ulterioara).
+> ⚠️ **`assets/python/agent.py` este SINGURA sursa vie** pentru agentul care ruleaza
+> pe Android. Numele este fix, cerut de codul Kotlin
+> (`ProcessBuilder(py, "agent.py")`). Daca vrei sa editezi agentul de pe device,
+> editeaza DIRECT `app/src/main/assets/python/agent.py` — nu exista nicio copie
+> in radacina din care sa o suprascrii.
 
 ---
 
@@ -3122,17 +3118,17 @@ Fiecare apel `bash` crapa cu `FileNotFoundError` neprins → omora task-ul.
 **Cost fix masurat:**
 | Varianta | Inainte | Dupa |
 |----------|---------|------|
-| Android (`agent-android-v2.py`) | 8319 tok/req | **6449 tok/req** |
-| Linux (`agent-linux-v2.py`) | ~3382 tok/req | **2821 tok/req** |
+| Android (`assets/python/agent.py`) | 8319 tok/req | **6449 tok/req** |
+| Linux (`agent-linux.py`) | ~3382 tok/req | **2821 tok/req** |
 
 **Testat live pe dispozitiv (SM-A366B):** 44+28+16 teste PASS/0 FAIL; 100.000 linii procesate in
 166ms (602.749 linii/s); context real dupa 878 mesaje = **13.6% din fereastra** (vs teoretic mult
 mai mult cu vechiul CHUNK).
 
-**Schema de nume finala:**
-- `agent-original-android.py` / `agent-original-linux.py` — originalele, neatinse (referinta)
-- `agent-android-v2.py` / `agent-linux-v2.py` — optimizatele v2
-- `assets/python/agent.py` = **copia v2 Android** → default la orice clone/build
+**Schema de nume finala (curatata):**
+- `assets/python/agent.py` — **agentul VIU de pe Android** (singura sursa pentru device)
+- `agent-linux.py` — agentul pentru Linux/desktop
+- variantele istorice `agent-*-v2.py` / `agent-original-*.py` au fost STERSE (erau inghetate)
 
 ---
 
@@ -3306,7 +3302,7 @@ agentul a ales si construit SINGUR kiwisolver.
 
 ## Etapa 50 - FAZA 0: FUNDATIA DE AUTONOMIE (29 sept 2026, `.assets_v184`)
 
-Implementat in `toolchain.py` + `agent.py` (vezi `PLAN_AUTONOMIE.md`, sectiunea 5/8.1):
+Implementat in `toolchain.py` + `agent.py` (vezi `CHANGELOG.md`):
 
 - **`toolchain action=selftest`** - self-test de CAPABILITATI pe device: compileaza si LINKEAZA
   real C, C++ cu STL, o extensie `Python.h` (link cu `-lpython3.14`) si un obiect Fortran; verifica
@@ -3326,7 +3322,7 @@ reinstalat offline ("instalat din wheelhouse local"); `kiwisolver` exit 0 (38s) 
 instalare curata + intrebare din UI ("Poti instala pyarrow?") -> raspuns corect in 16.8s
 (`CMakeNotFoundError: Could not find CMake with version >= 3.25`).
 
-Doua regresii prinse si reparate in timpul fazei (ambele in PLAN_AUTONOMIE.md 8.1):
+Doua regresii prinse si reparate in timpul fazei (ambele in `CHANGELOG.md`):
 `pip wheel --no-build-isolation` ascunde cauza reala a cerintelor de build lipsa (drumul principal
 a revenit la `pip install`), si doua subcomenzi pip in acelasi proces nu mai vad `--find-links`
 (instalarea din wheelhouse se face intr-un proces nou).
@@ -3336,7 +3332,7 @@ a revenit la `pip install`), si doua subcomenzi pip in acelasi proces nu mai vad
 ## Etapa 51 - CMAKE PE DEVICE (FAZA 1, `.assets_v187`, 29 sept 2026)
 
 **cmake 3.31.6 ruleaza pe telefon si construieste proiecte reale.** Vezi
-`PLAN_AUTONOMIE.md` sectiunea 8.2 pentru toate patch-urile.
+`CHANGELOG.md` pentru toate patch-urile.
 
 - `toolchain action=selftest` -> `"cmake": true` (configure+build proiect C, ~1.2s);
   proiect de test configure+build+binar RULAT pe device.

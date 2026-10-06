@@ -9,6 +9,28 @@
 
 ---
 
+### 2026-10-06 (3) (curățare: variantele istorice de agent eliminate)
+
+> **Context:** repo-ul avea în rădăcină 7 fișiere moarte (variante inghețate din
+> 25 sept 2026) plus 3 documente de lucru depășite. Le-am eliminat, iar `readme.md`
+> a fost sincronizat ca să nu mai conțină linkuri moarte.
+
+**Șterse (erau doar referință istorică, nu sursă vie):**
+- `agent-original-android.py`, `agent-original-linux.py` (originalele)
+- `agent-android-v2.py`, `agent-linux-v2.py` (optimizatele v2)
+- `PLAN_AUTONOMIE.md`, `RAPORT_build_apk.md`, `STATUS_OPTIMIZARI.md`
+
+**Sursa vie rămasă:**
+- `workspace/app/net.sys32.agent/app/src/main/assets/python/agent.py` — agentul de pe device
+- `agent-linux.py` — agentul pentru Linux/desktop
+
+**În `readme.md`:** blocul „UNDE E CODUL SURSA" rescris pentru structura reală a clonelor,
+tabelul de costuri actualizat (Android -> `assets/python/agent.py`, Linux -> `agent-linux.py`),
+nota despre schema de nume corectată (nu mai există copii în rădăcină), linkurile către
+`RAPORT_build_apk.md` / `PLAN_AUTONOMIE.md` redirecționate către `CHANGELOG.md`.
+
+---
+
 ### 2026-10-06 (2) (ADB: semnătura tokenului adbd + instalare fără adb)
 
 > **Context:** după ce fix-urile din sursă au ajuns pe device (assets re-extrase automat),
