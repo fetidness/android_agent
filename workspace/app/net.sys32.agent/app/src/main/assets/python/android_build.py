@@ -29,9 +29,107 @@ ASSETS = _HERE + "/../assets/android_build"      # langa python/ sunt assets? de
 def _assets_dir():
     for c in [F + "/assets/android_build",
               os.path.dirname(F) + "/assets/android_build",
+              os.path.dirname(os.path.dirname(_HERE)) + "/assets/android_build",
+              _HERE + "/../../assets/android_build"]:
+        if os.path.isdir(c) and os.path.exists(c + "/platform36.zip"): return c
+    # niciuna nu are platform36.zip: intoarce prima care exista (macar e un inceput)
+    for c in [F + "/assets/android_build",
+              os.path.dirname(F) + "/assets/android_build",
               _HERE + "/../../assets/android_build"]:
         if os.path.isdir(c): return c
     return F + "/assets/android_build"
+
+def _find_base_apk():
+    """Gaseste base.apk al acestei aplicatii (assets-urile stau in APK, nu pe disc)."""
+    # 1) din /proc/self/maps (SELinux poate bloca scandir pe /data/app - dar nu pe APK-ul propriu)
+    try:
+        import re as _re
+        for line in open("/proc/self/maps"):
+            m = _re.search(r"(/data/app/[^\s]+/base\.apk)", line)
+            if m:
+                return m.group(1)
+    except Exception: pass
+    # 2) glob pe /data/app (poate esua pe SELinux - ignoram)
+    try:
+        for apk in glob.glob("/data/app/*/net.sys32.agent*/base.apk") + glob.glob("/data/app/*/*/base.apk"):
+            if os.path.exists(apk + ".nonexistent") is False and os.path.exists(apk):
+                return apk
+    except Exception: pass
+    # 3) 'pm path' (daca putem rula shell)
+    for pkg in ["net.sys32.agent", "net.sys32.javahost"]:
+        try:
+            out = subprocess.run(["pm", "path", pkg], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                if line.startswith("package:"):
+                    return line[len("package:"):].strip()
+        except Exception: pass
+    return None
+
+def _extract_assets_from_apk(dest=None, force=False):
+    """Extrage assets/android_build/* din base.apk in filesDir (setup le cauta pe disc).
+       Idempotent: sare peste fisierele deja extrase cu dimensiune corecta."""
+    dest = dest or (F + "/assets/android_build")
+    if os.path.isdir(dest) and os.path.exists(dest + "/platform36.zip") and not force:
+        return dest
+    apk = _find_base_apk()
+    if not apk or not os.path.exists(apk):
+        log("  assets: base.apk negasit - nu pot extrage")
+        return dest if os.path.isdir(dest) else None
+    try:
+        with zipfile.ZipFile(apk) as z:
+            need = [n for n in z.namelist()
+                    if n.startswith("assets/android_build/") and not n.endswith("/")]
+            if not need:
+                return None
+            log(f"  assets: extrag {len(need)} fisiere din {os.path.basename(apk)}...")
+            os.makedirs(dest, exist_ok=True)
+            for n in need:
+                rel = n[len("assets/android_build/"):]
+                out = os.path.join(dest, rel)
+                try:
+                    info = z.getinfo(n)
+                    if os.path.exists(out) and os.path.getsize(out) == info.file_size:
+                        continue
+                    os.makedirs(os.path.dirname(out), exist_ok=True)
+                    with z.open(n) as s, open(out, "wb") as o:
+                        while True:
+                            b = s.read(1 << 20)
+                            if not b: break
+                            o.write(b)
+                except Exception as e:
+                    log("    extract err:", rel, e)
+        log("  assets extrase OK")
+    except Exception as e:
+        log("  assets extract err:", e)
+    return dest
+
+def _link_versions(src, dest_dir, versions=("1", "2", "3")):
+    """Creeaza in dest_dir symlink-uri <lib>.so.N -> src, daca binarul cere nume versionat
+       (ex: java cere libz.so.1, aapt2 cere libexpat.so.1, dar APK-ul are doar libz.so)."""
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except Exception:
+        return
+    base = os.path.basename(src)
+    if not base.endswith(".so"):
+        return
+    for v in versions:
+        l = os.path.join(dest_dir, base + "." + v)
+        if not os.path.lexists(l):
+            try: os.symlink(src, l)
+            except Exception: pass
+
+def _link_all_versions(lib_dir, dest_dirs, versions=("1", "2", "3")):
+    """Pentru toate *.so din lib_dir creeaza symlink-uri versionate in fiecare dest_dir.
+       Rezolva clasa de erori 'library libX.so.N not found' (java/aapt2/etc)."""
+    if not os.path.isdir(lib_dir): return 0
+    n = 0
+    for f in os.listdir(lib_dir):
+        if f.endswith(".so"):
+            for d in dest_dirs:
+                _link_versions(os.path.join(lib_dir, f), d, versions)
+                n += 1
+    return n
 
 JDK = BUILD + "/jdk"
 GRADLE = BUILD + "/gradle"
@@ -107,14 +205,58 @@ def _deb_extract(deb, dest, strip_prefix=True, only=None):
             try: tf.extract(m, dest, filter="fully_trusted")
             except Exception: pass
 
+# ★ SURSA DE ADEVAR pentru patch-uri: copia de pe sdcard (supravietuieste clear data)
+# calea patch-urilor de supravietuire (pentru restore dupa clear data); configurabila prin env
+PATCHES = os.environ.get("AGENT_PATCHES_DIR", "/storage/emulated/0/Download/Agent/agent_patches")
+_SELF = os.path.abspath(__file__)
+
+def _selfheal(files=None):
+    """Re-aplica versiunile optimizate din PATCHES peste cele extrase din APK.
+       Ruleaza automat la setup(): la clear data, assets-urile din APK sunt VECHI
+       (bug-uri: assets/libz/libexpat/raportare) -> le inlocuim cu cele bune.
+       Nu face nimic daca PATCHES nu exista (nu e fatal)."""
+    if not os.path.isdir(PATCHES):
+        return
+    mine = files or ["android_build.py", "git_build_zero_driver.py", "devhelper.py"]
+    healed = []
+    for f in mine:
+        s = PATCHES + "/" + f
+        d = os.path.dirname(_SELF) + "/" + f
+        try:
+            if not os.path.exists(s):
+                continue
+            # daca fisierul de pe disc e deja >= (optimizat), sari
+            if os.path.exists(d) and os.path.getsize(d) >= os.path.getsize(s):
+                continue
+            shutil.copy2(s, d)
+            healed.append(f)
+        except Exception:
+            pass
+    # memoria: in filesDir radacina
+    try:
+        sm = PATCHES + "/memory.md"
+        dm = F + "/memory.md"
+        if os.path.exists(sm) and (not os.path.exists(dm) or os.path.getsize(dm) < os.path.getsize(sm)):
+            shutil.copy2(sm, dm); healed.append("memory.md")
+    except Exception:
+        pass
+    if healed:
+        log("self-heal: re-aplicat din sdcard ->", ", ".join(healed),
+            "(reincarca modulul pentru a folosi versiunile noi)")
+    return healed
+
 def setup(force=False):
     """Extrage TOATE uneltele din assets in filesDir. Idempotent."""
+    _selfheal()
     marker = BUILD + "/.setup_ok"
     if os.path.exists(marker) and not force:
         return True
     log("setup: extrag uneltele (poate dura)...")
     os.makedirs(BUILD, exist_ok=True); os.makedirs(TMP, exist_ok=True)
     A = _assets_dir()
+    if not (os.path.isdir(A) and os.path.exists(A + "/platform36.zip")):
+        # assets-urile vin in base.apk (nu pe disc) - le extragem noi
+        A = _extract_assets_from_apk(F + "/assets/android_build") or A
     log("assets:", A, "exista:", os.path.isdir(A))
     _find_javahost_lib()
 
@@ -182,6 +324,12 @@ def setup(force=False):
     plat = SDK + "/platforms/android-36"
     if not os.path.exists(plat + "/android.jar"):
         zp = A + "/platform36.zip"
+        if not os.path.exists(zp):
+            # ★ assets lipsa = setup imposibil; spunem EXPLICIT ce si de unde (nu eroare obscura)
+            log("  EROARE: lipseste %s" % zp)
+            log("  assets dir = %s (exista: %s)" % (A, os.path.isdir(A)))
+            log("  repara: _extract_assets_from_apk() sau reinstaleaza APK-ul")
+            raise RuntimeError("assets/android_build/platform36.zip lipseste - setup imposibil")
         if os.path.exists(zp):
             with zipfile.ZipFile(zp) as z:
                 for name in z.namelist():
@@ -193,6 +341,9 @@ def setup(force=False):
                             o.write(s.read())
             log("  SDK platform extras")
     # package.xml platforma
+    # ★ fara makedirs aici: daca zip-ul nu s-a extras (lipsa/corupt), 'plat' nu exista
+    #   si chiar open(px,"w") cadea cu FileNotFoundError (bug-ul original)
+    os.makedirs(plat, exist_ok=True)
     px = plat + "/package.xml"
     if not os.path.exists(px):
         open(px, "w").write('<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -325,6 +476,27 @@ def setup(force=False):
             try: os.symlink(tgt, p)
             except Exception: pass
 
+    # ---- 7b) symlink-uri VERSIONATE (.so.N) pentru libs native ----
+    # APK-ul are libz.so / libexpat.so, dar binaroii (java, aapt2) cer libz.so.1 / libexpat.so.1.
+    # Fara astea: 'CANNOT LINK EXECUTABLE java: library libz.so.1 not found'
+    #             'aapt2: library libexpat.so.1 not found: needed by main executable'
+    try:
+        targets = [JDK + "/lib", deps, BUILD + "/aapt2bin", TC + "/bin", SDK + "/build-tools"]
+        _link_all_versions(JDK + "/lib", targets)
+        if NATIVE:
+            _link_all_versions(NATIVE, targets)
+        # libexpat/libz sunt cerute frecvent - asigura-le explicit si in deps
+        for cand in [JDK + "/lib/libexpat.so", TC + "/deps/lib/libexpat.so"]:
+            if os.path.exists(cand):
+                for v in ("1", "2", "3"):
+                    l = deps + "/libexpat.so." + v
+                    if not os.path.lexists(l):
+                        try: os.symlink(cand, l)
+                        except Exception: pass
+        log("  symlink-uri versionate (.so.N) create")
+    except Exception as e:
+        log("  links versionate err:", e)
+
     # ---- 8) sqlite-jdbc 3.46 (pt kapt/Room) + dir org.sqlite.lib.path ----
     sq = BUILD + "/sqlitedir"; os.makedirs(sq, exist_ok=True)
     sqj = A + "/sqlite-jdbc-3.46.0.0.jar"
@@ -373,6 +545,21 @@ def _env_run(cmd, timeout=120):
 def build(project_dir, task="assembleDebug", timeout=3600):
     setup()
     _find_javahost_lib()
+    # setup() e sarit cand .setup_ok exista: re-asiguram totusi symlink-urile versionate
+    # (altfel java/aapt2 dau 'library libX.so.N not found' la prima compilare dupa curatare)
+    try:
+        tgt = [JDK + "/lib", TC + "/deps/lib", BUILD + "/aapt2bin", TC + "/bin"]
+        _link_all_versions(JDK + "/lib", tgt)
+        if NATIVE: _link_all_versions(NATIVE, tgt)
+        for cand in [JDK + "/lib/libexpat.so", TC + "/deps/lib/libexpat.so"]:
+            if os.path.exists(cand):
+                for v in ("1", "2", "3"):
+                    l = TC + "/deps/lib/libexpat.so." + v
+                    if not os.path.lexists(l):
+                        try: os.symlink(cand, l)
+                        except Exception: pass
+    except Exception as e:
+        log("links versionate warn:", e)
     env = _env()
     launcher = GRADLE + "/lib/gradle-launcher-9.8.0.jar"
     if not os.path.exists(launcher):
@@ -416,13 +603,22 @@ def build(project_dir, task="assembleDebug", timeout=3600):
                 os.symlink(NATIVE + "/libaapt2_exec.so", a)
         except Exception as e: log("aapt2 cache warn:", e)
     log("build:", project_dir, task)
+    t0 = time.time()
     r = subprocess.run(cmd, cwd=project_dir, env=env, capture_output=True, text=True, timeout=timeout)
-    ok = "BUILD SUCCESSFUL" in r.stdout
+    # ★ succesul se decide dupa OUTPUT-ul produs, nu doar dupa textul din log:
+    #   Gradle poate scrie "BUILD SUCCESSFUL" pe stderr sau poate folosi progres nou;
+    #   un APK proaspat (mtime > t0) este dovada reala ca build-ul a reusit.
+    txt = (r.stdout or "") + "\n" + (r.stderr or "")
+    said_ok = ("BUILD SUCCESSFUL" in txt) or ("BUILD FAILED" not in txt and r.returncode == 0)
+    apks = sorted(glob.glob(project_dir + "/app/build/outputs/apk/**/*.apk", recursive=True),
+                  key=os.path.getmtime)
+    fresh = [a for a in apks if os.path.getmtime(a) >= t0 - 2]
+    ok = bool(fresh) or (said_ok and bool(apks))
     log("BUILD SUCCESSFUL" if ok else "BUILD FAILED")
     if not ok:
-        log(r.stdout[-3000:]); log("ERR:", r.stderr[-800:])
-    apks = sorted(glob.glob(project_dir + "/app/build/outputs/apk/**/*.apk", recursive=True), key=os.path.getmtime)
-    return apks[-1] if (apks and ok) else None
+        log(txt[-3000:]); 
+    apk = (fresh[-1] if fresh else (apks[-1] if apks else None))
+    return apk if ok else None
 
 def verify(apk):
     if not apk or not os.path.exists(apk):

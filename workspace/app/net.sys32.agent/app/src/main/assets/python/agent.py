@@ -37,6 +37,29 @@ def _empty(m):
     """Message with no text AND no tool_calls: the model answered empty (a disguised glitch/timeout).
     It does NOT mean 'task finished' - if we miss it, the agent stops in the middle of the work."""
     return not (m.get("content") or "").strip() and not (m.get("tool_calls") or [])
+
+def _tc_args(tc):
+    """Parseaza argumentele unui tool_call FARA sa omoare procesul.
+       Modelul poate trimite JSON trunchiat/invalid (ex. string neinchis cu slash duplicat):
+       inainte, un json.loads(direct) la afisarea pasului crapa agentul cu JSONDecodeError
+       (crash raportat de operator). Aici intoarcem {} si lasam tool-ul sa raporteze eroarea."""
+    try:
+        raw = tc.get("function", {}).get("arguments") or "{}"
+        if isinstance(raw, dict):
+            return raw
+        return json.loads(raw)
+    except Exception:
+        # incercare de recuperare: JSON trunchiat -> incearca sa inchizi acoladele
+        try:
+            raw = tc.get("function", {}).get("arguments") or "{}"
+            for suffix in ("}", '"}', '"]}', '}]}', '"]}}'):
+                try:
+                    return json.loads((raw or "") + suffix)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return {}
 def _compact(s):
     """Compact layout: any run of blank lines collapses to ONE; that single blank line is KEPT only
     before a heading (so sections stay readable), and removed right after a heading and inside the body
@@ -2222,7 +2245,7 @@ def call_tool(c):
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
     endpoint (thinking ON). Both increment the SAME step counter and print the SAME column
     layout, so the operator sees every step the same way. Returns what goes to the model."""
-    fn=c["function"]["name"]; a=json.loads(c["function"]["arguments"] or "{}")
+    fn=c["function"]["name"]; a=_tc_args(c)
     if fn=="look":
         dsc="looks at "+(os.path.basename(a.get("path","")) or "the image")
         o=_spin(vision,a.get("path",""),a.get("prompt",""),phase="tool",desc=dsc,col=HCLR[sum(map(ord,dsc))%len(HCLR)])
@@ -3446,7 +3469,7 @@ if __name__ == "__main__":
             tries=0
             M.append(m);save_ctx();ctx_warn()
             if m.get("tool_calls"):
-                _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
+                _a=_tc_args(m["tool_calls"][0]); _nm=m["tool_calls"][0]["function"]["name"]
                 _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
                 _txt=str(m.get("content") or "").strip() or _fb
                 # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
@@ -3454,7 +3477,7 @@ if __name__ == "__main__":
                     _clean=re.sub(r"^#+\s*","",_txt.strip()).strip()   # drop the leading "#": the comment is a label, not code
                     if _clean: print(OF+"   "+N+C+_clean+N)
                 for c in m["tool_calls"]:
-                    code=json.loads(c["function"]["arguments"] or "{}").get("code","")
+                    code=_tc_args(c).get("code","")
                     # ★ FAZA 4o (crash raportat de operator): orice exceptie aici (ex. tempfile pe
                     # /sdcard cand fd-urile sunt epuizate) OMORA procesul agentului. Acum eroarea
                     # devine un rezultat de tool, agentul o vede si continua.

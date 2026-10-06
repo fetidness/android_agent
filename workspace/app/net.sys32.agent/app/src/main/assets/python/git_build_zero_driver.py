@@ -175,14 +175,24 @@ run([mk, "-C", gitsrc] + MKVARS + ["install"], timeout=1800, label="install-git"
 G = TC + "/git"
 for d in (G + "/bin", G + "/lib"):
     os.makedirs(d, exist_ok=True)
-shutil.copy2(INS + "/bin/git", G + "/bin/git")
+def _safe_copy(s, d):
+    """Copiaza s->d, dar NU daca e acelasi fisier (prefixul COMPILAT = locul durabil)."""
+    try:
+        if os.path.exists(d) and os.path.exists(s) and os.path.samefile(s, d):
+            return False
+        shutil.copy2(s, d)
+        return True
+    except Exception as ex:
+        log("  copy warn (%s -> %s): %r" % (os.path.basename(s), os.path.basename(d), ex))
+        return False
+_safe_copy(INS + "/bin/git", G + "/bin/git")
 os.chmod(G + "/bin/git", 0o755)
 for so in glob.glob(INS + "/lib/*.so*"):
-    shutil.copy2(so, G + "/lib/" + os.path.basename(so))
-for b in ("dbclient", "dropbearconvert"):
+    _safe_copy(so, G + "/lib/" + os.path.basename(so))
+for b in ("dbclient", "dropbearconvert", "dropbearkey"):
     if os.path.exists(INS + "/bin/" + b):
-        shutil.copy2(INS + "/bin/" + b, G + "/bin/" + b)
-        os.chmod(G + "/bin/" + b, 0o755)
+        if _safe_copy(INS + "/bin/" + b, G + "/bin/" + b):
+            os.chmod(G + "/bin/" + b, 0o755)
 le = INS + "/libexec/git-core"
 if os.path.isdir(le):
     dst = G + "/libexec/git-core"
@@ -196,7 +206,7 @@ if os.path.isdir(le):
                     os.remove(dp)
                 os.symlink(t, dp)
             elif not os.path.exists(dp):
-                shutil.copy2(sp, dp)
+                shutil.copy2(sp, dp)  # sp e in prefix, dp in durabil (nu pot fi identice)
                 os.chmod(dp, 0o755)
         except Exception:
             pass
@@ -280,14 +290,83 @@ if not os.path.exists(INS + "/bin/dbclient"):
     for b in ("dbclient", "dropbearconvert"):
         sp = dbsrc + "/" + b
         if os.path.exists(sp):
-            shutil.copy2(sp, INS + "/bin/" + b)
+            _safe_copy(sp, INS + "/bin/" + b)  # src=dbsrc, dst=prefix (nu identice)
             os.chmod(INS + "/bin/" + b, 0o755)
 
-# ★ dropbear se construieste DUPA prima copiere -> recopiem binarele lui acum
+# dropbear se construieste DUPA prima copiere -> recopiem binarele lui acum
+# (_safe_copy: prefixul compilat = locul durabil, deci src si dst pot fi ACELASI fisier)
 for _b in ("dbclient", "dropbearconvert", "dropbearkey"):
     _s2 = INS + "/bin/" + _b
     if os.path.exists(_s2):
-        shutil.copy2(_s2, G + "/bin/" + _b)
+        _safe_copy(_s2, G + "/bin/" + _b)
         os.chmod(G + "/bin/" + _b, 0o755)
+# 6) ★ LAUNCHER-E ELF OBLIGATORII: binaroii/scripturile din filesDir NU se executa direct
+#    (SELinux data_file_type). Solutia dovedita: symlink la libshwrap_exec.so + scriptul <nume>.sh
+#    Fara acest pas: 'git clone https://...' da 'cannot exec remote-https: Permission denied'.
+def _make_launcher(dirpath, name, target_bin, extra_ld=""):
+    """Creeaza <dirpath>/<name> = ELF launcher (shwrap) care ruleaza <target_bin> prin linker64."""
+    nat = NAT or tc._native_dir()
+    if not nat:
+        log("  launcher %s: NATIVE lipsa" % name)
+        return False
+    shwrap = nat + "/libshwrap_exec.so"
+    if not os.path.exists(shwrap):
+        log("  launcher %s: libshwrap_exec.so lipsa" % name)
+        return False
+    p = dirpath + "/" + name
+    try:
+        if os.path.lexists(p): os.remove(p)
+        os.symlink(shwrap, p)
+    except Exception as ex:
+        log("  launcher symlink err %s: %r" % (name, ex)); return False
+    ld = GITROOT_LIB + ":" + GITROOT + "/../deps/lib" + ((":" + extra_ld) if extra_ld else "")
+    sh = p + ".sh"
+    open(sh, "w").write(
+        "#!/system/bin/sh\n"
+        "export LD_LIBRARY_PATH=%s:${LD_LIBRARY_PATH}\n"
+        "exec /apex/com.android.runtime/bin/linker64 %s \"$@\"\n" % (ld, target_bin))
+    os.chmod(sh, 0o755)
+    return True
+
+GITROOT = G
+GITROOT_LIB = G + "/lib"
+le = G + "/libexec/git-core"
+if os.path.isdir(le):
+    # git insusi: git cheama <exec-path>/git pentru subcomenzi -> trebuie launcher, nu binar
+    gbin = le + "/git"
+    gorig = le + "/git.tmpbin"
+    if os.path.isfile(gbin) and not os.path.islink(gbin):
+        try: shutil.move(gbin, gorig)
+        except Exception: pass
+    if os.path.exists(gorig):
+        _make_launcher(le, "git", gorig)
+    # helper-ele de retea: la fel
+    hbin = le + "/git-remote-http.bin"
+    hreal = le + "/git-remote-http"
+    if os.path.exists(hreal) and not os.path.islink(hreal) and not os.path.exists(hbin):
+        try: shutil.move(hreal, hbin)
+        except Exception: pass
+    if os.path.exists(hbin):
+        for _hn in ("git-remote-http", "git-remote-https", "git-remote-ftp", "git-remote-ftps",
+                    "git-http-fetch", "git-http-push"):
+            _make_launcher(le, _hn, hbin)
+    # launcher 'ssh' (dbclient) in files/tmp: git il foloseste prin GIT_SSH_COMMAND
+    _nat2 = NAT or tc._native_dir()
+    if _nat2 and os.path.exists(_nat2 + "/libshwrap_exec.so"):
+        _ssh = F + "/tmp/ssh"
+        try:
+            if os.path.lexists(_ssh): os.remove(_ssh)
+            os.symlink(_nat2 + "/libshwrap_exec.so", _ssh)
+            open(_ssh + ".sh", "w").write(
+                "#!/system/bin/sh\n"
+                "export LD_LIBRARY_PATH=%s/lib:%s/../deps/lib:${LD_LIBRARY_PATH}\n"
+                "exec /apex/com.android.runtime/bin/linker64 %s/bin/dbclient \"$@\"\n" % (G, G, G))
+            os.chmod(_ssh + ".sh", 0o755)
+            log("  launcher ssh (dbclient) creat")
+        except Exception as _e:
+            log("  launcher ssh err: %r" % _e)
+    log("launcher-e ELF create in libexec (git + helper-e retea)")
+
 log("DONE: git in %s (size %d)" % (G + "/bin/git", os.path.getsize(G + "/bin/git")))
-log("VERIF: " + str(run([G + "/bin/git", "--version"], label="git-version")[1][:60]))
+# binarul din filesDir NU se executa direct (SELinux) - il rulam prin linker64
+log("VERIF: " + str(run(["/apex/com.android.runtime/bin/linker64", G + "/bin/git", "--version"], label="git-version")[1][:60]))
