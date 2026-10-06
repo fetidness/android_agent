@@ -1155,24 +1155,6 @@ cd /home/gab/Desktop/android_agent/workspace/app
   ```
 - libdir.txt se schimba la fiecare reinstalare → reciteste-l
 
-### UNDE E CODUL SURSA (pe laptop, pentru dezvoltare)
-```
-/.../android_agent/                            (clona git: git@github.com:fetidness/android_agent.git)
-  agent-linux.py                                 agentul LINUX (varianta curenta, curatata)
-  readme.md                                      ACEST document
-  BUILD_ANDROID_ON_DEVICE.md                     ghidul de build Android pe device
-  CHANGELOG.md                                   istoricul de dezvoltare
-  dist/                                          ghiduri de distributie (RESTORE.md, restore.sh)
-  tools/                                         manifest backup + scripturi instalare/probe/wipe
-  workspace/app/net.sys32.agent/
-    app/src/main/assets/python/agent.py          agentul VIU (ruleaza pe device) - sursa reala
-    app/src/main/assets/python/adb_client.py     client ADB (super-puteri)
-    app/src/main/assets/python/adb_setup.py      auto-setup
-    app/src/main/assets/python/android_bridge.py bridge Python-side
-    app/src/main/java/net/sys32/agent/*.kt       Kotlin (MainActivity, Bridge, Accessibility, Reflection)
-  (workspace/build/Python-3.14.7/                sursele Python - STERSE, in .gitignore; vezi OP.6)
-```
-
 > **Schema de nume (curatata):** a ramas UN SINGUR fisier de agent in radacina,
 > `agent-linux.py` — agentul pentru Linux/desktop. Variantele istorice
 > (`agent-original-android.py`, `agent-original-linux.py`, `agent-android-v2.py`,
