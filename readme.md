@@ -113,22 +113,23 @@ device** — fiecare verigă dovedită. Rămâne o singură incompatibilitate (a
 
 **Daca esti un agent proaspat resetat (memorie goala) si citesti asta, iata esenta:**
 
-### Starea repo-ului (4 oct 2026, `.assets_v253`) — ARHITECTURA "ZERO TERMUX"
+### Starea repo-ului (6 oct 2026, `.assets_v257`) — ARHITECTURA "ZERO TERMUX"
 
-> **Nota (3 oct 2026):** valorile de mai jos sunt RE-MASURATE pe clona curenta,
-> nu preluate din documentatie veche. Daca modifici o cifra aici, masoar-o intai
-> (`wc -c`, `ls`, `grep -n assets_v`), pentru ca tabelul acesta a fost deja o data
-> in urma cu codul (spunea v197 / 187 915 B cand realul era v252 / 233 337 B).
+> **Nota (6 oct 2026):** valorile de mai jos sunt RE-MASURATE pe clona curenta
+> (commit `35357fa`), nu preluate din documentatie veche. Daca modifici o cifra aici,
+> masoar-o intai (`wc -c`, `du -sh`, `grep -n assets_v`) — tabelul a rămas in urma o
+> data (spunea v197 cand realul era v252).
 
 | Ce | Valoare reala |
 |----|---------------|
-| Marker assets activ | **`.assets_v253`** (in `MainActivity.kt`, singura sursa de adevar) |
-| APK debug | **~282 MB** (toolchain nativ COMPLET + binare executabile) |
-| `agent.py` (assets) | **233 337 B** (3549 linii) |
+| Marker assets activ | **`.assets_v257`** (in `MainActivity.kt`, singura sursa de adevar) |
+| APK debug (instalat) | **~983 MB** (toolchain nativ COMPLET + 146 libs native + assets/python) |
+| `agent.py` (assets) | **236 238 B** (3598 linii) |
 | `toolchain.py` (assets) | **153 965 B** |
+| `android_build.py` (assets) | **31 580 B** (compilare APK pe device: tool `build_apk`) |
 | Module Kotlin | **15** |
 | Assets Python | agent.py + toolchain.py + adb_client.py + adb_setup.py + android_bridge.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri (pysitepkg, stdlib_extra) |
-| Toolchain nativ | `assets/toolchain/` (~343 MB) + binare `lib*_exec.so` in `jniLibs/` — **NU sunt in git** (vezi `.gitignore`), se regenereaza |
+| Toolchain nativ | `assets/toolchain/` (**1007 MB**, 6077 fisiere) + 146 libs native `lib*_exec.so` in `jniLibs/` (**405 MB**) — **NU sunt in git** (vezi `.gitignore`), se copiaza pe device |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
 | Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |
@@ -226,24 +227,26 @@ Esti un **agent autonom Android** (`net.sys32.agent`) care ruleaza PE telefon
 - **Kotlin** pentru UI + bridge + accessibility
 - **DeepSeek API** pentru creier
 
-### Ce poti face (11 tool-uri)
+### Ce poti face (12 tool-uri)
 
-> Ultima revizuire a tabelului: 25 sept 2026, commit `d8cc3c1`. Tool-urile de mai jos sunt
-> EXACT cele definite in `agent.py` (verificate in sursa, nu presupuse).
+> Ultima revizuire: 6 oct 2026. Tool-urile de mai jos sunt EXACT cele definite in `agent.py`
+> (verificate in sursa cu `grep`, nu presupuse).
 
 | Tool | Ce face | Uid |
 |------|---------|-----|
-| `android` | bridge Kotlin: senzori, camera, reflection SDK, sub-toolui `ui` | 10362 (app) |
+| `python` | stdlib + pachete pure-Python (**motorul implicit**) | 10362 (app) |
+| `bash` | shell in sandbox-ul app (doar streaming de text / fisiere multe) | 10362 |
+| `smart` | auto-router: alege python vs bash singur | 10362 |
+| `android` | bridge Kotlin: senzori, camera, batterie, reflection SDK, sub-toolui `ui` | 10362 |
 | `ui` | VEDE + CONTROLEAZA alte app-uri (read/find/click/settext/tap) | 10362 |
 | **`adbsh`** | **SUPER-PUTERI: shell ca uid=2000 (pm grant, dumpsys, settings, input, screencap)** | **2000 (shell!)** |
-| `python` | stdlib + pachete pure-Python | 10362 |
-| `bash` | shell in sandbox-ul app | 10362 |
-| `smart` | auto-router python/bash | 10362 |
-| `read` | **citire cu BUGET GARANTAT** (path/offset/limit/budget/grep) — nu se taie niciodata | 10362 |
+| `read` | **citire cu BUGET GARANTAT** (path/offset/limit) — nu se taie niciodata | 10362 |
 | **`multi`** | **BATCH: 2-6 operatiuni independente intr-UN apel** (economie ~60-97% tokeni) | 10362 |
 | `look` | analiza imagini (vision) | — |
 | `bg` | **gestionar de procese in fundal** (start/status/log/kill/list/clean) — OBLIGATORIU pentru orice comanda >30s | 10362 |
-| `toolchain` | compilare **C/C++/Fortran** nativa pe telefon (clang-21, lld, ninja, flang) | 10362 |
+| `toolchain` | compilare **C/C++/Fortran/Rust** nativa + pip_install (clang-21, lld, ninja, flang, cargo) | 10362 |
+| **`build_apk`** | **compileaza APK pe device, offline** (setup/build/verify; JDK+Gradle+SDK in APK) | 10362 |
+| `help` | ghid detaliat pe topic (reflection/objects/privileged) — se cere la nevoie | 10362 |
 
 ### REGULA DE AUR PENTRU ALEGEREA TOOL-URILOR
 1. **Ecran** (citire/tap/text) → `android ui` (nativ, instant, 0 auth)
@@ -472,22 +475,21 @@ run-as net.sys32.agent sh -c "cd /data/data/net.sys32.agent/files/python && \
 | "Allow USB debugging" | dialog de sistem Android | pe telefon, o data | la prima conectare / cheie noua |
 | Accessibility ON | Android cere activare explicita din Settings | Settings > Accessibility > Agent | dupa fiecare reinstalare APK |
 
-**FARA calculator:** agentul merge cu `android`, `ui`, `python`, `bash`,
-`smart`, `read`, `look` (senzori, camera, GPS, ecran, fisiere, HTTP).
+**FARA calculator — AUTONOM COMPLET:** agentul poate, doar cu ce e in APK:
+- `android`, `ui` (senzori, camera, GPS, ecran, control alte app-uri)
+- `python`, `bash`, `smart`, `read`, `look` (fisiere, HTTP, imagini)
+- **`toolchain`**: compilare nativa C/C++/Fortran/Rust + `pip_install` cu extensii C
+  (clang-21, lld, ninja, cmake, cargo, maturin, perl) — verificat cu `selftest` (lipsa: [])
+- **`build_apk`**: compileaza APK-uri Android pe device, offline (JDK 21 + Gradle 9.8 +
+  AGP + SDK 36 in `files/android_build/`) — dovedit E2E (HelloWorld construit, semnat,
+  instalat, rulat)
 
-**CU calculator** (+ 30s o data): se deblocheaza `adbsh` (uid=2000):
-`pm grant`, `settings put`, `dumpsys`, `logcat`, `input`, `screencap`,
-`run-as`, `getprop/setprop` — puteri de dezvoltator, fara root.
-
----
-
-oid (net.sys32.agent)
-
----
-
-
+**CU calculator** (+ 30s o data): se deblocheaza `adbsh` (uid=2000), pentru ce app-ul NU
+poate face singur: `pm grant`, `settings put`, `dumpsys`, `logcat`, `input` fara
+accessibility, `run-as`, `getprop/setprop` — puteri de dezvoltator, fara root.
 
 ---
+
 
 ### FLOW ZILNIC DE OPERARE (cand telefonul a fost repornit)
 
@@ -599,7 +601,7 @@ ls -lh $APK            # -> 273M  app-debug.apk (toolchain complet inclus)
 #      platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36'
 #      minSdkVersion:'26' / targetSdkVersion:'36'
 #      uses-permission: name='android.permission.INTERNET' ...
-unzip -l $APK | grep -c 'assets/python/'              # -> ~940 fisiere Python ambalate
+unzip -l $APK | grep -c 'assets/python/'              # numara fisierele Python ambalate (~1400)
 unzip -l $APK | grep 'assets/python/agent.py'         # -> 181740  assets/python/agent.py
 unzip -l $APK | grep 'lib/arm64-v8a/'
 #   -> 4537664  lib/arm64-v8a/libcrypto_python.so
@@ -767,7 +769,7 @@ $ADB shell pm list packages | grep sys32                       # package present
 
 `MainActivity.kt` in `extractAssets()`:
 ```kotlin
-val stamp = File(filesDir, ".assets_v253")   // valoarea CURENTA (verific-o cu grep, nu o presupune)
+val stamp = File(filesDir, ".assets_v257")   // valoarea CURENTA (verific-o cu grep, nu o presupune)
 if (stamp.exists() && dest.exists()) return   // ← iese IMEDIAT daca markerul exista
 ```
 Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi markerul.
@@ -776,14 +778,14 @@ Deci: **modificarile din `assets/` NU ajung pe device** daca nu incrementezi mar
 ```bash
 # 1. gaseste markerul curent
 grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt
-#    -> 693:  val stamp = File(filesDir, ".assets_v253")
+#    -> val stamp = File(filesDir, ".assets_v257")
 
-# 2. incrementeaza-l (v252 -> v253)
-sed -i 's/\.assets_v253/.assets_v254/' app/src/main/java/net/sys32/agent/MainActivity.kt
+# 2. incrementeaza-l (ex. v257 -> v258)
+sed -i 's/\.assets_v257/\.assets_v258/' app/src/main/java/net/sys32/agent/MainActivity.kt
 
 # 3. rebuild + install, apoi verifica PE DEVICE
 $ADB shell run-as net.sys32.agent ls -la /data/data/net.sys32.agent/files/ | grep assets_v
-#    -> .assets_v254  (trebuie sa fie NOU)
+#    -> .assets_v258  (trebuie sa fie NOU)
 ```
 
 Ce face re-extragerea (util cand ceva „nu se actualizeaza"):
@@ -888,7 +890,7 @@ $ADB shell cat /sdcard/Download/Agent/memory.md        # lectiile invatate
 ```bash
 APK=/home/gab/Desktop/android_agent/workspace/app/net.sys32.agent/app/build/outputs/apk/debug/app-debug.apk
 /home/gab/android/build-tools/35.0.1/aapt2 dump badging $APK 2>&1 | head -20   # ★ 2>&1: scrie pe stderr!
-unzip -l $APK | grep 'assets/python/' | wc -l        # ~940 fisiere Python (masurat)
+unzip -l $APK | grep 'assets/python/' | wc -l        # numara fisierele Python (masurat)
 unzip -l $APK | grep 'assets/python/agent.py'        # 181740 bytes (masurat)
 unzip -l $APK | grep 'lib/arm64-v8a/'                # 16 .so-uri (libpyexec 4400, libpython3.14 5828792, libflang 137M)
 # ★ verificare COMPLETA a componentelor de compilare (28 sept):
@@ -984,7 +986,7 @@ Rezultat in `cross-build/<abi>-linux-android/prefix/`:
 ### OP.7 — CHECKLIST PRE-COMMIT (ruleaza inainte sa zici „gata")
 
 - [ ] `cd workspace/app && ./build_app.sh` → BUILD SUCCESSFUL + `Success`
-- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v253`**; se citeste cu `grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt`) **si** verificat pe device
+- [ ] daca am atins `assets/` → `.assets_vNN` incrementat (acum **`.assets_v257`**; se citeste cu `grep -n 'assets_v' app/src/main/java/net/sys32/agent/MainActivity.kt`) **si** verificat pe device
 - [ ] accessibility reactivat **si** confirmat (`ui status` → `enabled:true`)
 - [ ] `$ADB devices -l` arata device-ul
 - [ ] `$ADB shell dumpsys package net.sys32.agent | grep lastUpdateTime` = timpul de acum
@@ -1025,13 +1027,12 @@ bash tools/backup_device_tools.sh
 
 Rezultat in `build/device-backup/` (gitignored) + un tar deja extras:
 
-| Arhiva | Sursa pe device | MB | Continut |
-|---|---|---|---|
-| `device-tools-backup/apkbuild-tools.tar` | `/data/local/tmp/apkbuild` | 806 | jdk, kotlin, d8, aapt2, apksigner, gradle, sdk, javahost, tlib, classpath, aar_res, android.jar, build_apk.sh, jrun.sh, release.keystore |
-| `device-backup/app-toolchain.tar` | `files/toolchain` | 1856 | toolchain nativ de runtime (clang/cmake/ninja, deps, rust, sysroot, perl) |
-| `device-backup/app-state.tar` | `files/` | 300 | codul Python VIU (`python/agent.py`), `pyhome/`, `site_packages_keep/`, `home/`, `memory.md` — FARA secrete |
-| `device-backup/hdbuild-gradle.tar` | `files/hdbuild` | 2625 | stack Gradle complet (jdk/gradle/sdk cu platforma android-36 + platform-tools, `gradlehome` = cache OFFLINE, tlib, hdvoice_proj, logurile de build) |
-| `device-backup/sdcard-repo.tar` | `/sdcard/.../workspace/android_agent` | 69 | clone-ul git de pe telefon |
+| Arhiva | Sursa pe device | Continut |
+|---|---|---|
+| `app-toolchain.tar` | `files/toolchain` | toolchain nativ de runtime (clang/cmake/ninja, deps, rust, sysroot) |
+| `app-state.tar` | `files/` | codul Python VIU (`python/agent.py`), `pyhome/`, `site_packages_keep/`, `home/` (FARA secrete) |
+| `hdbuild-gradle.tar` | `files/hdbuild` | stack Gradle complet (jdk/gradle/sdk cu platforma android-36 + platform-tools) |
+| `sdcard-repo.tar` | `/sdcard/.../workspace/android_agent` | clone-ul git de pe telefon |
 
 Excluse intentionat: proiectele si iesirile (`*.apk`, `work*/`, `agent2/`, `tmp/`),
 `gradlehome`-ul din apkbuild (cache duplicat), si **secretele** (`files/home/.ssh`, `key.txt`).
@@ -1177,16 +1178,15 @@ ent Android (net.sys32.agent)
 
 ## CUPRINS
 
-> ⚠️ **DOUA APLICATII, O SINGURA SURSA DE COD:** `net.sys32.agent` (sursa canonica,
-> `workspace/app/net.sys32.agent/`) — sursa unica.
-> NU se editeaza direct). Vezi prima secțiune a acestui fisier.
+> ⚠️ **O SINGURA APLICATIE, O SINGURA SURSA DE COD:** `net.sys32.agent` (sursa canonica,
+> `workspace/app/net.sys32.agent/`). NU se editeaza altundeva. Vezi prima secțiune a acestui fisier.
 >
 > **OPERATIUNI (build/install/debug/verificare): vezi sectiunea „🛠 OPERATIUNI"
-> chiar inainte de „REZOLVAREA PROBLEMELOR FRECVENTE" — OP.1 pina la OP.7.**
+> chiar inainte de „REZOLVAREA PROBLEMELOR FRECVENTE" — OP.1 pina la OP.10.**
 
 1. Prezentare generala
 2. Arhitectura
-3. Componentele aplicatiei (3.1-3.6 + cele 15 module Kotlin si 9 fisiere Python)
+3. Componentele aplicatiei (3.1-3.11 + cele 15 module Kotlin si fisierele Python din assets)
 4. Cum functioneaza Python pe Android
 5. Pasii dezvoltarii de la 0 (etape 1-38, ordonate cronologic)
 6. Probleme intalnite si solutii
@@ -1667,55 +1667,70 @@ TEST COMPLET CURAT (memoria + contextul STERSE, WhatsApp pe ecranul principal):
 
     app/net.sys32.agent/
     |-- app/src/main/
-    |   |-- AndroidManifest.xml          (105 permisiuni)
-    |   |-- java/net/sys32/agent/
-    |   |   |-- MainActivity.kt          (UI, pornire Python, input)
-    |   |   |-- AndroidBridge.kt         (server TCP, tool-uri native)
+    |   |-- AndroidManifest.xml          (permisiuni extinse)
+    |   |-- java/net/sys32/agent/        (15 module Kotlin)
+    |   |   |-- MainActivity.kt          (UI terminal, pornire Python, auto-scroll, input)
+    |   |   |-- AndroidBridge.kt         (server TCP, tool-uri native pentru Python)
     |   |   |-- Reflection.kt            (reflection SDK + primitive: proxy, ref, await, subclass)
     |   |   |-- Primitives.kt            (proxy de interfete, subclasare DexMaker, evenimente)
+    |   |   |-- AgentService.kt          (foreground service - agentul traieste la minimizare)
+    |   |   |-- AgentAccessibilityService.kt (vedere + control UI in alte aplicatii)
+    |   |   |-- AgentNotificationListener.kt (citire/anulare notificari)
+    |   |   |-- AgentIme.kt              (tastatura: citire camp + injectare text)
+    |   |   |-- AgentVpn.kt              (VPN service)
+    |   |   |-- ScreenCaptureService.kt  (captura ecran prin MediaProjection)
+    |   |   |-- AgentDeviceAdmin.kt      (device admin)
+    |   |   |-- BootReceiver.kt          (pornire la boot)
+    |   |   |-- CameraActivity.kt        (captura foto)
     |   |   |-- Ansi.kt                  (SGR -> Spannable)
-    |   |   |-- Components.kt            (componente UI refolosibile)
-    |   |   `-- CameraActivity.kt        (captura foto)
-    |   |-- assets/python/
-    |   |   |-- agent.py                 (creierul)
-    |   |   |-- android_bridge.py        (client bridge)
-    |   |   |-- memory.md                (schelet de memorie initiala)
-    |   |   |-- libdynload/              (module .so pe arhitecturi)
-    |   |   `-- Lib/                     (biblioteca standard Python)
-    |   |       |-- zipfile/_path.py     (livrat ca fisier, folderul _path/ e ignorat de AAPT)
-    |   |       `-- site-packages/       (13 pachete pure: requests, bs4, yaml, toml, ...)
-    |   |-- res/mipmap-*/                (iconite toate densitatile)
-    |   `-- lib/{arm64-v8a,x86_64}/      (libpython, libssl, libcrypto)
+    |   |   `-- Components.kt            (componente UI refolosibile)
+    |   |-- assets/
+    |   |   |-- fonts/                   (DejaVuSansMono pt terminal)
+    |   |   `-- python/                  (codul Python + stdlib)
+    |   |       |-- agent.py             (creierul / bucla principala)
+    |   |       |-- android_build.py     (tool build_apk: compilare APK pe device)
+    |   |       |-- toolchain.py         (toolchain nativ: clang/rust/cmake/pip)
+    |   |       |-- android_bridge.py    (client bridge)
+    |   |       |-- adb_client.py        (shell uid=2000 direct)
+    |   |       |-- memory.md            (schelet de memorie initiala)
+    |   |       |-- libdynload/          (module .so pe arhitecturi)
+    |   |       `-- Lib/                 (biblioteca standard Python)
+    |   |           |-- zipfile/_path.py (livrat ca fisier, folderul _path/ e ignorat de AAPT)
+    |   |           `-- site-packages/   (37 pachete pure: requests, bs4, yaml, toml, ...)
+    |   `-- res/mipmap-*/                (iconite toate densitatile)
     `-- build.gradle.kts
+    (jniLibs/arm64-v8a/ = 146 libs native - NU sunt in git, se copiaza pe device)
 
 ---
 
 ## 8. STRUCTURA PE DISPOZITIV (IN RULARE)
 
-    /data/data/net.sys32.agent/files/    <-- HOME_DIR (stocare PRIVATA, din 24 sept)
+    /data/data/net.sys32.agent/files/    <-- HOME_DIR (stocare PRIVATA)
     |-- memory.md                        (memoria pe termen lung - lectiile)
     |-- context.json                     (istoricul conversatiei)
-    |-- .learn_checkpoints.json          (checkpointuri /learn - ce s-a invatat deja)
     |-- bg_jobs.json                     (registrul job-urilor de fundal)
     |-- logs/                            (<job_id>.log per job + capturi streaming)
-    |-- workspace/                       (fallback daca sdcard-ul nu e scriibil)
+    |-- tmp/                             (fisiere temporare + build dir recomandat)
     |-- adbkey / adbkey.pub              (cheia RSA auto-generata)
     |-- tls.crt / tls.key                (certificat X.509)
     |-- libs/                            (libcrypto, libssl, pairing_* din /apex)
     |-- home/  pyhome/                   (HOME + PYTHONHOME)
-    |-- python/                          (Python extras din assets + Lib/ + libdynload/)
-    |-- bridge.port                      (portul bridge-ului Kotlin)
+    |-- python/                          (Python extras din assets + Lib/ + libdynload/ + key.txt)
+    |-- toolchain/                       (toolchain nativ extras: clang, rust, cmake, deps, sysroot)
+    |-- cargo/                           (config cargo, pentru build-uri Rust)
+    |-- wheels/                          (cache wheel-uri pip)
+    |-- pip.conf  profileInstalled       (config pip + marker profil)
+    |-- bridge.port  agent.pid           (portul bridge-ului Kotlin + PID-ul procesului Python)
     |-- .setup_done                      (setup o singura data)
-    |-- .assets_vNN                      (marker versiune assets)
-    `-- key.txt                          (cheia API DeepSeek, optional)
+    `-- .assets_vNN                      (marker versiune assets; acum .assets_v257)
 
     /sdcard/Download/Agent/              <-- VIZIBIL in file manager (doar ce e durabil)
     |-- adbkey, adbkey.pub               (* CHEIA PERSISTENTA - supravietuieste reinstalarilor)
-    |-- workspace/                       (tot ce genereaza agentul)
-    |   |-- .agent_folder.png            (marker pentru indexare MediaScanner)
-    |   |-- logs/                        (output-uri complete de tool)
-    |   `-- archive/                     (snapshot-uri context)
-    `-- .old_sdcard_home/                (reziduu: vechiul HOME mutat in privat)
+    |-- agent_patches/                   (fix-uri care supravietuiesc clear data)
+    |-- ssh_key/                         (cheia publica pentru GitHub)
+    `-- workspace/                       (tot ce genereaza agentul)
+        |-- .agent_folder.png            (marker pentru indexare MediaScanner)
+        `-- android_agent/               (clona git a repo-ului)
 
 Nota: din 24 septembrie memory.md + context.json traiesc in STOCAREA PRIVATA
 (fara FUSE/MediaProvider). Doar workspace-ul + cheia ADB raman pe sdcard, ca sa
