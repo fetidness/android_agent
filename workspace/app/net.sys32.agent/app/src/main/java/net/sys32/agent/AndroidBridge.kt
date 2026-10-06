@@ -157,6 +157,7 @@ class AndroidBridge(
             "nfc" -> nfcInfo()
             "usb" -> usbInfo()
             "appinfo" -> appInfo(p)
+            "install" -> installApk(action, p)
             "eval" -> refl.execute(p.optJSONObject("expr") ?: JSONObject())
             "services" -> refl.execute(JSONObject().put("op", "services"))
             "info" -> refl.execute(JSONObject().put("op", "info").put("target", p.optString("target")).put("filter", p.optString("filter")))
@@ -1087,5 +1088,37 @@ class AndroidBridge(
         val i = Intent(Intent.ACTION_VIEW).setDataAndType(u, mime).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try { ctx.startActivity(i); ok(JSONObject().put("opened", path)) }
         catch (e: Exception) { err("open failed: ${e.message}") }
+    }
+
+    // ---------------- instalare APK FARA adb (instalator de sistem) ----------------
+    /**
+     * ★ DE CE EXISTA: canalul adb al aplicatiei (uid=2000) poate fi blocat de adbd - pe acest
+     * device adbd a respins chiar si o semnatura VALIDA si nu a mai afisat dialogul de aprobare,
+     * deci `pm install` prin shell nu era disponibil deloc. Aici instalarea trece prin
+     * instalatorul DE SISTEM: aplicatia ii da un content:// (FileProvider) si operatorul
+     * confirma cu un tap pe 'Install'. Nu depinde de adb, shell sau root.
+     * params: path = calea APK-ului (ex. /storage/emulated/0/Download/Agent/workspace/x.apk)
+     */
+    private fun installApk(action: String, p: JSONObject): JSONObject {
+        val path = p.optString("path", "")
+        if (path.isBlank()) return err("lipseste params.path (calea APK-ului)")
+        val f = File(path)
+        if (!f.exists()) return err("APK inexistent: $path")
+        if (action == "status") {
+            return ok(JSONObject().put("path", path).put("size", f.length()))
+        }
+        return try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                ctx, ctx.packageName + ".fileprovider", f)
+            val i = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(i)
+            ok(JSONObject().put("opened", path).put("uri", uri.toString())
+                .put("nota", "confirma instalarea pe ecran: un tap pe Install"))
+        } catch (e: Exception) {
+            err("install intent failed: ${e.message}")
+        }
     }
 }

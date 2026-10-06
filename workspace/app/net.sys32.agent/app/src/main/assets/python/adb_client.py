@@ -41,23 +41,24 @@ def _ensure_libs():
 _ensure_libs()
 if not os.path.exists(LIBCRYPT): LIBCRYPT = "/system/lib64/libcrypto.so"
 
-def _rsa_sign_token(token):
-    """Semneaza token-ul adbd cu cheia privata (RSA PKCS#1 v1.5 SHA1) - EXACT ce
-    asteapta protocolul ADB. Fara asta, un adbd care are DEJA cheia in user_keys
-    nu raspunde la RSAPUBLICKEY (cerinta: dovada ca ai cheia privata).
-
-    Se foloseste libcrypto (OpenSSL) prin ctypes. Returneaza semnatura bytes.
-    """
+def _rsa_key_parts(priv=True):
+    """(n, e) - intregi - din adbkey (PEM) prin libcrypto; daca priv=True si (n, d).
+       Nu depinde de RSA_sign/EVP (BoringSSL poate refuza SHA-1)."""
     c = ctypes.CDLL(LIBCRYPT, mode=ctypes.RTLD_GLOBAL)
     def S(n, a, r):
         f = getattr(c, n); f.argtypes = a; f.restype = r
     S("BIO_new_file", [ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
     S("BIO_free", [ctypes.c_void_p], ctypes.c_int)
-    S("PEM_read_bio_PrivateKey", [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p], ctypes.c_void_p)
+    S("PEM_read_bio_PrivateKey", [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p],
+      ctypes.c_void_p)
+    # ★ OBLIGATORIU: PEM_read_bio_PrivateKey intoarce un EVP_PKEY*, iar RSA_get0_key cere un RSA*.
+    #   Fara EVP_PKEY_get0_RSA, BoringSSL trateaza structura EVP_PKEY ca RSA si citeste pointeri
+    #   din ea -> SIGSEGV (dovedit pe device: "Fatal signal 11 ... fault addr 0x8648...").
     S("EVP_PKEY_get0_RSA", [ctypes.c_void_p], ctypes.c_void_p)
-    S("RSA_sign", [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint, ctypes.c_char_p,
-                   ctypes.POINTER(ctypes.c_uint), ctypes.c_void_p], ctypes.c_int)
-    S("EVP_sha1", [], ctypes.c_void_p)
+    S("RSA_get0_key", [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+                       ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)], None)
+    S("BN_num_bits", [ctypes.c_void_p], ctypes.c_int)
+    S("BN_bn2bin", [ctypes.c_void_p, ctypes.c_char_p], ctypes.c_int)
     b = c.BIO_new_file(KEY.encode(), b"r")
     if not b:
         raise RuntimeError("nu pot deschide adbkey")
@@ -70,12 +71,93 @@ def _rsa_sign_token(token):
     rsa = c.EVP_PKEY_get0_RSA(pkey)
     if not rsa:
         raise RuntimeError("nu e cheie RSA")
-    # ★ EXACT CA IN AOSP (client/auth.cpp: adb_auth_sign):
-    #     RSA_sign(NID_sha1, token, token_size, sig, &len, key)
-    # Token-ul se trimite BRUT (RSA_sign face el SHA1+PKCS#1 v1.5 intern).
-    # NID_sha1 = 64 in OpenSSL.
+    nb_ = ctypes.c_void_p(); eb_ = ctypes.c_void_p(); db_ = ctypes.c_void_p()
+    c.RSA_get0_key(rsa, ctypes.byref(nb_), ctypes.byref(eb_), ctypes.byref(db_))
+    if not nb_:
+        raise RuntimeError("nu e cheie RSA")
+    def _int(bn):
+        size = (c.BN_num_bits(bn) + 7) // 8
+        buf = ctypes.create_string_buffer(size)
+        c.BN_bn2bin(bn, buf)
+        return int.from_bytes(buf.raw[:size], "big")
+    n = _int(nb_); e = _int(eb_)
+    if priv:
+        return n, e, _int(db_)
+    return n, e
+
+# Prefixul DER al DigestInfo pentru SHA-1 (RFC 8017, PKCS#1 v1.5).
+_SHA1_DIGESTINFO = bytes.fromhex("3021300906052b0e03021a05000414")
+
+def _rsa_sign_token_manual(token):
+    """Semnatura RSA PKCS#1 v1.5 SHA-1 calculata MANUAL (EM^d mod n cu BN_mod_exp).
+       ★ DE CE: `RSA_sign(NID_sha1, ...)` prin libcrypto de SISTEM (BoringSSL) poate fi
+       refuzat/limitat pentru SHA-1 -> adbd primea o semnatura invalida, raspundea iar cu
+       AUTH_TOKEN si afisa dialogul 'Allow USB debugging' la INFINIT (fiecare conexiune)."""
+    import hashlib
+    n, e, d = _rsa_key_parts(priv=True)
+    k = (n.bit_length() + 7) // 8
+    h = hashlib.sha1(token).digest()
+    di = _SHA1_DIGESTINFO + h
+    if k < len(di) + 11:
+        raise RuntimeError("cheie prea mica pentru PKCS#1 v1.5")
+    em = b"\x00\x01" + b"\xff" * (k - 3 - len(di)) + b"\x00" + di
+    return pow(int.from_bytes(em, "big"), d, n).to_bytes(k, "big")
+
+def _rsa_verify_token(token, sig):
+    """Verifica semnatura cu cheia publica (sig^e mod n == EM). Fara asta nu trimitem nimic."""
+    import hashlib
+    n, e = _rsa_key_parts(priv=False)
+    k = (n.bit_length() + 7) // 8
+    if not sig or len(sig) != k:
+        return False
+    em = pow(int.from_bytes(sig, "big"), e, n).to_bytes(k, "big")
+    di = _SHA1_DIGESTINFO + hashlib.sha1(token).digest()
+    return em.endswith(di) and em[:2] == b"\x00\x01" and em[k - len(di) - 1] == 0
+
+def _rsa_sign_token(token):
+    """Semneaza token-ul adbd (RSA PKCS#1 v1.5 SHA1) - EXACT ce asteapta protocolul ADB.
+
+    ★ NU folosim `RSA_sign` din libcrypto de SISTEM (BoringSSL): pe acest device
+    (SM-A366B / Android 16) apelul cu SHA-1 fie esueaza (rc!=1), fie TERMINA PROCESUL
+    (abort in BoringSSL - "proces terminat" + restart de watchdog, dovedit pe device).
+    Efectul vechi: aplicatia nu putea NICIODATA sa semneze -> trimitea doar cheia publica ->
+    adbd afisa dialogul 'Allow USB debugging' la fiecare conexiune, la infinit, iar adbsh/
+    install nu functionau niciodata.
+
+    Implementarea manuala (PKCS#1 v1.5 + exponent modulo n, pur Python + BN pentru n/d) a fost
+    verificata cu `openssl dgst -sha1 -verify` -> "Verified OK", si se auto-verifica inainte de
+    a fi trimisa.
+    """
+    sig = _rsa_sign_token_manual(token)
+    if not _rsa_verify_token(token, sig):
+        raise RuntimeError("semnatura proprie nu se verifica - nu o trimit")
+    return sig
+
+
+def _rsa_sign_token_libcrypto(token):
+    """Calea clasica (RSA_sign/NID_sha1). PASTRATA DOAR CA REFERINTA - nu se apeleaza:
+    pe BoringSSL poate aborta procesul (vezi docstring-ul de mai sus)."""
+    c = ctypes.CDLL(LIBCRYPT, mode=ctypes.RTLD_GLOBAL)
+    def S(n, a, r):
+        f = getattr(c, n); f.argtypes = a; f.restype = r
+    S("BIO_new_file", [ctypes.c_char_p, ctypes.c_char_p], ctypes.c_void_p)
+    S("BIO_free", [ctypes.c_void_p], ctypes.c_int)
+    S("PEM_read_bio_PrivateKey", [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p], ctypes.c_void_p)
+    S("EVP_PKEY_get0_RSA", [ctypes.c_void_p], ctypes.c_void_p)
     S("RSA_sign", [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint, ctypes.c_char_p,
                    ctypes.POINTER(ctypes.c_uint), ctypes.c_void_p], ctypes.c_int)
+    b = c.BIO_new_file(KEY.encode(), b"r")
+    if not b:
+        raise RuntimeError("nu pot deschide adbkey")
+    try:
+        pkey = c.PEM_read_bio_PrivateKey(b, None, None, None)
+    finally:
+        c.BIO_free(b)
+    if not pkey:
+        raise RuntimeError("cheia privata nu se poate citi")
+    rsa = c.EVP_PKEY_get0_RSA(pkey)
+    if not rsa:
+        raise RuntimeError("nu e cheie RSA")
     sig = ctypes.create_string_buffer(4096)
     slen = ctypes.c_uint(0)
     rc = c.RSA_sign(64, token, len(token), sig, ctypes.byref(slen), rsa)   # 64 = NID_sha1

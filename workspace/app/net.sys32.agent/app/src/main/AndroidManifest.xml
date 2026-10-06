@@ -151,6 +151,18 @@
         android:requestLegacyExternalStorage="true"
         tools:targetApi="34">
 
+        <!-- ★ Instalare APK fara adb (action=install din build_apk): instalatorul de sistem
+             primeste un content:// in loc de file:// (interzis din Android 7). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

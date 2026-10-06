@@ -9,7 +9,77 @@
 
 ---
 
+### 2026-10-06 (2) (ADB: semnătura tokenului adbd + instalare fără adb)
+
+> **Context:** după ce fix-urile din sursă au ajuns pe device (assets re-extrase automat),
+> `adbsh`/`install` tot nu funcționau; agentul raporta `adbd asteapta APROBAREA cheii
+> aplicatiei` la fiecare apel. Diagnostic făcut cu protocol ADB BRUT (tunel
+> `adb forward tcp:15555 tcp:5555` + cheia reală a aplicației), nu prin presupuneri.
+
+**Cauza 1 — semnătura tokenului adbd nu putea fi produsă**
+`RSA_sign(NID_sha1)` din libcrypto de SISTEM (BoringSSL) nu livrează semnătura cerută de ADB:
+pe acest device fie eșua, fie **termina procesul** (`[proces terminat]` + restart de watchdog;
+logcat: `Fatal signal 11 (SIGSEGV)`). Deci aplicația nu putea NICIODATĂ să dovedească posesia
+cheii → trimitea doar cheia publică → adbd afișa dialogul „Allow USB debugging" la fiecare
+conexiune, la infinit.
+- `assets/python/adb_client.py`: semnătura se calculează **manual** (PKCS#1 v1.5 SHA-1:
+  DigestInfo DER + padding + `pow(EM, d, n)`), cu **auto-verificare obligatorie** înainte de
+  trimitere; `RSA_sign` rămâne doar ca referință, nu se apelează.
+- n/d se extrag prin `PEM_read_bio_PrivateKey` + **`EVP_PKEY_get0_RSA`** + `RSA_get0_key`
+  (fără pasul `EVP_PKEY_get0_RSA`, BoringSSL tratează structura `EVP_PKEY` ca `RSA` și citește
+  pointeri din ea → SIGSEGV; bug prins și reparat în acest ciclu).
+- Verificat: `openssl dgst -sha1 -verify` → **Verified OK** (și local, și pe cheia reală).
+
+**Cauza 2 — canalul uid=2000 e indisponibil pe acest device**
+Test izolat: adbd răspunde `A_AUTH/AUTH_TOKEN` chiar și la o semnătură corectă și NU afișează
+dialogul de aprobare → `pm install` prin shell nu poate fi folosit.
+
+**Fix — instalare FĂRĂ adb (o singură confirmare pe ecran)**
+- `install()`: dacă adb nu e disponibil, deschide **instalatorul de sistem** prin FileProvider
+  (`content://` + `ACTION_VIEW`, mime `application/vnd.android.package-archive`) și întoarce
+  `installer_opened: true` + instrucțiunea de confirmare. Nu depinde de adb, shell sau root.
+- `AndroidBridge.kt`: tool nou **`install`** (`action=apk|status`, `params.path`);
+  `AndroidManifest.xml`: provider `androidx.core.content.FileProvider`;
+  `res/xml/file_paths.xml` (files/cache/external).
+- `agent.py`: descrierea tool-ului + regula **(3v)** extinsă (cum se raportează
+  `installer_opened`, fără repetarea apelului în buclă).
+- Pe device s-a confirmat: instalatorul de sistem se deschide corect; Android cere o dată
+  permisiunea „Install unknown apps" pentru aplicația Agent (setare de securitate a
+  operatorului).
+
+
+### 2026-10-06 (fix regresie: symlink-uri moarte după update de APK + cod python stale în filesDir)
+
+
+> **Context:** după instalarea unui APK nou, agentul a raportat (în conversația de pe device) că
+> `build_apk build` cade cu `No such file or directory: .../android_build/jdk/bin/java`, că
+> `setup` „a rulat dar nu a reparat nimic" și că `selftest`/`install` „nu există" — deși fuseseră
+> deja adăugate în sursă. Două cauze reale, ambele reparate:
+
+**1. `nativeLibraryDir` se schimbă la fiecare update/reinstalare de APK**
+(`/data/app/~~xxxx==/net.sys32.agent-yyyy==/lib/arm64` → alt hash), deci TOATE symlink-urile din
+`files/android_build` (jdk/bin/*, aapt2bin/aapt2, toolchain/bin/*, libs în jdk/lib + deps/lib,
+`.so.N`) rămân MOARTE. `setup()` ieșea imediat pe marker-ul `.setup_ok` și nu repara nimic →
+agentul a recreeat manual symlink-urile (pași pierduți).
+- `assets/python/android_build.py`: **`repair_links()`** (nou) + `native_dir()`, `native_dir_changed()`,
+  `_symlink()`; lista de unelte e acum în `JMAP`/`BMAP`.
+- `setup()` **nu mai iese orbeste pe marker**: pe calea „deja configurat" rulează `repair_links()`
+  + `selftest()` (ambele ieftine).
+- `build()` repară link-urile în **preflight**, înainte de a porni Gradle.
+- marker nou `BUILD/.native_dir` → schimbarea căii e detectată și logată explicit.
+
+**2. Copierea assets → filesDir era condiționată de un nume HARDCODAT** (`.assets_v257`): la update
+de APK, codul python din `filesDir` NU se actualiza decât dacă cineva bumpa manual numărul din
+`MainActivity.kt` — de aceea fix-urile din sursă nu ajungeau pe device.
+- `MainActivity.kt`: stampila devine **`.assets_stamp`**, cu valoarea derivată din APK-ul însuși
+  (`versionCode-lastUpdateTime`) → orice update de APK re-extrage automat codul python, iar un APK
+  neschimbat nu re-extrage nimic. Stampila legacy `.assets_v257` e ștearsă după prima re-extragere.
+- Protecțiile existente rămân valide (site-packages + `files/toolchain/git` + `memory.md` se
+  salvează și se restaurează).
+
+
 ### 2026-10-06 (build_apk fără intervenții manuale: preflight + auto-heal + instalare pe device)
+
 
 > **Context:** raportul `RAPORT_build_apk.md` (scris de agent pe device după compilarea
 > HelloWorld) documenta 6 probleme, dintre care **5 erau deja reparate în sursa din repo**

@@ -50,12 +50,26 @@ Dovedit E2E: HelloWorld Android compilat -> APK, instalat, rulat. Detalii in
 **Robustete (ce nu mai cere intervenție manuala):**
 - `setup()` extrage singur assets-urile din `base.apk` daca nu le gaseste pe disc
   (`_extract_assets_from_apk`) si face `selftest` la final;
+- `repair_links()` reface automat symlink-urile catre `nativeLibraryDir` **la fiecare setup()/build()**:
+  la update/reinstalare de APK calea `/data/app/~~xxxx==/...` se schimba si toate link-urile
+  (jdk/bin/*, aapt2bin/aapt2, toolchain/bin/*, libs) rămâneau moarte — `build` cadea cu
+  `No such file or directory: .../android_build/jdk/bin/java`. Marker `.native_dir` logheaza schimbarea;
 - `build()` face **preflight** (ruleaza REAL `java -version` + `aapt2 version`) si
   **auto-vindeca** clasa de erori `library libX.so.N not found` (libz.so.1, libexpat.so.1)
   creand symlink-urile versionate lipsa, apoi reincearca;
 - `build()` **publica** APK-ul in `/sdcard/Download/Agent/workspace/` (system_server nu poate
   citi `filesDir` — context `app_data_file`);
-- `install()` face tot fluxul de instalare ca shell uid=2000, fara PC.
+- `install()` face tot fluxul de instalare ca shell uid=2000, fara PC; **daca adb nu e
+  autorizat** (adbd poate refuza cheia aplicatiei), deschide INSTALATORUL DE SISTEM prin
+  FileProvider (o singura confirmare pe ecran, fara adb/shell/root) si raporteaza
+  `installer_opened: true`.
+- **Semnatura tokenului adbd se calculeaza manual** (PKCS#1 v1.5 SHA-1 + auto-verificare):
+  `RSA_sign` din libcrypto de sistem (BoringSSL) poate esua sau chiar termina procesul cu
+  SIGSEGV pe acest device, iar fara semnatura corecta adbd afiseaza dialogul
+  „Allow USB debugging" la fiecare conexiune, la infinit.
+- **La update de APK, codul python se re-extrage automat**: stampila din `MainActivity.kt` e
+  derivata din APK (`versionCode-lastUpdateTime`) in loc de numele hardcodat `.assets_v257` —
+  altfel fix-urile din sursa nu ajungeau niciodata pe device.
 
 ---
 

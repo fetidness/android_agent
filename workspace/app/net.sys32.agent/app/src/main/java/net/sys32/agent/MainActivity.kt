@@ -847,15 +847,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun assetsStampValue(): String {
+        return try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            "${pi.longVersionCode}-${pi.lastUpdateTime}"
+        } catch (_: Exception) { "unknown" }
+    }
+
     private fun extractAssets() {
         val dest = File(filesDir, "python")
-        val stamp = File(filesDir, ".assets_v257")
+        // ★ FIX (bug raportat de agent: "fix-urile din sursa nu ajung pe device"): stampila de
+        // assets NU mai e un nume HARDCODAT (era ".assets_v257", un numar pe care trebuia sa-l
+        // bumpezi manual la fiecare modificare de cod python). Acum valoarea vine din APK-ul
+        // insusi (versionCode + lastUpdateTime): orice update de APK re-extrage automat codul
+        // python (agent.py, android_build.py...), iar daca APK-ul e neschimbat nu se re-extrage.
+        val stamp = File(filesDir, ".assets_stamp")
+        val want = assetsStampValue()
+        val legacy = File(filesDir, ".assets_v257")
         // memoria pe termen lung a agentului NU face parte din APK: o salvam
         // inainte de re-extragere si o punem la loc, ca update-urile de app sa
         // nu stearga ce a invatat agentul de la operator.
         val memFile = File(dest, "memory.md")
         val memSaved = if (memFile.exists()) memFile.readText() else null
-        if (stamp.exists() && dest.exists()) return
+        val current = try { if (stamp.exists()) stamp.readText() else "" } catch (_: Exception) { "" }
+        if (current == want && dest.exists() && !legacy.exists()) return
         // ★ PROTECTIE SITE-PACKAGES (raport nou, sectiunea 4): la update de APK se stergea
         // pyhome si dispareau pachetele COMPILATE (numpy, scipy, lxml, PIL...) - 5 ore de
         // munca. Le mutam intr-un depozit persistent inainte de stergere si le punem la loc.
@@ -902,7 +917,9 @@ class MainActivity : AppCompatActivity() {
         // punem la loc memoria salvata (daca exista); altfel ramane cea din APK
         if (memSaved != null) memFile.writeText(memSaved)
         try { extractToolchain() } catch (_: Exception) {}
-        stamp.writeText("ok")
+        stamp.writeText(want)
+        // curatam stampila veche (hardcodata), ca sa nu ramana pe disc
+        try { legacy.delete() } catch (_: Exception) {}
     }
 
     /** ★ Repara sysconfig: cross-build-ul a inscriptionat caile de LAPTOP (CC, LDSHARED,

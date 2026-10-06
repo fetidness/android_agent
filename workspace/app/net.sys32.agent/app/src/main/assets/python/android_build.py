@@ -231,7 +231,7 @@ def _selfheal(files=None):
        Nu face nimic daca PATCHES nu exista (nu e fatal)."""
     if not os.path.isdir(PATCHES):
         return
-    mine = files or ["android_build.py", "agent.py", "git_build_zero_driver.py", "devhelper.py"]
+    mine = files or ["android_build.py", "agent.py", "adb_client.py", "git_build_zero_driver.py", "devhelper.py"]
     healed = []
     PD = _pkg_patches_dir()
     for f in mine:
@@ -265,6 +265,21 @@ def setup(force=False):
     _selfheal()
     marker = BUILD + "/.setup_ok"
     if os.path.exists(marker) and not force:
+        # ★ NU iesim orbeste pe marker: la fiecare update/reinstalare de APK, Android schimba
+        #   calea nativeLibraryDir (/data/app/~~xxxx==/net.sys32.agent-yyyy==/lib/arm64), deci
+        #   TOATE symlink-urile create de setup rămân MOARTE, iar build-ul cade cu
+        #   'No such file or directory: .../android_build/jdk/bin/java' (raportat de agent).
+        #   Repararea e ieftina (doar symlink-uri) -> o facem la fiecare setup().
+        try:
+            fixed = repair_links()
+            if fixed:
+                log("setup (marker existent): refacute", len(fixed), "symlink-uri")
+        except Exception as e:
+            log("repair_links warn:", e)
+        st = selftest()
+        globals()["LAST_SELFTEST"] = st
+        if not st.get("ok"):
+            log("setup (marker existent): ATENTIE selftest:", json.dumps(st))
         return True
     log("setup: extrag uneltele (poate dura)...")
     os.makedirs(BUILD, exist_ok=True); os.makedirs(TMP, exist_ok=True)
@@ -584,7 +599,14 @@ def build(project_dir, task="assembleDebug", timeout=3600):
     except Exception as e:
         log("links versionate warn:", e)
     # ★ preflight: java/aapt2 trebuie sa POATA rula inainte de a porni Gradle; daca lipseste
-    #   o lib versionata, o reparam acum (in loc sa esueze Gradle la :app:processDebugResources)
+    #   o lib versionata, o reparam acum (in loc sa esueze Gradle la :app:processDebugResources).
+    #   repair_links() prinde si cazul 'update de APK -> symlink-uri moarte catre vechiul
+    #   nativeLibraryDir' (eroare: No such file or directory .../android_build/jdk/bin/java).
+    try:
+        if repair_links():
+            log("preflight: symlink-uri native refacute")
+    except Exception as e:
+        log("preflight repair warn:", e)
     st = selftest()
     globals()["LAST_SELFTEST"] = st
     if not st.get("ok"):
@@ -659,7 +681,110 @@ def build(project_dir, task="assembleDebug", timeout=3600):
             log("install: build_apk action=install apk=" + pub)
     return apk if ok else None
 
-# ==================== P6: publish + install fara PC ====================
+# ==================== repararea symlink-urilor native (dupa update de APK) ====================
+#
+# PROBLEMA (raportata de agent pe device): la fiecare update/reinstalare de APK, Android muta
+# nativeLibraryDir-ul pe o cale NOUA (/data/app/~~xxxx==/...). Toate symlink-urile create de
+# setup() (jdk/bin/java, aapt2bin/aapt2, toolchain/bin/*, libs) rămân moarte, iar setup() iesea
+# imediat pe marker-ul .setup_ok -> build-ul cadea cu:
+#   No such file or directory: '/data/data/net.sys32.agent/android_build/jdk/bin/java'
+# Repararea e doar recreare de symlink-uri (ieftina), deci se face la fiecare setup()/build().
+
+JMAP = {"java":"libjava_exec.so","jlink":"libjlink_exec.so","jmod":"libjmod_exec.so",
+        "jimage":"libjimage_exec.so","javac":"libjavac_exec.so","jar":"libjar_exec.so",
+        "keytool":"libkeytool_exec.so","jarsigner":"libjarsigner_exec.so"}
+BMAP = {"clang":"libclang_exec.so","clang++":"libclang_exec.so","clang-21":"libclang_exec.so",
+        "clang++-21":"libclang_exec.so","ld.lld":"liblld_exec.so","lld":"liblld_exec.so",
+        "ar":"libllvmar_exec.so","ranlib":"libllvmranlib_exec.so","strip":"libllvmstrip_exec.so",
+        "nm":"libllvmnm_exec.so","cmake":"libcmake_exec.so","ninja":"libninja_exec.so",
+        "make":"libmake_exec.so","perl":"libperl_exec.so","pkgconf":"libpkgconf_exec.so",
+        "pkg-config":"libpkgconf_exec.so","flang":"libflang_exec.so"}
+
+def _symlink(src, dst):
+    """Creeaza/repara un symlink. Intoarce True doar daca a fost schimbat ceva."""
+    try:
+        if os.path.islink(dst) and os.path.realpath(dst) == src and os.path.exists(src):
+            return False
+        if os.path.islink(dst):
+            os.remove(dst)
+        elif os.path.exists(dst):
+            return False                      # fisier real: nu-l atingem
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.symlink(src, dst)
+        return True
+    except Exception:
+        return False
+
+def native_dir():
+    """nativeLibraryDir CURENT (re-detectat daca cel cache-uit nu mai exista)."""
+    _find_javahost_lib()
+    if NATIVE and not os.path.exists(NATIVE + "/libjava_exec.so"):
+        globals()["NATIVE"] = None
+        _find_javahost_lib()
+    return NATIVE
+
+def native_dir_changed():
+    """True daca nativeLibraryDir s-a schimbat de la ultimul setup (update/reinstalare de APK)."""
+    nd = native_dir()
+    if not nd:
+        return False
+    marker = BUILD + "/.native_dir"
+    old = ""
+    try:
+        if os.path.exists(marker):
+            old = open(marker).read().strip()
+    except Exception:
+        old = ""
+    if old != nd:
+        log("nativeLibraryDir schimbat:", old or "(necunoscut)", "->", nd)
+        try:
+            os.makedirs(BUILD, exist_ok=True)
+            open(marker, "w").write(nd)
+        except Exception:
+            pass
+        return bool(old)
+    return False
+
+def repair_links():
+    """Recreeaza TOATE symlink-urile care depind de nativeLibraryDir. Intoarce lista refacuta."""
+    n = native_dir()
+    if not n or not os.path.isdir(n):
+        return []
+    if native_dir_changed():
+        pass  # marcat in log; continuam cu repararea
+    made = []
+    for tool, lib in JMAP.items():
+        if _symlink(n + "/" + lib, JDK + "/bin/" + tool):
+            made.append("jdk/bin/" + tool)
+    for name, lib in BMAP.items():
+        src = n + "/" + lib
+        if os.path.exists(src) and _symlink(src, TC + "/bin/" + name):
+            made.append("toolchain/bin/" + name)
+    try:
+        libs = [f for f in os.listdir(n) if f.endswith(".so")]
+    except Exception:
+        libs = []
+    for f in libs:
+        src = n + "/" + f
+        for dd in (JDK + "/lib", TC + "/deps/lib"):
+            if _symlink(src, dd + "/" + f):
+                made.append(os.path.basename(dd) + "/" + f)
+    la = n + "/libaapt2_exec.so"
+    if os.path.exists(la):
+        for dst in (BUILD + "/aapt2bin/aapt2", SDK + "/build-tools/36.0.0/aapt2"):
+            if _symlink(la, dst):
+                made.append(dst.replace(BUILD + "/", ""))
+    # symlink-uri versionate (.so.N) pentru libs native
+    try:
+        targets = [JDK + "/lib", TC + "/deps/lib", BUILD + "/aapt2bin", TC + "/bin", SDK + "/build-tools"]
+        _link_all_versions(JDK + "/lib", targets)
+    except Exception:
+        pass
+    if made:
+        log("repair_links: refacute", len(made), "symlink-uri (native dir:", n + ")")
+    return made
+
+
 #
 # DE CE: `pm install` este facut de system_server, care NU are voie SELinux sa citeasca
 # fisiere cu context app_data_file (adică orice e in filesDir). Simptomul raportat:
@@ -736,7 +861,36 @@ def install(apk=None, project_dir=None, extra_args=("--bypass-low-target-sdk-blo
            % (pub, tmp, tmp, " ".join(extra_args), tmp))
     ok, out = _shell(cmd, timeout=600)
     if ok is None:
-        res["error"] = out
+        # ★ reincercare: o conexiune ADB moarta/desincronizata nu trebuie sa compromita instalarea
+        try:
+            import adb_client
+            adb_client.force_reconnect()
+            ok2, out2 = _shell(cmd, timeout=600)
+            if ok2 is not None:
+                ok, out = ok2, out2
+        except Exception:
+            pass
+    if ok is None:
+        # ★ FARA ADB: instalatorul DE SISTEM. Aplicatia trimite instalatorului un content://
+        #   (FileProvider) si operatorul confirma cu un tap pe 'Install'. Nu depinde de adbd,
+        #   de shell sau de root - deci merge si cand adbd refuza cheia aplicatiei (caz real:
+        #   adbd a respins o semnatura VALIDA si nu a mai afisat dialogul de aprobare).
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import android_bridge
+            br = android_bridge.call("install", "apk", path=pub)
+            res["system_installer"] = br
+            if br.get("ok"):
+                res["installer_opened"] = True
+                res["next"] = ("confirma instalarea pe ECRANUL telefonului (tap pe Install); "
+                               "apoi verifica cu adbsh 'pm list packages | grep <pachet>'")
+                res["out"] = ("instalator de sistem deschis pentru %s "
+                              "(adb indisponibil: %s)" % (os.path.basename(pub), (out or "")[:140]))
+                return res
+            res["error"] = "instalator de sistem: " + str(br.get("error"))
+        except Exception as e:
+            res["bridge_error"] = str(e)
+        res.setdefault("error", out)
         res["manual"] = "adb shell cp %s %s && adb shell pm install -r %s %s" % (
             pub, tmp, " ".join(extra_args), tmp)
         return res
@@ -792,7 +946,15 @@ def _run_tool(args, timeout=90):
 def selftest(heal=True):
     """Verifica REAL ca java si aapt2 POT rula (nu doar ca exista) si repara singur
        symlink-urile versionate lipsa. Raspuns: {ok, checks, healed}."""
-    out = {"ok": True, "checks": {}, "healed": []}
+    out = {"ok": True, "checks": {}, "healed": [], "relinked": []}
+    # ★ intai refacem symlink-urile catre nativeLibraryDir (la update de APK calea se schimba si
+    #   binarele rămân cu link-uri moarte) - altfel selftest raporta 'lipsa binar: jdk/bin/java'
+    #   desi build-ul imediat dupa reușea (preflight-ul repara). Contradicția era confuza pentru agent.
+    if heal:
+        try:
+            out["relinked"] = repair_links()
+        except Exception as e:
+            out["relink_error"] = str(e)
     checks = [("java", [JDK + "/bin/java", "-version"]),
               ("aapt2", [BUILD + "/aapt2bin/aapt2", "version"])]
     for name, cmd in checks:
