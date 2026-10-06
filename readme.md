@@ -1,35 +1,58 @@
 # Agent Android (net.sys32.agent)
 
-## 🟢⚠️ DOUA APLICATII PE DEVICE (4 oct 2026) — CITESTE INAINTE DE ORICE
+## 🟢⚠️ DOUA APLICATII PE DEVICE — CITESTE INAINTE DE ORICE (actualizat 6 oct 2026)
 
-Pe telefon exista acum **DOUA aplicatii independente** care ruleaza alaturi:
+Pe telefon exista **DOUA aplicatii** care ruleaza alaturi. **Ambele sunt construite din
+ACELASI cod Python+Kotlin** — nu sunt doua proiecte separate de intretinut.
 
-- **`net.sys32.agent`** = agentul **ORIGINAL** (aplicatia „mare", cu toolchain nativ complet
-  in APK, ~282 MB). Aceasta e aplicatia activa, cea cu care operatorul purta conversatia.
-- **`net.sys32.odc_agent`** = **CLONA**, compilata **direct pe telefon din surse** (fara PC, fara
-  Gradle, fara Android Studio), instalata ca aplicatie SEPARATA (APK ~17.6 MB). Nume afisat:
-  „ODC Agent". Diferenta de marime fata de original: clona NU include toolchain-ul nativ in APK
-  (il descarca la runtime in `files/`), deci e mult mai mica.
+**`net.sys32.agent`** (afisat „Agent") — SURSA CANONICA
+- Cod: `workspace/app/net.sys32.agent/`
+- APK ~282 MB (toolchain nativ inclus in APK)
+- Cheie de semnare proprie; folder /sdcard: `Download/Agent`
+- **Aici se editeaza codul.** E sursa unica de adevar.
 
-**De ce doua?** Pentru ca agentul original RULA in timpul build-ului. Reinstalarea peste el
+**`net.sys32.odc_agent`** (afisat „ODC Agent") — VARIANTA GENERATA
+- Cod: `odc_agent/` (odc = *on-device compiled*)
+- APK ~18.5 MB (toolchain-ul se extrage la runtime in `files/`, nu e in APK)
+- Cheie de semnare DIFERITA (nu sunt interschimbabile la update)
+- Folder /sdcard: `Download/odc_agent`
+
+### ⛔ REGULA NR.1: `odc_agent/` ESTE GENERAT — NU SE EDITEZA NICIODATA DIRECT
+
+> Sursa unica de adevar este **`workspace/app/net.sys32.agent/`**.
+> Orice modificare facuta direct in `odc_agent/` se **PIERDE** la urmatoarea regenerare.
+
+Dupa ORICE schimbare de cod in sursa canonica, regenerezi `odc_agent/`:
+```bash
+bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_odc
+# apoi sincronizezi in odc_agent/ (pastrand README.md si memory.md - NU sunt generate)
+```
+Generatorul face 4 lucruri: rescrie pachetul (`net.sys32.agent` -> `net.sys32.odc_agent`),
+redenumeste directorul Kotlin, seteaza eticheta afisata, seteaza folderul /sdcard.
+**Restul codului vine 1:1 din sursa canonica.** Diferentele intre cei doi agenti sunt DOAR
+pachetul + eticheta + folderul /sdcard + ce e inclus in APK.
+
+### De ce doua aplicatii?
+Pentru ca agentul original RULA in timpul build-ului. Reinstalarea peste el
 (`pm install -r`) ar OMORI procesul -> ar omori si sesiunea agentului. A doua aplicatie
 permite build + test FARA sa intrerupi agentul activ.
 
-**REGULI:**
+### Reguli
 - **NU** reinstala niciodata peste `net.sys32.agent` cat timp ruleaza (moare procesul).
-- Pentru test/schimbari de cod -> foloseste `net.sys32.odc_agent` (clona), nu originalul.
-- Cele doua au chei de semnare DIFERITE (nu sunt interschimbabile la update).
-- Serviciile de sistem (IME, Notification Listener) pot fi active doar cate unul la un
+- Pentru test/schimbari de cod -> compileaza si instaleaza `net.sys32.odc_agent`.
+- Serviciile de sistem (IME, Notification Listener) pot fi active doar cate unul la
   moment dat -> daca activezi tastatura ODC Agent, se dezactiveaza cea a agentului original.
 
-**Pipeline-ul de build pe device** (dovedit E2E): JDK 21 + kotlinc 2.4.20 + aapt2 2.20 +
-d8 9.2.4 + apksigner 0.9 (toate pachete Termux aarch64) + `android.jar` API 36 de la Google.
-Script: `/data/local/tmp/apkbuild/build_apk.sh <proj> <pkg> <label> <out.apk>` (6 pasi:
-aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare).
-**Sursa clonei e in acest repo, in `odc_agent/`** (odc = *on-device compiled*): app-ul
-complet (`app/src/main/`: manifest, res, assets Python, 15 module Kotlin in
-`java/net/sys32/odc_agent/`). Stdlib CPython e exclus din git (regenerabil), site-packages
-e pastrat. Detalii complete in `CHANGELOG.md` (4 oct 2026) si in memorie.
+### Build pe device (2 metode, ambele dovedite)
+1. **Gradle complet pe device** (unealta `build_apk`): JDK 21 + Gradle 9.8 + AGP + SDK 36
+   in `files/android_build/`. `build_apk setup` o data, apoi `build_apk build dir=<proiect>`.
+   Dovedit: odc_agent 18.5 MB, HelloWorld, VocisHD.
+2. **Nativ, fara Gradle** (`build_apk.sh`): JDK 21 + kotlinc + aapt2 + d8 + apksigner
+   (pachete Termux aarch64) + android.jar API 36. 6 pasi: aapt2 link -> kotlinc ->
+   javac R.java -> d8 -> ambalare -> semnare.
+
+Detalii complete despre generare: vezi sectiunea **"Cei doi agenti — o singura sursa"**
+mai jos, plus `odc_agent/README.md`.
 
 ---
 
@@ -1270,6 +1293,10 @@ ent Android (net.sys32.agent)
 
 ## CUPRINS
 
+> ⚠️ **DOUA APLICATII, O SINGURA SURSA DE COD:** `net.sys32.agent` (sursa canonica,
+> `workspace/app/net.sys32.agent/`) si `net.sys32.odc_agent` (`odc_agent/` — **GENERAT**,
+> NU se editeaza direct). Vezi prima secțiune a acestui fisier.
+>
 > **OPERATIUNI (build/install/debug/verificare): vezi sectiunea „🛠 OPERATIUNI"
 > chiar inainte de „REZOLVAREA PROBLEMELOR FRECVENTE" — OP.1 pina la OP.7.**
 
