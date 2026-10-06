@@ -279,14 +279,14 @@ le lansează (inclusiv `toolchain/deps/lib` al daemonului Gradle); SDK-ul e în 
 NDK-ul e fake prin symlink-uri; și Gradle rulează cu `VFORK` + `tmpdir` + `user.home` setate.
 
 ---
-*Document generat pe device, 5 oct 2026. Reproducibil cu `odc_agent/memory.md` + acest ghid.*
+*Document generat pe device, 5 oct 2026. Reproducibil cu acest ghid + memoria agentului.*
 
 
 ---
 
 ## 8. AUTOMATIZARE COMPLETĂ (modulul `android_build.py`)
 
-Tot pipeline-ul e împachetat într-un modul Python care vine CU odc_agent. La instalare de la
+Tot pipeline-ul e împachetat într-un modul Python care vine CU aplicația. La instalare de la
 zero, agentul poate compila APK-uri fără nicio pregătire manuală.
 
 ### Ce conține APK-ul (stare 5 oct 2026 — ambii agenți au ACELAȘI payload)
@@ -310,8 +310,7 @@ jniLibs/arm64-v8a/*.so         # 146 libs native (405 MB): java/javac/jlink/jmod
                                #   + clang/cmake/ninja/rust/perl/python + absl/protobuf/fmt
 ```
 
-Rezultat: `net.sys32.agent` = **983 MB**, `net.sys32.odc_agent` = **903 MB** (același conținut;
-diferența e doar de compresie zip, din istoricul build-ului incremental). `.deb`-urile și
+Rezultat: APK-ul `net.sys32.agent` = **~983 MB** (payload complet, offline-capable). `.deb`-urile și
 `.zip`-urile sunt STORE (deja comprimate), `rust-libs.tar` e deflat (840 MB -> 292 MB).
 
 `net.sys32.javahost` NU mai e necesar: `lib*_exec.so` (java, aapt2) stau acum in `jniLibs`-ul
@@ -353,33 +352,26 @@ Ce s-a schimbat după ce s-a scris restul ghidului:
 
 ### 9.1 O singură sursă de cod
 
-`net.sys32.agent` și `net.sys32.odc_agent` au acum **aceeași sursă**: `workspace/app/net.sys32.agent/`.
-`odc_agent/` este **generat** de `tools/make_agent_variant.sh <PKG> <LABEL> <DEST> [--flat]`
-(rescrie pachetul in 77 fișiere, redenumește directorul Kotlin, setează eticheta și
-`agent_home_dir`, iar cu `--flat` scoate layout-ul plat pt `build_apk.sh`). Detalii + tabel de
-autonomie: `readme.md` -> **OP.9**.
+Exista **o singura sursa de cod**: `workspace/app/net.sys32.agent/`.
 
-### 9.2 Ambele APK-uri au payload-ul complet (inclusiv Rust)
+> **6 oct 2026:** a doua aplicatie (`net.sys32.odc_agent`, generata cu
+> `tools/make_agent_variant.sh`) a fost **eliminata** — duplica ~49% din fisiere si crea confuzie.
+> Detalii in `readme.md` -> **OP.9**.
 
-Compoziție măsurată identică pentru ambii (§8): toolchain 1007 MB / 6077 fișiere (cu
-`rust-libs.tar` 801,6 MB), 146 libs native (405 MB), `assets/android_build` 381 MB,
-`assets/python` 54 MB. Diferența de mărime (983 vs 903 MB) e doar compresie zip.
+### 9.2 APK-ul are payload-ul complet (inclusiv Rust)
 
-### 9.3 Cum se construiește fiecare
+Compoziție măsurată (§8): toolchain 1007 MB / 6077 fișiere (cu `rust-libs.tar` 801,6 MB),
+146 libs native (405 MB), `assets/android_build` 381 MB, `assets/python` 54 MB.
+
+### 9.3 Cum se construiește
 
 ```bash
-# agent principal (laptop, Gradle):
+# pe laptop (Gradle):
 cd workspace/app && ./build_app.sh
 
-# odc_agent — ACUM se poate construi și pe LAPTOP (Gradle), nu doar pe device:
-cd odc_agent && JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ANDROID_HOME=/home/gab/android \
-  ./gradlew assembleDebug          # -> app/build/outputs/apk/debug/app-debug.apk (~903 MB)
-
-# odc_agent pe DEVICE (fara PC, calea din §1-§7):
-bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_flat --flat
-adb push /tmp/var_flat/flat/{AndroidManifest.xml,res,src,assets} /data/local/tmp/apkbuild/odc_full/
-adb shell "/system/bin/sh /data/local/tmp/apkbuild/build_apk.sh /data/local/tmp/apkbuild/odc_full \
-           net.sys32.odc_agent 'ODC Agent' /data/local/tmp/apkbuild/odc.apk"
+# pe DEVICE, fara PC (unealta build_apk; vezi §1-§7):
+#   build_apk setup          (o data)
+#   build_apk build dir=<proiect>
 ```
 
 ### 9.4 Capcane noi (fiecare = un eșec real, cu fix)
@@ -402,12 +394,12 @@ Verificat pe SM-A366B: după wipe total (205 GB liberi) ambii agenți s-au insta
 extras singuri payload-ul din propriul APK (`files/toolchain`, `files/python`, marker
 `.assets_v257`), fără `/data/local/tmp` și fără descărcări; au pornit Python (un subproces
 `libpyexec.so` sub fiecare aplicație) și au creat foldere separate pe `/sdcard`
-(`Download/Agent` + `Download/odc_agent`, fiecare cu `adbkey` și `workspace/`).
+(`Download/Agent`, cu `adbkey` și `workspace/`).
 
 ---
 
-### 9.6 Rezumatul diferenței dintre cei doi agenți (după unificare)
+### 9.6 Sursa unica de cod
 
-**Niciuna, in afara de**: `applicationId`/pachet Kotlin, eticheta afișată, folderul de pe
-`/sdcard` (`Agent` / `odc_agent`) și cheia de semnare. Codul, tool-urile (12, inclusiv
-`build_apk`), payload-ul de build și comportamentul sunt identice.
+Exista o singura aplicatie si o singura sursa: `workspace/app/net.sys32.agent/`.
+Tool-urile (12, inclusiv `build_apk`), payload-ul de build si comportamentul sunt intr-un
+singur loc. A doua aplicatie (`net.sys32.odc_agent`) a fost eliminata pe 6 oct 2026.

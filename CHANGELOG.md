@@ -9,6 +9,48 @@
 
 ---
 
+### 2026-10-06 (ELIMINARE `odc_agent` + fix auto-scroll + fix `android_build._assets_dir`)
+
+> **Decizie de arhitectura:** a doua aplicatie (`net.sys32.odc_agent`) a fost **eliminata
+> complet** din repo si de pe device. Exista o singura aplicatie: `net.sys32.agent`.
+
+**De ce a fost eliminata:**
+- duplica **895 din 1816 fisiere tracked (~49%)**, aproape tot `assets/python` (stdlib CPython
+  + site-packages) — doua copii ale aceluiasi cod in repo;
+- crea confuzie si deriva: APK-ul odc rămânea cu versiuni vechi (ex. `android_build.py` de
+  21254 B fara fix-uri, cauza unei serii de 3 retry-uri la setup si a unui symlink manual);
+- costul de intretinere depasea beneficiul.
+
+**Ce s-a sters:**
+- `odc_agent/` (895 fisiere) + `pc_kit_scripts/` (build odc pe PC) + `tools/make_agent_variant.sh`;
+- din scripturi: `install_agents_fresh.sh` (doar agent), `wipe_device.sh` (fara odc),
+  `backup_device_tools.sh` (fara `odc-build-inputs.tar`), `.gitignore` (blocul odc);
+- din documentatie: `readme.md` (sectiunea "doua aplicatii" + OP.9 rescrise),
+  `BUILD_ANDROID_ON_DEVICE.md` §9.1/§9.2/§9.3/§9.6, nota istorica in
+  `tools/DEVICE_BACKUP_MANIFEST.md`.
+
+**Verificat inainte de stergere:** agentul NU depinde de odc_agent nicaieri — 0 referinte
+funcionale in cod (doar comentarii), 0 importuri Python, mecanismul de patch-uri
+(`_pkg_patches_dir`) e generic si cade pe dir comun daca nu exista subfolderul de pachet.
+
+**Fix `android_build.py` — `_assets_dir()` (commit `192ca9c`):**
+- candidatii vechi nu gaseau NICIODATA `<filesDir>/assets/android_build` (2 se rezolvau
+  amandoi la `<app-root>/assets`, cu un nivel prea sus) -> `setup()` cadea cu
+  `FileNotFoundError .../sdk/platforms/android-36/package.xml`;
+- fix: candidatul real (`os.path.dirname(_HERE)+'/assets/android_build'`) pus primul +
+  `ASSETS` aliniat; in plus `_selfheal()` devine PER PACHET (`agent_patches/<pkg>/`).
+
+**Fix auto-scroll UI (commit `679932d`) — "scroll-ul sare mai sus la un task nou":**
+- `followTail=true` se seta doar la start / scroll manual in jos / in listener-ul de scroll,
+  NU si la inceputul unui task nou -> textul curgea sub margine, scroll blocat
+  (masurat: gap 722-885px, stabil peste 6-13 esantioane);
+- re-armarea depindea de un eveniment de scroll; daca scroll-ul era blocat, deadlock;
+- fix: `sendLine()` re-armeaza (+`scrollToBottom()`), `appendAnsi()` masoara `wasAtBottom`
+  **inainte** de append si re-armeaza, `scrollToBottom(force)` dupa trunchiere, nou `atBottom()`;
+- 5/5 teste de logica (`scroll_logic_test.py`), APK compilat OK.
+
+---
+
 ### 2026-10-05 (WIPE TOTAL + INSTALARE DE LA ZERO A AMBILOR AGENTI)
 
 > Telefonul a fost golit complet si ambii agenti reinstalati de la zero: dovada ca instalarea

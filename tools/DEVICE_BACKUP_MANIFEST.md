@@ -1,3 +1,7 @@
+> ⚠️ **ISTORIC (5 oct 2026).** Acest manifest descrie un backup facut INAINTE de eliminarea
+> celei de-a doua aplicatii. Arhiva `odc-build-inputs.tar` nu mai este necesara (era pentru
+> build-ul `net.sys32.odc_agent`, scos pe 6 oct 2026). Pastrat ca referinta istorica.
+
 # MANIFEST — Backup unelte + inputuri de build, Samsung SM-A366B (net.sys32.agent)
 
 Data: 2026-10-05T05:30:56-04:00

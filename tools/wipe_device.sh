@@ -8,7 +8,7 @@ ADB="${ADB:-/home/gab/android/platform-tools/adb}"
 log(){ echo "[$(date +%H:%M:%S)] $*"; }
 
 log "1/3 dezinstalez aplicatiile net.sys32.*"
-for p in net.sys32.agent net.sys32.odc_agent net.sys32.javahost net.sys32.vocis net.sys32.test; do
+for p in net.sys32.agent net.sys32.javahost net.sys32.vocis net.sys32.test; do
   "$ADB" shell "am force-stop $p" >/dev/null 2>&1
   r=$("$ADB" shell "pm uninstall --user 0 $p" 2>&1 | tr -d '\r' | tail -1)
   log "   $p -> $r"

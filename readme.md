@@ -1,83 +1,50 @@
 # Agent Android (net.sys32.agent)
 
-## 🟢⚠️ DOUA APLICATII PE DEVICE — CITESTE INAINTE DE ORICE (actualizat 6 oct 2026)
+## 🟢 O SINGURA APLICATIE PE DEVICE (actualizat 6 oct 2026)
 
-Pe telefon exista **DOUA aplicatii** care ruleaza alaturi. **Ambele sunt construite din
-ACELASI cod Python+Kotlin** — nu sunt doua proiecte separate de intretinut.
+Pe telefon exista **o singura aplicatie**: **`net.sys32.agent`** (afisat „Agent").
 
-**`net.sys32.agent`** (afisat „Agent") — SURSA CANONICA
-- Cod: `workspace/app/net.sys32.agent/`
-- APK ~282 MB (toolchain nativ inclus in APK)
+- Cod: `workspace/app/net.sys32.agent/` — **sursa unica de adevar**
 - Cheie de semnare proprie; folder /sdcard: `Download/Agent`
-- **Aici se editeaza codul.** E sursa unica de adevar.
+- **Aici se editeaza codul.**
 
-**`net.sys32.odc_agent`** (afisat „ODC Agent") — VARIANTA GENERATA
-- Cod: `odc_agent/` (odc = *on-device compiled*)
-- APK ~18.5 MB (toolchain-ul se extrage la runtime in `files/`, nu e in APK)
-- Cheie de semnare DIFERITA (nu sunt interschimbabile la update)
-- Folder /sdcard: `Download/odc_agent`
+### Istoric: a doua aplicatie (`net.sys32.odc_agent`) — ELIMINATA
 
-### ⛔ REGULA NR.1: `odc_agent/` ESTE GENERAT — NU SE EDITEZA NICIODATA DIRECT
+Pana pe 6 oct 2026 a existat si o a doua aplicatie, `net.sys32.odc_agent` („ODC Agent"),
+generata 1:1 din sursa canonica cu `tools/make_agent_variant.sh`. Rolul ei era sa fie o
+**tinta de test sigura**: nu poti face `pm install -r` peste `net.sys32.agent` cat ruleaza
+(it omoara procesul = agentul cu care vorbesti), deci build-urile noi se instalau pe clona.
 
-> Sursa unica de adevar este **`workspace/app/net.sys32.agent/`**.
-> Orice modificare facuta direct in `odc_agent/` se **PIERDE** la urmatoarea regenerare.
+**De ce a fost eliminata:** duplica ~49% din fisierele repo-ului (895 din 1816, aproape tot
+`assets/python` = stdlib CPython + site-packages) si crea confuzie — doua copii ale aceluiasi
+cod, iar cea generata putea rămâne in urma (exact bug-ul cu `android_build.py` vechi din APK-ul
+odc). Intretinerea depasea beneficiul.
 
-Dupa ORICE schimbare de cod in sursa canonica, regenerezi `odc_agent/`:
-```bash
-bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_odc
-# apoi sincronizezi in odc_agent/ (pastrand README.md si memory.md - NU sunt generate)
-```
-Generatorul face 4 lucruri: rescrie pachetul (`net.sys32.agent` -> `net.sys32.odc_agent`),
-redenumeste directorul Kotlin, seteaza eticheta afisata, seteaza folderul /sdcard.
-**Restul codului vine 1:1 din sursa canonica.** Diferentele intre cei doi agenti sunt DOAR
-pachetul + eticheta + folderul /sdcard + ce e inclus in APK.
-
-### De ce doua aplicatii?
-Pentru ca agentul original RULA in timpul build-ului. Reinstalarea peste el
-(`pm install -r`) ar OMORI procesul -> ar omori si sesiunea agentului. A doua aplicatie
-permite build + test FARA sa intrerupi agentul activ.
-
-### Reguli
-- **NU** reinstala niciodata peste `net.sys32.agent` cat timp ruleaza (moare procesul).
-- Pentru test/schimbari de cod -> compileaza si instaleaza `net.sys32.odc_agent`.
-- Serviciile de sistem (IME, Notification Listener) pot fi active doar cate unul la
-  moment dat -> daca activezi tastatura ODC Agent, se dezactiveaza cea a agentului original.
+**Cum testezi acum fara sa intrerupi agentul:** builduieste APK-ul, apoi:
+- **Varianta simpla (fara sa pierzi agentul):** instaleaza peste o alta aplicatie de test
+  (ex. HelloWorld) sau foloseste un emulator/dispozitiv secundar.
+- **Daca trebuie neaparat pe acest telefon:** `pm install -r` va opri procesul Python — il
+  repornesti cu `am start -n net.sys32.agent/.MainActivity` (agentul isi reia sesiunea; starea
+  e persistata in `files/`).
 
 ### Build pe device (2 metode, ambele dovedite)
 1. **Gradle complet pe device** (unealta `build_apk`): JDK 21 + Gradle 9.8 + AGP + SDK 36
    in `files/android_build/`. `build_apk setup` o data, apoi `build_apk build dir=<proiect>`.
-   Dovedit: odc_agent 18.5 MB, HelloWorld, VocisHD.
+   Dovedit: HelloWorld, VocisHD.
 2. **Nativ, fara Gradle** (`build_apk.sh`): JDK 21 + kotlinc + aapt2 + d8 + apksigner
-   (pachete Termux aarch64) + android.jar API 36. 6 pasi: aapt2 link -> kotlinc ->
-   javac R.java -> d8 -> ambalare -> semnare.
-
-Detalii complete despre generare: vezi sectiunea **"Cei doi agenti — o singura sursa"**
-mai jos, plus `odc_agent/README.md`.
+   + android.jar API 36. 6 pasi: aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare.
 
 ---
 
-## 💻 PC KIT — construiește odc_agent pe calculator (5 oct 2026)
+## 🤖 COMPILARE APK PE DEVICE (autonom, offline)
 
-In `pc_kit_scripts/` sunt scripturile pentru a construi APK-ul odc_agent pe un PC:
-- `build_odc_agent.sh` — rulează pe PC: compilează + semnează `odc_agent.apk` (toate uneltele incluse).
-- `prepare_pc_kit.sh` — rulează pe device: produce kit-ul complet (sursă + unelte portabile).
-- `README.md` — instrucțiuni.
-
-Kit-ul complet (1.17 GB: sursă + jniLibs aarch64 + assets/toolchain + descărcabile) se
-produce cu `prepare_pc_kit.sh --with-downloads`. PC-ul rezultă `odc_agent.apk` complet
-funcțional offline. Detalii în `odc_agent/memory.md` și `BUILD_ANDROID_ON_DEVICE.md`.
+Agentul poate compila aplicatii Android (APK) direct pe telefon, **offline** — toate uneltele
+vin in APK. Modul: `android_build.py` (tool `build_apk`: setup / build dir=<proiect> / verify).
+Dovedit E2E: HelloWorld Android compilat -> APK, instalat, rulat. Detalii in
+`BUILD_ANDROID_ON_DEVICE.md` si in memoria agentului.
 
 ---
 
-## 🤖 odc_agent AUTONOM (5 oct 2026) — compilează APK-uri pe device
-
-`net.sys32.odc_agent` e acum **complet autonom**: la instalare de la zero poate compila
-aplicații Android (APK) direct pe telefon, **offline** (toate uneltele vin în APK, 617 MB).
-Modul: `android_build.py` (tool `build_apk`: setup / build dir=<proiect> / verify).
-Dovedit E2E: HelloWorld Android compilat → APK 0.8 MB, instalat. Toate detaliile în
-`BUILD_ANDROID_ON_DEVICE.md` §8 și în `odc_agent/memory.md`.
-
----
 
 ## 🏆 BUILD VOCISHD PE DEVICE — REUȘIT COMPLET (5 oct 2026)
 
@@ -85,7 +52,7 @@ Dovedit E2E: HelloWorld Android compilat → APK 0.8 MB, instalat. Toate detalii
 > **38 MB**) compilat, semnat, instalat și RULAT pe device — **58 task-uri, BUILD SUCCESSFUL,
 > fără PC.** Conține `classes.dex` 43.9 MB (Kotlin+Hilt+Compose), `libopus_jni.so` pentru
 > toate 7 ABI-urile, `libsqlcipher.so`, resurse, manifest.
-> Detalii complete în `CHANGELOG.md` (5 oct 2026) și în `odc_agent/memory.md`.
+> Detalii complete în `CHANGELOG.md` (5 oct 2026) și în memoria agentului.
 > **Ghid complet reproductibil (end-to-end, toți pașii + capcanele): [`BUILD_ANDROID_ON_DEVICE.md`](BUILD_ANDROID_ON_DEVICE.md).**
 
 ### Ce funcționează dovedit
@@ -102,8 +69,7 @@ Un APK mic (`net.sys32.javahost`, ~11 MB) care conține binararele JDK **ambalat
 (absl, protobuf, fmt, libc++).
 **De ce:** SELinux permite execuția DOAR din `lib/arm64/` din APK. Binararele ELF din
 `filesDir` dau `Permission denied`. Deci Java (și aapt2) trebuie „împachetate" ca lib-uri ca
-să ruleze din procesul aplicației. **odc_agent NU are legătură cu VocisHD** — javahost e
-APK-ul gazdă dedicat.
+să ruleze din procesul aplicației. **javahost e APK-ul gazdă dedicat** (nu are legătură cu VocisHD).
 
 ### Bariere rezolvate (toate SELinux / binare x86_64)
 1. java/jlink/jmod/javac → în APK ca lib-uri (executabile)
@@ -163,7 +129,6 @@ device** — fiecare verigă dovedită. Rămâne o singură incompatibilitate (a
 | Module Kotlin | **15** |
 | Assets Python | agent.py + toolchain.py + adb_client.py + adb_setup.py + android_bridge.py + `Lib/` + `libdynload/arm64/` + 2 ZIP-uri (pysitepkg, stdlib_extra) |
 | Toolchain nativ | `assets/toolchain/` (~343 MB) + binare `lib*_exec.so` in `jniLibs/` — **NU sunt in git** (vezi `.gitignore`), se regenereaza |
-| **A 2-a aplicatie** | **`net.sys32.odc_agent`** („ODC Agent") — clona compilata PE DEVICE, instalata alaturi; vezi sectiunea de sus |
 | Device | RZGL102X5AT (Samsung SM-A366B, Android 16) |
 | Istoric complet | **[`CHANGELOG.md`](CHANGELOG.md)** |
 | Plan spre autonomie completa | **[`PLAN_AUTONOMIE.md`](PLAN_AUTONOMIE.md)** (faze 0-6, reguli de verificare, capcane, jurnal) |
@@ -654,8 +619,8 @@ unzip -l $APK | grep 'lib/arm64-v8a/'
 
 ### OP.2-DEVICE — BUILD APK PE TELEFON, DE LA ZERO (fara PC, fara Gradle)
 
-> Calea folosita pentru a doua aplicatie (`odc_agent` / `net.sys32.odc_agent`).
-> Reproductibila complet pe device. Dovedita E2E (4 oct 2026).
+> Pipeline alternativ de build APK pe device (fara PC, fara Gradle).
+> Reproductibil complet pe device. Dovedit E2E (4 oct 2026).
 
 **De ce e nevoie de alt pipeline:** Gradle + AGP + Android SDK cer un JVM si un SDK care nu
 exista pe Android. Solutia: unelte Termux aarch64 (precompilate) + `android.jar` de la Google,
@@ -710,7 +675,7 @@ Wrapper `$TC/jrun.sh`: seteaza `JAVA_HOME` + `LD_LIBRARY_PATH` si face `exec jav
 #### Pasul 3 — pregatirea proiectului
 Proiectul are nevoie (pentru build manual) de structura plata: `AndroidManifest.xml`, `res/`,
 `src/` (fisiere `.kt`), `assets/`. Fata de varianta Gradle se adauga MANUAL in manifest:
-- `package="net.sys32.odc_agent"` (Gradle il lua din `namespace`)
+- `package="net.sys32.agent"` (Gradle il lua din `namespace`)
 - `<uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34"/>`
   (fara el -> `DeprecatedTargetSdkVersionDialog` si app-ul e blocat)
 
@@ -731,10 +696,10 @@ Proiectul are nevoie (pentru build manual) de structura plata: `AndroidManifest.
 
 #### Pasul 5 — instalare pe device (Samsung)
 ```
-pm install -r --bypass-low-target-sdk-block /data/local/tmp/odc_agent.apk
+pm install -r --bypass-low-target-sdk-block /data/local/tmp/agent.apk
 ```
 Fara `--bypass-low-target-sdk-block` -> `INSTALL_FAILED_VERIFICATION_FAILURE` /
-`INSTALL_FAILED_DEPRECATED_SDK_VERSION`. Pornire: `am start -n net.sys32.odc_agent/.MainActivity`.
+`INSTALL_FAILED_DEPRECATED_SDK_VERSION`. Pornire: `am start -n net.sys32.agent/.MainActivity`.
 
 #### Capcane la runtime (fiecare = un `ClassNotFoundException` in logcat, pe rand)
 Ordinea intalnita: `kotlin.jvm.internal.Intrinsics` -> `androidx.collection.SimpleArrayMap` ->
@@ -769,15 +734,15 @@ Deci **build-ul trebuie sa includa si**:
 din APK-ul original instalat:
 ```sh
 P=$(pm path net.sys32.agent | sed 's/package://')
-unzip -o "$P" "lib/arm64-v8a/*" "assets/*" -d /data/local/tmp/odcassets    # 392 MB + 1 GB
+unzip -o "$P" "lib/arm64-v8a/*" "assets/*" -d /data/local/tmp/buildassets   # 392 MB + 1 GB
 ```
 APK-ul complet iese **~497 MB** (originalul: 664 MB comprimat).
 
 **Capcana la reinstalare:** aplicatia extrage assets in `filesDir` la PRIMA rulare si NU
 re-extraege daca `pyhome` exista deja. Dupa un build nou cu stdlib adaugat:
-`pm clear net.sys32.odc_agent` (forteaza re-extragerea completa).
+`pm clear net.sys32.agent` (forteaza re-extragerea completa).
 
-**Stare finala dovedita:** ODC Agent ajunge la `Configuring... DONE` ->
+**Stare finala dovedita:** agentul ajunge la `Configuring... DONE` ->
 `AGENT FULLY CONFIGURED AND OPERATIONAL` -> cere cheia DeepSeek (`⚠ LIPSA CHEIA DeepSeek API`,
 se scrie in `files/python/key.txt`, se pastreaza in `files/home/key.txt`).
 
@@ -1063,13 +1028,12 @@ Rezultat in `build/device-backup/` (gitignored) + un tar deja extras:
 | Arhiva | Sursa pe device | MB | Continut |
 |---|---|---|---|
 | `device-tools-backup/apkbuild-tools.tar` | `/data/local/tmp/apkbuild` | 806 | jdk, kotlin, d8, aapt2, apksigner, gradle, sdk, javahost, tlib, classpath, aar_res, android.jar, build_apk.sh, jrun.sh, release.keystore |
-| `device-backup/odc-build-inputs.tar` | `/data/local/tmp/odcassets` + `odclibs` | 1459 | assets (python + toolchain cu rust-libs.tar) + `lib/arm64-v8a/*.so` — exact inputurile pentru build-ul APK-ului odc_agent |
 | `device-backup/app-toolchain.tar` | `files/toolchain` | 1856 | toolchain nativ de runtime (clang/cmake/ninja, deps, rust, sysroot, perl) |
 | `device-backup/app-state.tar` | `files/` | 300 | codul Python VIU (`python/agent.py`), `pyhome/`, `site_packages_keep/`, `home/`, `memory.md` — FARA secrete |
 | `device-backup/hdbuild-gradle.tar` | `files/hdbuild` | 2625 | stack Gradle complet (jdk/gradle/sdk cu platforma android-36 + platform-tools, `gradlehome` = cache OFFLINE, tlib, hdvoice_proj, logurile de build) |
 | `device-backup/sdcard-repo.tar` | `/sdcard/.../workspace/android_agent` | 69 | clone-ul git de pe telefon |
 
-Excluse intentionat: proiectele si iesirile (`odc*/`, `*.apk`, `work*/`, `agent2/`, `tmp/`),
+Excluse intentionat: proiectele si iesirile (`*.apk`, `work*/`, `agent2/`, `tmp/`),
 `gradlehome`-ul din apkbuild (cache duplicat), si **secretele** (`files/home/.ssh`, `key.txt`).
 
 Verificare: `tools/DEVICE_BACKUP_MANIFEST.md` contine SHA256 pentru fiecare arhiva, set-diff-ul
@@ -1081,108 +1045,28 @@ a javahost-ului. Re-creeaza-le dupa restore (vezi §4, capcana *symlink rupt*).
 
 ---
 
-### OP.9 — UNIFICARE: O SINGURA SURSA PENTRU AMBII AGENTI
+### OP.9 — SURSA UNICA (istoric: a doua aplicatie a fost eliminata)
 
-Cei doi agenti (`net.sys32.agent` si `net.sys32.odc_agent`) au acum **o singura sursa de cod**:
-`workspace/app/net.sys32.agent/`. Verificat mecanic: dupa normalizarea numelui de pachet, cele
-15 module Kotlin si toate fisierele Python sunt **identice** intre ei, iar fisierele Gradle si
-manifestul nu difera deloc.
+> **6 oct 2026:** `odc_agent/` (a doua aplicatie `net.sys32.odc_agent`) a fost **eliminata
+> complet** din repo si de pe device. Exista o singura sursa: `workspace/app/net.sys32.agent/`.
 
-**`odc_agent/` e GENERAT** cu:
+Pe scurt, ce a fost: o clona generata 1:1 din sursa canonica (pachet + eticheta + folder /sdcard
+rescrise), folosita ca **tinta de test** — nu puteai face `pm install -r` peste `net.sys32.agent`
+cat rula (omora procesul = agentul cu care vorbeai).
 
-```bash
-cd /home/gab/Desktop/android_agent
-bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_odc           # Gradle
-bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_flat --flat   # pt build_apk.sh
-```
+De ce a fost scoasa:
+- duplica **895 din 1816 fisiere** (~49%), aproape tot `assets/python` (stdlib + site-packages);
+- doua copii ale aceluiasi cod -> confuzie si deriva (APK-ul odc rămânea cu `android_build.py` vechi);
+- costul de intretinere > beneficiul.
 
-Generatorul face fix 4 lucruri (restul vine 1:1 din sursa canonica):
-1. rescrie `net.sys32.agent` -> `<PKG>` in toate fisierele text (77 la ultima rulare);
-2. redenumeste directorul Kotlin `java/net/sys32/agent` -> `java/net/sys32/<pkg>`;
-3. seteaza eticheta afisata (`app_name` + toate `android:label="..."`);
-4. cu `--flat`: layout plat (`AndroidManifest.xml` + `res/` + `src/` + `assets/`) si injecteaza
-   in manifest `package="..."` + `<uses-sdk minSdk 26 targetSdk 34/>` (obligatorii la build-ul
-   manual cu `build_apk.sh`; AGP le respinge, deci nu sunt in sursa canonica).
+Ce s-a pastrat din lectiile ei:
+- tool-ul `build_apk` si `assets/python/android_build.py` sunt in agentul principal (unificate inainte);
+- pipeline-ul de build pe device (`build_apk.sh`, Gradle pe device) — vezi OP.2 / OP.2-DEVICE.
 
-**Ce s-a UNIT** (odc avea, agentul principal nu):
-
-| Element | Inainte | Acum |
-|---|---|---|
-| tool `build_apk` (compilare APK pe device, offline) | doar in odc | **ambii** |
-| `assets/python/android_build.py` | doar in odc | **ambii** |
-| `build.py` cu `nativeLibraryDir` dinamic (`glob`) | doar in odc | **ambii** |
-| `build_apk.sh` cu ambalarea `lib/` (jniLibs) | doar pe device, in repo era versiunea veche | **reparat + in sursa canonica** |
-
-**Bug reparat (odc_agent nu putea porni):** `agent.py` din odc avea 3 coruptii pe intrarea
-`build_apk` din lista de tool-uri — prefixul `{"type":"function","function":` duplicat, intrarea
-`read` ramasa fara prefix si o acolada `}` in plus dupa descriere. Rezultat: `T=[...]` neinchis
--> `SyntaxError` la import -> creierul Python nu pornea din acel fisier (desi `build_apk` era
-prezent in APK). Acum: `py_compile` OK si lista se parseaza ca JSON (12 tool-uri, verificat).
-
-**Cum se construieste fiecare:**
-
-```bash
-# agentul principal (Gradle, pe laptop):
-cd workspace/app && ./build_app.sh                 # assembleDebug + install + start
-
-# odc_agent (fara PC, pe device) — vezi si odc_agent/README.md:
-bash tools/make_agent_variant.sh net.sys32.odc_agent "ODC Agent" /tmp/var_flat --flat
-adb push /tmp/var_flat/flat/{AndroidManifest.xml,res,src,assets} /data/local/tmp/apkbuild/odc_full/
-adb shell "/system/bin/sh /data/local/tmp/apkbuild/build_apk.sh /data/local/tmp/apkbuild/odc_full \
-           net.sys32.odc_agent 'ODC Agent' /data/local/tmp/apkbuild/odc_uni.apk"
-adb shell 'pm install -r --bypass-low-target-sdk-block /data/local/tmp/apkbuild/odc_uni.apk'
-```
-
-**Verificat E2E (5 oct):** build pe device `BUILD OK` (299 clase Kotlin, dex 8.7 MB, 146 libs
-native, assets 600 MB) -> APK **627 MB** semnat -> `Success` la instalare -> aplicatia porneste
-si Python ruleaza (ajunge la `Configuring... DONE` + cere cheia DeepSeek). `md5(agent.py)` din
-APK = md5 din sursa generata (`184daeca…`).
-
-**Capcane:**
-- La orice modificare de assets -> incrementeaza `.assets_vNN` (acum `.assets_v254`), altfel
-  fisierele noi NU ajung in `filesDir` pe device.
-- Fisierele mari generate NU se comit (vezi `.gitignore`): `odc_agent/.../assets/toolchain/`,
-  `assets/android_build/`, `jniLibs/`.
-- `build_apk.sh` scrie in directorul proiectului (`res.zip`, `base.apk`, `classes`, `dex`,
-  `stage`) si creeaza keystore-ul in `$PROJ/../release.keystore`.
-
-**Spatiu separat pe /sdcard (workspace + adbkey) — 5 oct**
-
-Fiecare aplicatie are folderul ei pe sdcard, dat de `res/values/strings.xml` -> `agent_home_dir`
-(canonica: `Agent` -> `/sdcard/Download/Agent`; varianta: `odc_agent` -> `/sdcard/Download/odc_agent`).
-Generatorul il seteaza singur (ultimul segment al pachetului; se poate forta cu `AGENT_HOME_DIR=`).
-
-Inainte ambii agenti foloseau `/sdcard/Download/Agent` (Kotlinul scria `AGENT_HOME` hardcodat),
-deci odc_agent vedea **aceeasi conversatie** ca agentul principal si imparteau acelasi `adbkey`.
-Fixat in **doua** locuri din `MainActivity.kt` (ambele lansari de Python):
-- `pb.environment()["AGENT_HOME"] = agentHome.absolutePath` (procesul `agent.py`);
-- `setup.environment()["AGENT_HOME"] = agentHome.absolutePath` — `adb_setup.py` rula **fara**
-  `AGENT_HOME` si cadea pe fallback-ul hardcodat (`/sdcard/Download/Agent`), deci cheia ajungea
-  tot in folderul celuilalt;
-
-plus in `adb_setup.py`: `PERSIST = os.environ["AGENT_HOME"] or "/sdcard/Download/Agent"`.
-
-Verificat pe device: `/sdcard/Download/odc_agent/workspace` creat de odc_agent (Python-ul lui
-ruleaza ca subproces al `net.sys32.odc_agent`), iar `/sdcard/Download/Agent` (5,4 GB) neatins.
-
-**Autonomia la instalare (stare 5 oct, DUPA completare)**
-
-| Ce | `net.sys32.agent` | `net.sys32.odc_agent` |
-|---|---|---|
-| `agent.py` identic (12 tool-uri, inclusiv `build_apk`) | DA | DA |
-| toolchain nativ (clang/cmake/ninja/rust/python/perl) | DA | DA |
-| stack JVM pt `build_apk` (java/javac/jlink/aapt2 ca `lib*_exec.so` + absl/protobuf/fmt) | DA | DA |
-| 146 libs native in APK | DA (983 MB APK) | DA (627 MB APK) |
-| `assets/android_build` (openjdk-21.deb 106 MB, gradle.deb 149 MB, platform36 65 MB, buildtools36 63 MB, sqlite-jdbc 13 MB) | DA (~396 MB) | DA |
-| workspace + adbkey propriu pe /sdcard | `/sdcard/Download/Agent` | `/sdcard/Download/odc_agent` |
-| => complet autonom si INDEPENDENT dupa instalare | **DA** | **DA** |
-
-Cum s-a egalizat agentul principal: cele 126 libs care lipseau s-au copiat in
-`app/src/main/jniLibs/arm64-v8a/` (sursa pe device: `/data/local/tmp/apkbuild/javahost/lib/arm64-v8a/`,
-130 fisiere; NU s-a suprascris `libc++_shared.so` care exista deja), iar `assets/android_build/`
-(7 fisiere, 381 MB, md5 identic) s-a extras din APK-ul odc. Fisierele NU se comit
-(`.gitignore`: `workspace/.../assets/android_build/` + `*.so` + `lib*_exec.so`), deci un clone
-proaspat trebuie sa le copieze din nou (vezi si `tools/backup_device_tools.sh`).
+**Cum testezi acum un build nou fara sa intrerupi agentul:** instaleaza peste o alta aplicatie de
+test (ex. HelloWorld) sau pe un dispozitiv/emulator secundar. Daca instalezi peste agent, procesul
+Python se opreste — il repornesti cu `am start -n net.sys32.agent/.MainActivity` (starea se
+pastreaza in `files/`).
 
 ---
 
@@ -1190,16 +1074,16 @@ proaspat trebuie sa le copieze din nou (vezi si `tools/backup_device_tools.sh`).
 
 ```bash
 bash tools/wipe_device.sh            # dezinstaleaza net.sys32.*, goleste /data/local/tmp si /sdcard
-bash tools/install_agents_fresh.sh   # push + install ambii agenti, start, accessibility
+bash tools/install_agents_fresh.sh   # push + install agent, start, accessibility
 ```
 
 Capcane la instalare curata (dovedite):
 - `startCore()` (extragerea assets) ruleaza **doar** daca TOATE permisiunile esentiale sunt
   acordate: CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION, READ_CONTACTS, READ_MEDIA_IMAGES,
   POST_NOTIFICATIONS. Fara ele aplicatia asteapta si NU extrage nimic:
-  `for p in net.sys32.agent net.sys32.odc_agent; do for x in READ_MEDIA_IMAGES CAMERA RECORD_AUDIO ACCESS_FINE_LOCATION READ_CONTACTS POST_NOTIFICATIONS; do adb shell pm grant $p android.permission.$x; done; adb shell appops set $p MANAGE_EXTERNAL_STORAGE allow; done`
+  `for p in net.sys32.agent; do for x in READ_MEDIA_IMAGES CAMERA RECORD_AUDIO ACCESS_FINE_LOCATION READ_CONTACTS POST_NOTIFICATIONS; do adb shell pm grant $p android.permission.$x; done; adb shell appops set $p MANAGE_EXTERNAL_STORAGE allow; done`
 - dupa un wipe, cheia API dispare (sta in `files/`, privat) -> se scrie inapoi prin `run-as`
-  (ambele aplicatii sunt debuggable: build-ul Gradle debug) SAU se lipeste in UI.
+  (aplicatia e debuggable: build-ul Gradle debug) SAU se lipeste in UI.
 - build de la zero cu `rust-libs.tar.gz`: `compressDebugAssets` are nevoie de heap
   (`org.gradle.jvmargs=-Xmx5120m`), altfel `Java heap space`.
 
@@ -1294,7 +1178,7 @@ ent Android (net.sys32.agent)
 ## CUPRINS
 
 > ⚠️ **DOUA APLICATII, O SINGURA SURSA DE COD:** `net.sys32.agent` (sursa canonica,
-> `workspace/app/net.sys32.agent/`) si `net.sys32.odc_agent` (`odc_agent/` — **GENERAT**,
+> `workspace/app/net.sys32.agent/`) — sursa unica.
 > NU se editeaza direct). Vezi prima secțiune a acestui fisier.
 >
 > **OPERATIUNI (build/install/debug/verificare): vezi sectiunea „🛠 OPERATIUNI"
