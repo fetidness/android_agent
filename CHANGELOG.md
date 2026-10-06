@@ -9,7 +9,42 @@
 
 ---
 
-### 2026-10-06 (ELIMINARE `odc_agent` + fix auto-scroll + fix `android_build._assets_dir`)
+### 2026-10-06 (build_apk fără intervenții manuale: preflight + auto-heal + instalare pe device)
+
+> **Context:** raportul `RAPORT_build_apk.md` (scris de agent pe device după compilarea
+> HelloWorld) documenta 6 probleme, dintre care **5 erau deja reparate în sursa din repo**
+> (versiunea din APK era mai veche: 449 linii vs 660 în repo) și **1 rămăsese deschisă**
+> (P6 — instalarea APK-ului din `filesDir`). Au fost închise toate + robustețe suplimentară.
+
+**`assets/python/android_build.py`**
+- **`selftest()` (nou)**: rulează REAL `java -version` și `aapt2 version` cu mediul de build
+  și raportează `{ok, checks, healed}`. Simpla existență a binarului nu mai e considerată dovadă.
+- **auto-heal `libX.so.N` (nou)**: `_heal_missing()` extrage numele lipsă din eroarea linker-ului
+  (`library "libz.so.1" not found`), găsește `<lib>.so` și creează symlink-ul versionat în toate
+  directoarele din `LD_LIBRARY_PATH`, apoi reîncearcă binarul. Repară exact clasa de erori
+  P4/P5 care înainte cerea 4 symlink-uri manuale.
+- **`build()` face preflight** (selftest înainte de Gradle) — dacă lipsesc libs, se repară înainte
+  de `:app:processDebugResources`, nu după.
+- **`publish()` + `install()` (P6, nou)**: `build()` copiază automat APK-ul în
+  `/sdcard/Download/Agent/workspace/`; `install()` face publish -> `cp` în `/data/local/tmp` ->
+  `pm install -r` **ca shell uid=2000** prin `adb_client.shared()`, pentru că `system_server`
+  nu poate citi `filesDir` (context `app_data_file`). Fără el se raportează comanda manuală.
+- **`setup()`**: apelează `selftest()` la final și îl loghează (`LAST_SELFTEST`).
+- **`_selfheal()`**: poate re-aplica acum și `agent.py` (nu doar `android_build.py`) din
+  `Download/Agent/agent_patches/`, deci patch-urile ajung pe device fără rebuild de APK.
+- CLI: acțiuni noi `install` și `selftest`.
+
+**`assets/python/agent.py`**
+- tool `build_apk`: acțiuni noi `install` (apk= sau dir=) și `selftest`; descriere actualizată
+  (publish automat, instalare prin shell).
+- `run_build_apk_tool`: după `build` întoarce și câmpul `install` cu comanda gata de rulat.
+- strategia agentului (MISSION RULES) — regula **(3v)**: fluxul corect `setup` -> `build` ->
+  `install`, interzis `pm install` pe căi din `filesDir`, cu eroarea SELinux exactă de recunoscut.
+
+**Documentație**: `readme.md` (fluxul complet + secțiunea de robustețe), `RAPORT_build_apk.md`
+(raportul optimizat al agentului, cu mapa „deployat vs sursă").
+
+
 
 > **Decizie de arhitectura:** a doua aplicatie (`net.sys32.odc_agent`) a fost **eliminata
 > complet** din repo si de pe device. Exista o singura aplicatie: `net.sys32.agent`.

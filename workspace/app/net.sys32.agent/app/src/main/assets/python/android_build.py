@@ -14,7 +14,7 @@ Folosire:
   apk = android_build.build("/path/project")
   print(android_build.verify(apk))
 """
-import os, sys, shutil, subprocess, zipfile, tarfile, io, time, glob, json
+import os, sys, shutil, subprocess, zipfile, tarfile, io, time, glob, json, re
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # _HERE = <filesDir>/python ; filesDir = parintele
@@ -231,7 +231,7 @@ def _selfheal(files=None):
        Nu face nimic daca PATCHES nu exista (nu e fatal)."""
     if not os.path.isdir(PATCHES):
         return
-    mine = files or ["android_build.py", "git_build_zero_driver.py", "devhelper.py"]
+    mine = files or ["android_build.py", "agent.py", "git_build_zero_driver.py", "devhelper.py"]
     healed = []
     PD = _pkg_patches_dir()
     for f in mine:
@@ -535,6 +535,14 @@ def setup(force=False):
 
     open(marker, "w").write(str(time.time()))
     log("setup OK")
+    # ★ selftest: verifica REAL ca java + aapt2 POT rula si repara singur clasa de erori
+    #   'library libX.so.N not found' (care inainte cerea 4 symlink-uri manuale, vezi RAPORT_build_apk.md).
+    st = selftest()
+    if st.get("ok"):
+        log("setup: selftest OK (java + aapt2 ruleaza)")
+    else:
+        log("setup: ATENTIE selftest:", json.dumps(st))
+    globals()["LAST_SELFTEST"] = st
     return True
 
 def _env(jh_lib=None):
@@ -575,6 +583,16 @@ def build(project_dir, task="assembleDebug", timeout=3600):
                         except Exception: pass
     except Exception as e:
         log("links versionate warn:", e)
+    # ★ preflight: java/aapt2 trebuie sa POATA rula inainte de a porni Gradle; daca lipseste
+    #   o lib versionata, o reparam acum (in loc sa esueze Gradle la :app:processDebugResources)
+    st = selftest()
+    globals()["LAST_SELFTEST"] = st
+    if not st.get("ok"):
+        log("preflight ATENTIE (continui, dar build-ul poate cadea):", json.dumps(st))
+    elif st.get("healed"):
+        log("preflight: auto-heal ->", ",".join(st["healed"]))
+    else:
+        log("preflight OK (java + aapt2 ruleaza)")
     env = _env()
     launcher = GRADLE + "/lib/gradle-launcher-9.8.0.jar"
     if not os.path.exists(launcher):
@@ -633,7 +651,173 @@ def build(project_dir, task="assembleDebug", timeout=3600):
     if not ok:
         log(txt[-3000:]); 
     apk = (fresh[-1] if fresh else (apks[-1] if apks else None))
+    # ★ publica APK-ul pe sdcard: system_server NU poate citi filesDir (context app_data_file),
+    #   deci instalarea are nevoie de o copie intr-o zona citibila (vezi install()).
+    if ok and apk:
+        pub = publish(apk)
+        if pub:
+            log("install: build_apk action=install apk=" + pub)
     return apk if ok else None
+
+# ==================== P6: publish + install fara PC ====================
+#
+# DE CE: `pm install` este facut de system_server, care NU are voie SELinux sa citeasca
+# fisiere cu context app_data_file (adică orice e in filesDir). Simptomul raportat:
+#   System server has no access to read file context u:object_r:app_data_file:s0
+#   (from path .../files/tmp/.../app-debug.apk) -> Error: Unable to open file
+# Rezolvare automata: copiem APK-ul pe sdcard (context media_rw, citibil), apoi il ducem in
+# /data/local/tmp prin shell (uid=2000) si rulam `pm install` TOT ca shell.
+
+PERSIST_DIRS = ["/storage/emulated/0/Download/Agent/workspace",
+                "/sdcard/Download/Agent/workspace"]
+
+def _persist_dir():
+    """Directorul de pe sdcard unde agentul isi publica artefactele (vizibil operatorului)."""
+    for d in PERSIST_DIRS:
+        try:
+            os.makedirs(d, exist_ok=True)
+            if os.access(d, os.W_OK):
+                return d
+        except Exception:
+            continue
+    return TMP
+
+def _shell(cmd, timeout=300):
+    """Ruleaza o comanda ca uid=2000(shell) prin conexiunea ADB partajata a agentului.
+       Intoarce (True, output) la succes, (None, motiv) daca shell-ul nu e disponibil."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import adb_client
+        out = adb_client.shared().shell(cmd, timeout=timeout)
+        return True, (out or "")
+    except Exception as e:
+        return None, "adb_client indisponibil: %s" % e
+
+def publish(apk):
+    """Copiaza APK-ul pe sdcard (citibil de shell si de operator). Intoarce calea noua."""
+    if not apk or not os.path.exists(apk):
+        return None
+    d = _persist_dir()
+    dst = os.path.join(d, os.path.basename(apk))
+    try:
+        shutil.copy2(apk, dst)
+        os.chmod(dst, 0o644)
+        log("publicat:", dst)
+        return dst
+    except Exception as e:
+        log("publish err:", e)
+        return None
+
+def _latest_apk(project_dir):
+    apks = sorted(glob.glob(project_dir + "/app/build/outputs/apk/**/*.apk", recursive=True),
+                  key=os.path.getmtime)
+    return apks[-1] if apks else None
+
+def install(apk=None, project_dir=None, extra_args=("--bypass-low-target-sdk-block",)):
+    """Instaleaza un APK construit pe device, FARA PC. Idempotent, cu fallback raportat clar.
+
+    Flux: publish pe sdcard -> cp in /data/local/tmp (ca shell) -> pm install -r (ca shell).
+    Intoarce dict: {ok, apk, published, remote, out, error?, manual?}
+    """
+    res = {"ok": False, "apk": apk or None}
+    if not apk:
+        apk = _latest_apk(project_dir) if project_dir else None
+    if not apk or not os.path.exists(apk):
+        res["error"] = "apk lipsa (da apk=<fisier> sau dir=<proiect>)"
+        return res
+    res["apk"] = apk
+    pub = publish(apk)
+    res["published"] = pub
+    if not pub:
+        res["error"] = "nu am putut publica APK-ul pe sdcard"
+        return res
+    tmp = "/data/local/tmp/" + os.path.basename(apk)
+    cmd = ("cp '%s' '%s' && chmod 644 '%s' && pm install -r %s '%s'"
+           % (pub, tmp, tmp, " ".join(extra_args), tmp))
+    ok, out = _shell(cmd, timeout=600)
+    if ok is None:
+        res["error"] = out
+        res["manual"] = "adb shell cp %s %s && adb shell pm install -r %s %s" % (
+            pub, tmp, " ".join(extra_args), tmp)
+        return res
+    res["remote"] = tmp
+    res["out"] = out.strip()[-1500:]
+    res["ok"] = "Success" in out
+    if not res["ok"]:
+        res["error"] = "pm install nu a raportat Success"
+    return res
+
+# ==================== selftest + auto-vindecare (libX.so.N) ====================
+
+_MISSING_LIB_RE = re.compile(r'library "([^"]+\.so(?:\.\d+)+)" not found')
+
+def _heal_missing(names):
+    """Pentru 'libX.so.N' lipsa: gaseste libX.so si creeaza symlink-ul versionat in toate
+       directoarele din LD_LIBRARY_PATH. Exact clasa de erori java/libz.so.1 si aapt2/libexpat.so.1."""
+    dirs = [TC + "/deps/lib", BUILD + "/tlib", BUILD + "/aapt2bin", GRADLE + "/lib", TC + "/bin",
+            JDK + "/lib", JDK + "/lib/server"]
+    if NATIVE:
+        dirs.insert(0, NATIVE)
+    made = []
+    for nm in names:
+        base = re.sub(r"\.so\.\d+$", ".so", nm)
+        src = None
+        for d in dirs:
+            p = os.path.join(d, base)
+            if os.path.exists(p):
+                src = p; break
+        if not src:
+            continue
+        for d in dirs:
+            try:
+                os.makedirs(d, exist_ok=True)
+                l = os.path.join(d, nm)
+                if not os.path.lexists(l):
+                    os.symlink(src, l)
+                    made.append(nm)
+            except Exception:
+                pass
+    made = sorted(set(made))
+    if made:
+        log("  heal: symlink-uri versionate create:", ", ".join(made))
+    return made
+
+def _run_tool(args, timeout=90):
+    try:
+        r = subprocess.run(args, env=_env(), capture_output=True, text=True, timeout=timeout)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except Exception as e:
+        return -1, str(e)
+
+def selftest(heal=True):
+    """Verifica REAL ca java si aapt2 POT rula (nu doar ca exista) si repara singur
+       symlink-urile versionate lipsa. Raspuns: {ok, checks, healed}."""
+    out = {"ok": True, "checks": {}, "healed": []}
+    checks = [("java", [JDK + "/bin/java", "-version"]),
+              ("aapt2", [BUILD + "/aapt2bin/aapt2", "version"])]
+    for name, cmd in checks:
+        if not os.path.exists(cmd[0]):
+            out["checks"][name] = "lipsa binar: " + cmd[0]
+            out["ok"] = False
+            continue
+        rc, txt = _run_tool(cmd)
+        if rc == 0:
+            out["checks"][name] = "ok"
+            continue
+        miss = _MISSING_LIB_RE.findall(txt)
+        if miss and heal:
+            fixed = _heal_missing(miss)
+            if fixed:
+                out["healed"] += fixed
+                rc2, txt2 = _run_tool(cmd)
+                if rc2 == 0:
+                    out["checks"][name] = "ok (dupa auto-heal: %s)" % ",".join(fixed)
+                    continue
+                txt = txt2
+        out["checks"][name] = "EROARE rc=%s: %s" % (rc, txt.strip()[-300:])
+        out["ok"] = False
+    out["healed"] = sorted(set(out["healed"]))
+    return out
 
 def verify(apk):
     if not apk or not os.path.exists(apk):
@@ -653,8 +837,11 @@ def verify(apk):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("folosire: android_build.py setup|build <dir>|verify <apk>"); sys.exit(1)
+        print("folosire: android_build.py setup|build <dir>|verify <apk>|install <apk>|selftest"); sys.exit(1)
     c = sys.argv[1]
     if c == "setup": print(json.dumps({"ok": setup()}))
     elif c == "build": apk = build(sys.argv[2]); print(json.dumps(verify(apk) if apk else {"ok": False}))
+    elif c == "install":
+        print(json.dumps(install(apk=(sys.argv[2] if len(sys.argv) > 2 else None)), indent=2))
+    elif c == "selftest": print(json.dumps(selftest(), indent=2))
     elif c == "verify": print(json.dumps(verify(sys.argv[2]), indent=2))

@@ -29,7 +29,10 @@ odc). Intretinerea depasea beneficiul.
 
 ### Build pe device (2 metode, ambele dovedite)
 1. **Gradle complet pe device** (unealta `build_apk`): JDK 21 + Gradle 9.8 + AGP + SDK 36
-   in `files/android_build/`. `build_apk setup` o data, apoi `build_apk build dir=<proiect>`.
+   in `files/android_build/`. Flux: `build_apk action=setup` o data, apoi
+   `build_apk action=build dir=<proiect>` (face preflight java+aapt2 si publica APK-ul in
+   `/sdcard/Download/Agent/workspace/`), apoi `build_apk action=install dir=<proiect>`
+   (publish -> `/data/local/tmp` -> `pm install` ca shell uid=2000, fara PC).
    Dovedit: HelloWorld, VocisHD.
 2. **Nativ, fara Gradle** (`build_apk.sh`): JDK 21 + kotlinc + aapt2 + d8 + apksigner
    + android.jar API 36. 6 pasi: aapt2 link -> kotlinc -> javac R.java -> d8 -> ambalare -> semnare.
@@ -39,9 +42,20 @@ odc). Intretinerea depasea beneficiul.
 ## 🤖 COMPILARE APK PE DEVICE (autonom, offline)
 
 Agentul poate compila aplicatii Android (APK) direct pe telefon, **offline** — toate uneltele
-vin in APK. Modul: `android_build.py` (tool `build_apk`: setup / build dir=<proiect> / verify).
+vin in APK. Modul: `android_build.py` (tool `build_apk`: `setup` / `build dir=<proiect>` /
+`verify apk=<fisier>` / `install apk=<fisier>|dir=<proiect>` / `selftest`).
 Dovedit E2E: HelloWorld Android compilat -> APK, instalat, rulat. Detalii in
-`BUILD_ANDROID_ON_DEVICE.md` si in memoria agentului.
+`BUILD_ANDROID_ON_DEVICE.md`, in `RAPORT_build_apk.md` (capcanele reale) si in memoria agentului.
+
+**Robustete (ce nu mai cere intervenție manuala):**
+- `setup()` extrage singur assets-urile din `base.apk` daca nu le gaseste pe disc
+  (`_extract_assets_from_apk`) si face `selftest` la final;
+- `build()` face **preflight** (ruleaza REAL `java -version` + `aapt2 version`) si
+  **auto-vindeca** clasa de erori `library libX.so.N not found` (libz.so.1, libexpat.so.1)
+  creand symlink-urile versionate lipsa, apoi reincearca;
+- `build()` **publica** APK-ul in `/sdcard/Download/Agent/workspace/` (system_server nu poate
+  citi `filesDir` — context `app_data_file`);
+- `install()` face tot fluxul de instalare ca shell uid=2000, fara PC.
 
 ---
 
@@ -481,8 +495,8 @@ run-as net.sys32.agent sh -c "cd /data/data/net.sys32.agent/files/python && \
 - **`toolchain`**: compilare nativa C/C++/Fortran/Rust + `pip_install` cu extensii C
   (clang-21, lld, ninja, cmake, cargo, maturin, perl) — verificat cu `selftest` (lipsa: [])
 - **`build_apk`**: compileaza APK-uri Android pe device, offline (JDK 21 + Gradle 9.8 +
-  AGP + SDK 36 in `files/android_build/`) — dovedit E2E (HelloWorld construit, semnat,
-  instalat, rulat)
+  AGP + SDK 36 in `files/android_build/`) si le INSTALEAZA singur (`action=install`, prin
+  shell uid=2000) — dovedit E2E (HelloWorld construit, semnat, instalat, rulat)
 
 **CU calculator** (+ 30s o data): se deblocheaza `adbsh` (uid=2000), pentru ce app-ul NU
 poate face singur: `pm grant`, `settings put`, `dumpsys`, `logcat`, `input` fara
