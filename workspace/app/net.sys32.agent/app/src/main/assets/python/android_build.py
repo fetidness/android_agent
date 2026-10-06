@@ -24,20 +24,21 @@ if not os.path.isdir(F):
     F = "/data/data/net.sys32.agent/files"
 
 BUILD = F + "/android_build"
-ASSETS = _HERE + "/../assets/android_build"      # langa python/ sunt assets? de obicei nu
+ASSETS = os.path.dirname(_HERE) + "/assets/android_build"  # <filesDir>/assets (FIX: MainActivity copiaza assets-urile aici)
 # assets-ul real ajunge in filesDir la prima rulare (MainActivity le copiaza) - incercam mai multe
 def _assets_dir():
-    for c in [F + "/assets/android_build",
-              os.path.dirname(F) + "/assets/android_build",
-              os.path.dirname(os.path.dirname(_HERE)) + "/assets/android_build",
-              _HERE + "/../../assets/android_build"]:
+    # ★ FIX 2026-10-06: candidatii vechi NU gaseau niciodata <filesDir>/assets/android_build
+    # (doi dintre ei se rezolvau amandoi la <app-root>/assets, cu un nivel prea sus) ->
+    # pe odc_agent agentul a fost nevoit sa creeze manual symlink-ul assets -> files/assets.
+    # Calea REALA unde MainActivity copiaza assets-urile este <filesDir>/assets/android_build.
+    cands = [os.path.dirname(_HERE) + "/assets/android_build",   # <filesDir>/assets  (REAL)
+             F + "/assets/android_build",                        # <app-root>/assets
+             os.path.dirname(F) + "/assets/android_build"]
+    for c in cands:
         if os.path.isdir(c) and os.path.exists(c + "/platform36.zip"): return c
-    # niciuna nu are platform36.zip: intoarce prima care exista (macar e un inceput)
-    for c in [F + "/assets/android_build",
-              os.path.dirname(F) + "/assets/android_build",
-              _HERE + "/../../assets/android_build"]:
+    for c in cands:
         if os.path.isdir(c): return c
-    return F + "/assets/android_build"
+    return cands[0]
 
 def _find_base_apk():
     """Gaseste base.apk al acestei aplicatii (assets-urile stau in APK, nu pe disc)."""
@@ -208,6 +209,19 @@ def _deb_extract(deb, dest, strip_prefix=True, only=None):
 # ★ SURSA DE ADEVAR pentru patch-uri: copia de pe sdcard (supravietuieste clear data)
 # calea patch-urilor de supravietuire (pentru restore dupa clear data); configurabila prin env
 PATCHES = os.environ.get("AGENT_PATCHES_DIR", "/storage/emulated/0/Download/Agent/agent_patches")
+# ★ FIX 2026-10-06: patch-urile sunt PER PACHET. Folderul comun contine versiunea pentru
+# net.sys32.agent (cu "net.sys32.agent" hardcodat in _find_base_apk/_link_versions); daca
+# odc_agent l-ar lua, ar cauta pachetul GRESIT. Deci fiecare app are subfolderul lui:
+#   agent_patches/<ultimul-segment-pachet>/   ex. agent_patches/odc_agent/
+def _pkg_patches_dir():
+    """Subfolderul de patch-uri specific pachetului acestei aplicatii (daca exista)."""
+    pkg = (F or "").rstrip("/").split("/")[-1]      # ex. net.sys32.odc_agent
+    if pkg:
+        for cand in (PATCHES + "/" + pkg, PATCHES + "/" + pkg.split(".")[-1]):
+            if os.path.isdir(cand):
+                return cand
+    return PATCHES
+
 _SELF = os.path.abspath(__file__)
 
 def _selfheal(files=None):
@@ -219,8 +233,9 @@ def _selfheal(files=None):
         return
     mine = files or ["android_build.py", "git_build_zero_driver.py", "devhelper.py"]
     healed = []
+    PD = _pkg_patches_dir()
     for f in mine:
-        s = PATCHES + "/" + f
+        s = PD + "/" + f
         d = os.path.dirname(_SELF) + "/" + f
         try:
             if not os.path.exists(s):
@@ -234,7 +249,7 @@ def _selfheal(files=None):
             pass
     # memoria: in filesDir radacina
     try:
-        sm = PATCHES + "/memory.md"
+        sm = _pkg_patches_dir() + "/memory.md"
         dm = F + "/memory.md"
         if os.path.exists(sm) and (not os.path.exists(dm) or os.path.getsize(dm) < os.path.getsize(sm)):
             shutil.copy2(sm, dm); healed.append("memory.md")
