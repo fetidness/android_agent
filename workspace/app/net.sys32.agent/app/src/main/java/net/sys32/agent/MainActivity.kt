@@ -49,6 +49,10 @@ class MainActivity : AppCompatActivity() {
     private var permRequested = false   // anti-bucla: cerem o singura data automat din onResume
     @Volatile private var followTail = true
     private var programmaticScroll = false
+    // ★ FIX 2026-10-07: ultima inaltime cunoscuta a ScrollView-ului. Folosita ca sa
+    // distingem o derulare REALA a userului de o ajustare automata de scroll facuta de
+    // ScrollView cand i se schimba inaltimea (IME show/hide).
+    private var lastScrollHeight = 0
     // true DOAR cat timp degetul utilizatorului atinge efectiv ScrollView-ul.
     // Fara el, TextView-ul selectabil (setTextIsSelectable) emite scroll
     // "fals" (re-layout/focus) pe care listener-ul il lua drept derulare manuala.
@@ -195,25 +199,49 @@ class MainActivity : AppCompatActivity() {
         }
 
         scroll.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
+            val h = scroll.height
+            // ★ FIX 2026-10-07: cand inaltimea viewport-ului se schimba (tastatura apare/
+            // dispare), ScrollView-ul isi ajusteaza SINGUR scrollY ca sa-si pastreze
+            // continutul. Acel eveniment NU e o derulare a userului. Daca il tratam ca
+            // atare, un "sus" automat oprea urmarirea cozii pe vecie (auto-scroll mort).
+            val heightChanged = h != lastScrollHeight
+            lastScrollHeight = h
             val child = scroll.getChildAt(0)
-            val dist = if (child != null) child.bottom - scroll.height - scrollY else Int.MAX_VALUE
-            // Reaccionam DOAR la derularea facuta de degetul utilizatorului (userTouching).
-            // Orice alta schimbare de scroll (programatica, sau cauzata de TextView-ul
-            // selectabil) este ignorata -> nu mai opreste urmarirea din greseala.
-            if (!programmaticScroll && userTouching) {
-                if (scrollY < oldScrollY) {
-                    // userul a derulat SUS -> oprim urmarirea
-                    followTail = false
-                } else if (scrollY > oldScrollY && dist <= 32) {
-                    // userul a derulat JOS si a ajuns (aproape) la fund -> reluam
-                    followTail = true
+            val dist = if (child != null) child.bottom - h - scrollY else Int.MAX_VALUE
+            if (!programmaticScroll && !heightChanged) {
+                // Reaccionam DOAR la derularea facuta de degetul utilizatorului (userTouching).
+                // Orice alta schimbare de scroll (programatica, sau cauzata de TextView-ul
+                // selectabil) este ignorata -> nu mai opreste urmarirea din greseala.
+                if (userTouching) {
+                    if (scrollY < oldScrollY) {
+                        // userul a derulat SUS -> oprim urmarirea
+                        followTail = false
+                    } else if (scrollY > oldScrollY && dist <= 32) {
+                        // userul a derulat JOS si a ajuns (aproape) la fund -> reluam
+                        followTail = true
+                    }
                 }
+                // daca suntem EFECTIV la fund (prin orice mijloc), urmarirea reia de la sine.
+                // pragul e mai generos (32px): dupa trunchierea textului (MAX_UI_CHARS) si pe
+                // ecrane mici, 'dist' poate rămâne 10-25px chiar cand esti vizual la fund,
+                // iar pragul vechi de 8px facea auto-scroll-ul sa "moara" fara motiv.
+                if (dist <= 32) followTail = true
             }
-            // daca suntem EFECTIV la fund (prin orice mijloc), urmarirea reia de la sine.
-            // pragul e mai generos (32px): dupa trunchierea textului (MAX_UI_CHARS) si pe
-            // ecrane mici, 'dist' poate rămâne 10-25px chiar cand esti vizual la fund,
-            // iar pragul vechi de 8px facea auto-scroll-ul sa "moara" fara motiv.
-            if (!programmaticScroll && dist <= 32) followTail = true
+        }
+
+        // ★ FIX 2026-10-07 (tastatura ascunsa -> conversatia "sare" mai sus):
+        // La IME HIDE, inaltimea ScrollView-ului CREȘTE, layout-ul se reface DAR scrollY
+        // rămâne numeric la fel -> continutul nu mai e lipit de marginea de jos (rămâne gol
+        // sub el) si, fiindca pozitia nu s-a schimbat, NU vine niciun eveniment de scroll
+        // care sa re-armeze urmarirea. Re-fixam coada explicit.
+        // IMPORTANT: re-fixam DOAR la crestere (ascundere tastatura). La DESCHIDERE (viewport
+        // scade) NU atingem scroll-ul: acolo EditText-ul isi castiga focusul, iar un
+        // fullScroll in acel moment i-l fura (bug observat: nu se mai putea scrie in input).
+        scroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            val grew = (bottom - top) > (oldBottom - oldTop)
+            if (grew && followTail) {
+                scroll.post { scrollToBottom() }
+            }
         }
 
         val row = LinearLayout(this).apply {
@@ -329,6 +357,9 @@ class MainActivity : AppCompatActivity() {
         try { startService(Intent(this, AgentVpn::class.java)) } catch (_: Exception) {}
         root.postDelayed({ try { requestVpn() } catch (_: Exception) {} }, 3000)
         instance = this
+        // ★ FIX 2026-10-07: pornim cu inaltimea curenta cunoscuta (altfel primul eveniment
+        // de scroll ar fi tratat gresit ca "schimbare de inaltime").
+        scroll.post { lastScrollHeight = scroll.height }
     }
 
     private val VPN_REQ = 9002

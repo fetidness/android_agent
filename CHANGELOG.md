@@ -9,6 +9,35 @@
 
 ---
 
+### 2026-10-07 (1) (fix UI: auto-scroll „moare" la ascunderea tastaturii)
+
+> **Context:** la un task lung (multi-pas, generare continuă), dacă ascundeai tastatura
+> în timp ce agentul genera, conversația „sărea" (ieșea din ecran / rămânea gol) și
+> auto-scroll-ul nu mai re-fixa coada; textul nou curgea fără să fie urmărit. Reproducibil
+> 100% pe Samsung (SM-A366B) cu un task de 4 pași + comut tastatură.
+
+**Cauza:** `root` pierde padding-ul de IME la ascunderea tastaturii (insets listener din
+`MainActivity`), deci `ScrollView`-ul își schimbă înălțimea. Android păstrează `scrollY`
+numeric, dar re-layout-ul lasă conținutul ne-lipit de marginea de jos; și, fiindcă poziția
+de scroll nu s-a schimbat, NU vine niciun eveniment de scroll care să re-armeze urmărirea.
+
+**Fix (`MainActivity.kt`):**
+- `scroll.addOnLayoutChangeListener`: când `ScrollView`-ul CREȘTE în înălțime (adică
+  tastatura se ascunde) și urmăream coada (`followTail`), re-fixăm la fund după layout.
+  Se face DOAR la creștere — la deschidere nu atingem scroll-ul (vezi capcana mai jos).
+- `setOnScrollChangeListener`: distingem derularea REALĂ a userului de ajustarea automată
+  de scroll produsă de schimbarea înălțimii (`lastScrollHeight`). Fără asta, ajustarea era
+  luată drept „user a derulat sus" și oprea urmărirea pe vecie.
+
+**Capcană descoperită și evitată:** prima variantă re-fixa coada și la DESCHIDEREA tastaturii
+(inclusiv din insets listener). `fullScroll` în acel moment fura focusul de pe `EditText`
+(care îl câștiga exact atunci) → nu se mai putea scrie în input. Fix corect = re-fixare doar
+la creșterea viewport-ului.
+
+**Verificat pe device:** A/B cu APK pre-fix vs post-fix, același scenariu — pre-fix: ecran
+gol (conversația dispărută); post-fix: textul rămâne vizibil și lipit la fund, `followTail`
+rămâne true la fiecare ciclu. Scrierea în input funcționează (`focused=true`).
+
 ### 2026-10-06 (3) (curățare: variantele istorice de agent eliminate)
 
 > **Context:** repo-ul avea în rădăcină 7 fișiere moarte (variante inghețate din

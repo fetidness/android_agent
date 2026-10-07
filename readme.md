@@ -2151,7 +2151,8 @@ Aceste limitari NU se rezolva din permisiuni - doar cu root.
 - Memorie persistenta cu auto-invatare (filtrata pe relevanta + mediu)
 - Workspace vizibil: /sdcard/Download/Agent/ (memorie, context) + workspace/
 - Comenzi: /help /learn /auto-learn /mem /ctx /compact /verbose /nospin /where /run /run_su /watch /reset /exit
-- Interfata terminal in engleza, raspuns in limba operatorului, auto-scroll corect,
+- Interfata terminal in engleza, raspuns in limba operatorului, auto-scroll corect
+  (urmareste coada si cind tastatura se ascunde in timpul generarii),
   stop generare, fara tabele pe ecran mic
 - Iconita profesionala
 - Ruleaza in BACKGROUND (foreground service): taskul continua cind app-ul e minimizat
