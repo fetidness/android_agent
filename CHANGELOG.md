@@ -9,7 +9,27 @@
 
 ---
 
-### 2026-10-07 (1) (fix UI: auto-scroll „moare" la ascunderea tastaturii)
+### 2026-10-07 (2) (fix UI: „nu pot scrie în input" — fullScroll fura focusul)
+
+> **Context:** după fix-ul de auto-scroll, userul a raportat că NU mai poate scrie în
+> câmpul de input (tastatura se deschide, dar tastele nu ajung nicăieri). Reproducibil:
+> `EditText.focused=false` iar IME-ul rămâne atașat de TextView-ul terminalului.
+
+**Cauza:** `ScrollView.fullScroll(FOCUS_DOWN)` (folosit de auto-scroll) apelează intern
+`scrollAndFocus()` → `findFocusableViewInBounds()` → **`requestFocus()`** pe primul view
+focusabil din interiorul ScrollView-ului. TextView-ul terminalului e focusabil din cauza
+`setTextIsSelectable(true)`, deci `fullScroll` îi dădea LUI focusul, furându-l de pe
+`EditText`. IME-ul rămânea atașat de TextView → tastele nu mai ajungeau în input.
+
+**Fix (`MainActivity.kt`):** auto-scroll-ul nu mai folosește `fullScroll`, ci o derulare
+proprie care nu atinge focusul — `pinToBottom()`: `scroll.scrollTo(0, child.height -
+scroll.height)`. `scrollTo` nu mișcă focusul deloc.
+
+**Verificat pe device (instalare curată, date șterse):** scriere OK simplu ȘI în timpul
+generării (`focused=true` păstrat după mai multe cicluri de tastatură); auto-scroll nu a
+regresat (fără salt/gol la ascunderea tastaturii).
+
+### 2026-10-07 (1) (fix: auto-scroll „moare" la ascunderea tastaturii)
 
 > **Context:** la un task lung (multi-pas, generare continuă), dacă ascundeai tastatura
 > în timp ce agentul genera, conversația „sărea" (ieșea din ecran / rămânea gol) și

@@ -541,16 +541,29 @@ class MainActivity : AppCompatActivity() {
         programmaticScroll = true
         val doScroll = Runnable {
             if (!followTail && !force) return@Runnable
-            scroll.fullScroll(ScrollView.FOCUS_DOWN)
+            pinToBottom()
         }
         scroll.post(doScroll)
         output.post(doScroll)               // dupa ce TextView-ul e re-layoutat
         scroll.postDelayed(doScroll, 32)    // a doua sansa (text greu/ANSI)
         scroll.postDelayed({
             // eliberam abia dupa ce layout-ul s-a asezat; thencorectam si deriva
-            if (followTail || force) scroll.fullScroll(ScrollView.FOCUS_DOWN)
+            if (followTail || force) pinToBottom()
             scroll.postDelayed({ programmaticScroll = false }, 32)
         }, 96)
+    }
+
+    /** ★ FIX 2026-10-07 (focus): deruleaza la fund FARA sa atinga focusul.
+     *  ScrollView.fullScroll(FOCUS_DOWN) foloseste intern scrollAndFocus() ->
+     *  findFocusableViewInBounds() -> requestFocus() pe primul view focusabil de la
+     *  interior. TextView-ul terminalului e focusabil (setTextIsSelectable(true)), asa ca
+     *  acel requestFocus FURA focusul de pe EditText-ul de input; IME-ul rămâne atasat de
+     *  TextView si userul NU MAI POATE SCRIE (simptom real raportat).
+     *  scrollTo() nu atinge deloc focusul -> nu mai fura nimic. */
+    private fun pinToBottom() {
+        val child = scroll.getChildAt(0) ?: return
+        val max = (child.height - scroll.height).coerceAtLeast(0)
+        scroll.scrollTo(0, max)
     }
 
     // Opreste generarea curenta: trimite SIGINT procesului Python. Agentul prinde
