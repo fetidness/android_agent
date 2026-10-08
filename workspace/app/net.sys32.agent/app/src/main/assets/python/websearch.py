@@ -73,7 +73,7 @@ def marginalia(q, n=15):
 def ddg(q, n=10):
     r = requests.post("https://html.duckduckgo.com/html/", data={"q": q}, headers=UA, timeout=20)
     if r.status_code == 202 or "challenge" in r.text.lower():
-        return {"error": "DDG CAPTCHA - foloseste bing()/wikipedia()"}
+        return {"error": "DDG CAPTCHA - use bing()/wikipedia()"}
     s = BeautifulSoup(r.text, "lxml")
     return [{"title": a.get_text(" ", strip=True), "url": a.get("href")}
             for a in s.select("a.result__a")[:n]]

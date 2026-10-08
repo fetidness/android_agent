@@ -82,7 +82,7 @@ def _extract_assets_from_apk(dest=None, force=False):
                     if n.startswith("assets/android_build/") and not n.endswith("/")]
             if not need:
                 return None
-            log(f"  assets: extrag {len(need)} fisiere din {os.path.basename(apk)}...")
+            log(f"  assets: extracting {len(need)} files from {os.path.basename(apk)}...")
             os.makedirs(dest, exist_ok=True)
             for n in need:
                 rel = n[len("assets/android_build/"):]
@@ -256,8 +256,8 @@ def _selfheal(files=None):
     except Exception:
         pass
     if healed:
-        log("self-heal: re-aplicat din sdcard ->", ", ".join(healed),
-            "(reincarca modulul pentru a folosi versiunile noi)")
+        log("self-heal: re-applied from sdcard ->", ", ".join(healed),
+            "(reload the module to use the new versions)")
     return healed
 
 def setup(force=False):
@@ -279,9 +279,9 @@ def setup(force=False):
         st = selftest()
         globals()["LAST_SELFTEST"] = st
         if not st.get("ok"):
-            log("setup (marker existent): ATENTIE selftest:", json.dumps(st))
+            log("setup (marker exists): selftest WARNING:", json.dumps(st))
         return True
-    log("setup: extrag uneltele (poate dura)...")
+    log("setup: extracting the tools (may take a while)...")
     os.makedirs(BUILD, exist_ok=True); os.makedirs(TMP, exist_ok=True)
     A = _assets_dir()
     if not (os.path.isdir(A) and os.path.exists(A + "/platform36.zip")):
@@ -356,10 +356,10 @@ def setup(force=False):
         zp = A + "/platform36.zip"
         if not os.path.exists(zp):
             # ★ assets lipsa = setup imposibil; spunem EXPLICIT ce si de unde (nu eroare obscura)
-            log("  EROARE: lipseste %s" % zp)
-            log("  assets dir = %s (exista: %s)" % (A, os.path.isdir(A)))
-            log("  repara: _extract_assets_from_apk() sau reinstaleaza APK-ul")
-            raise RuntimeError("assets/android_build/platform36.zip lipseste - setup imposibil")
+            log("  ERROR: missing %s" % zp)
+            log("  assets dir = %s (exists: %s)" % (A, os.path.isdir(A)))
+            log("  fix: _extract_assets_from_apk() or reinstall the APK")
+            raise RuntimeError("assets/android_build/platform36.zip is missing - setup impossible")
         if os.path.exists(zp):
             with zipfile.ZipFile(zp) as z:
                 for name in z.namelist():
@@ -439,7 +439,7 @@ def setup(force=False):
             os.makedirs(incv1, exist_ok=True)
             with zipfile.ZipFile(zf) as z:
                 z.extractall(TC + "/sysroot/usr/include")
-            log("  libc++ extras din zip")
+            log("  libc++ extracted from the zip")
         except Exception as e: log("  libcxx err:", e)
     # symlink-uri bin (clang/cmake/ninja/etc -> APK libs)
     if NATIVE:
@@ -554,9 +554,9 @@ def setup(force=False):
     #   'library libX.so.N not found' (care inainte cerea 4 symlink-uri manuale, vezi RAPORT_build_apk.md).
     st = selftest()
     if st.get("ok"):
-        log("setup: selftest OK (java + aapt2 ruleaza)")
+        log("setup: selftest OK (java + aapt2 run)")
     else:
-        log("setup: ATENTIE selftest:", json.dumps(st))
+        log("setup: selftest WARNING:", json.dumps(st))
     globals()["LAST_SELFTEST"] = st
     return True
 
@@ -610,15 +610,15 @@ def build(project_dir, task="assembleDebug", timeout=3600):
     st = selftest()
     globals()["LAST_SELFTEST"] = st
     if not st.get("ok"):
-        log("preflight ATENTIE (continui, dar build-ul poate cadea):", json.dumps(st))
+        log("preflight WARNING (continuing, but the build may fail):", json.dumps(st))
     elif st.get("healed"):
         log("preflight: auto-heal ->", ",".join(st["healed"]))
     else:
-        log("preflight OK (java + aapt2 ruleaza)")
+        log("preflight OK (java + aapt2 run)")
     env = _env()
     launcher = GRADLE + "/lib/gradle-launcher-9.8.0.jar"
     if not os.path.exists(launcher):
-        log("EROARE: gradle-launcher lipsa"); return None
+        log("ERROR: gradle launcher missing"); return None
     cmd = [JDK + "/bin/java",
            f"-Duser.home={BUILD}", "-Djdk.lang.Process.launchMechanism=VFORK",
            f"-Djava.io.tmpdir={TMP}", f"-Djava.library.path={TMP}:{GRADLE}/lib",
@@ -848,13 +848,13 @@ def install(apk=None, project_dir=None, extra_args=("--bypass-low-target-sdk-blo
     if not apk:
         apk = _latest_apk(project_dir) if project_dir else None
     if not apk or not os.path.exists(apk):
-        res["error"] = "apk lipsa (da apk=<fisier> sau dir=<proiect>)"
+        res["error"] = "missing apk (pass apk=<file> or dir=<project>)"
         return res
     res["apk"] = apk
     pub = publish(apk)
     res["published"] = pub
     if not pub:
-        res["error"] = "nu am putut publica APK-ul pe sdcard"
+        res["error"] = "could not publish the APK to sdcard"
         return res
     tmp = "/data/local/tmp/" + os.path.basename(apk)
     cmd = ("cp '%s' '%s' && chmod 644 '%s' && pm install -r %s '%s'"
@@ -882,9 +882,9 @@ def install(apk=None, project_dir=None, extra_args=("--bypass-low-target-sdk-blo
             res["system_installer"] = br
             if br.get("ok"):
                 res["installer_opened"] = True
-                res["next"] = ("confirma instalarea pe ECRANUL telefonului (tap pe Install); "
-                               "apoi verifica cu adbsh 'pm list packages | grep <pachet>'")
-                res["out"] = ("instalator de sistem deschis pentru %s "
+                res["next"] = ("confirm the install ON THE PHONE SCREEN (tap Install); "
+                               "then verify with adbsh 'pm list packages | grep <package>'")
+                res["out"] = ("system installer opened for %s "
                               "(adb indisponibil: %s)" % (os.path.basename(pub), (out or "")[:140]))
                 return res
             res["error"] = "instalator de sistem: " + str(br.get("error"))
@@ -959,7 +959,7 @@ def selftest(heal=True):
               ("aapt2", [BUILD + "/aapt2bin/aapt2", "version"])]
     for name, cmd in checks:
         if not os.path.exists(cmd[0]):
-            out["checks"][name] = "lipsa binar: " + cmd[0]
+            out["checks"][name] = "missing binary: " + cmd[0]
             out["ok"] = False
             continue
         rc, txt = _run_tool(cmd)
@@ -973,17 +973,17 @@ def selftest(heal=True):
                 out["healed"] += fixed
                 rc2, txt2 = _run_tool(cmd)
                 if rc2 == 0:
-                    out["checks"][name] = "ok (dupa auto-heal: %s)" % ",".join(fixed)
+                    out["checks"][name] = "ok (after auto-heal: %s)" % ",".join(fixed)
                     continue
                 txt = txt2
-        out["checks"][name] = "EROARE rc=%s: %s" % (rc, txt.strip()[-300:])
+        out["checks"][name] = "ERROR rc=%s: %s" % (rc, txt.strip()[-300:])
         out["ok"] = False
     out["healed"] = sorted(set(out["healed"]))
     return out
 
 def verify(apk):
     if not apk or not os.path.exists(apk):
-        return {"ok": False, "error": "apk lipsa"}
+        return {"ok": False, "error": "missing apk"}
     out = {"ok": True, "path": apk, "size_mb": round(os.path.getsize(apk)/1e6, 1)}
     try:
         with zipfile.ZipFile(apk) as z:
@@ -999,7 +999,7 @@ def verify(apk):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("folosire: android_build.py setup|build <dir>|verify <apk>|install <apk>|selftest"); sys.exit(1)
+        print("usage: android_build.py setup|build <dir>|verify <apk>|install <apk>|selftest"); sys.exit(1)
     c = sys.argv[1]
     if c == "setup": print(json.dumps({"ok": setup()}))
     elif c == "build": apk = build(sys.argv[2]); print(json.dumps(verify(apk) if apk else {"ok": False}))

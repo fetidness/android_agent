@@ -61,20 +61,20 @@ def _rsa_key_parts(priv=True):
     S("BN_bn2bin", [ctypes.c_void_p, ctypes.c_char_p], ctypes.c_int)
     b = c.BIO_new_file(KEY.encode(), b"r")
     if not b:
-        raise RuntimeError("nu pot deschide adbkey")
+        raise RuntimeError("cannot open adbkey")
     try:
         pkey = c.PEM_read_bio_PrivateKey(b, None, None, None)
     finally:
         c.BIO_free(b)
     if not pkey:
-        raise RuntimeError("cheia privata nu se poate citi")
+        raise RuntimeError("the private key cannot be read")
     rsa = c.EVP_PKEY_get0_RSA(pkey)
     if not rsa:
-        raise RuntimeError("nu e cheie RSA")
+        raise RuntimeError("not an RSA key")
     nb_ = ctypes.c_void_p(); eb_ = ctypes.c_void_p(); db_ = ctypes.c_void_p()
     c.RSA_get0_key(rsa, ctypes.byref(nb_), ctypes.byref(eb_), ctypes.byref(db_))
     if not nb_:
-        raise RuntimeError("nu e cheie RSA")
+        raise RuntimeError("not an RSA key")
     def _int(bn):
         size = (c.BN_num_bits(bn) + 7) // 8
         buf = ctypes.create_string_buffer(size)
@@ -99,7 +99,7 @@ def _rsa_sign_token_manual(token):
     h = hashlib.sha1(token).digest()
     di = _SHA1_DIGESTINFO + h
     if k < len(di) + 11:
-        raise RuntimeError("cheie prea mica pentru PKCS#1 v1.5")
+        raise RuntimeError("key too small for PKCS#1 v1.5")
     em = b"\x00\x01" + b"\xff" * (k - 3 - len(di)) + b"\x00" + di
     return pow(int.from_bytes(em, "big"), d, n).to_bytes(k, "big")
 
@@ -130,7 +130,7 @@ def _rsa_sign_token(token):
     """
     sig = _rsa_sign_token_manual(token)
     if not _rsa_verify_token(token, sig):
-        raise RuntimeError("semnatura proprie nu se verifica - nu o trimit")
+        raise RuntimeError("our own signature does not verify - not sending it")
     return sig
 
 
@@ -148,21 +148,21 @@ def _rsa_sign_token_libcrypto(token):
                    ctypes.POINTER(ctypes.c_uint), ctypes.c_void_p], ctypes.c_int)
     b = c.BIO_new_file(KEY.encode(), b"r")
     if not b:
-        raise RuntimeError("nu pot deschide adbkey")
+        raise RuntimeError("cannot open adbkey")
     try:
         pkey = c.PEM_read_bio_PrivateKey(b, None, None, None)
     finally:
         c.BIO_free(b)
     if not pkey:
-        raise RuntimeError("cheia privata nu se poate citi")
+        raise RuntimeError("the private key cannot be read")
     rsa = c.EVP_PKEY_get0_RSA(pkey)
     if not rsa:
-        raise RuntimeError("nu e cheie RSA")
+        raise RuntimeError("not an RSA key")
     sig = ctypes.create_string_buffer(4096)
     slen = ctypes.c_uint(0)
     rc = c.RSA_sign(64, token, len(token), sig, ctypes.byref(slen), rsa)   # 64 = NID_sha1
     if rc != 1:
-        raise RuntimeError("RSA_sign a esuat (rc=%d)" % rc)
+        raise RuntimeError("RSA_sign failed (rc=%d)" % rc)
     return sig.raw[:slen.value]
 
 
@@ -441,10 +441,10 @@ class Adb:
                 cmd,a0,a1,d = self._recv(10)
             except socket.timeout:
                 raise RuntimeError(
-                    "adbd asteapta APROBAREA cheii aplicatiei: accepta dialogul 'Allow USB "
-                    "debugging' pe telefon (daca nu apare: Developer options -> dezactiveaza si "
-                    "reactiveaza USB debugging sau Wireless debugging, apoi Allow cu 'Always allow'; "
-                    "de pe PC se poate si 'adb tcpip 5555')")
+                    "adbd is WAITING FOR the app key to be APPROVED: accept the 'Allow USB "
+                    "debugging' dialog on the phone (if it does not appear: Developer options -> disable and "
+                    "re-enable USB debugging or Wireless debugging, then Allow with 'Always allow'; "
+                    "from a PC you can also run 'adb tcpip 5555')")
             if cmd == A_CNXN:
                 self.banner = d.decode(errors="replace").split("\0")[0]
                 print("[adb] ✓ AUTORIZAT:", self.banner[:70], flush=True); return True
@@ -479,13 +479,13 @@ class Adb:
                 _auth_left -= 1
                 if _auth_left <= 0:
                     raise RuntimeError(
-                        "adbd nu a acceptat autorizarea (semnatura + cheie publica). Pe telefon: "
-                        "Developer options -> dezactiveaza si reactiveaza Wireless debugging / USB "
-                        "debugging si apasa Allow (cu 'Always allow'); de pe PC: adb tcpip 5555. "
-                        "SAU (fara dialog): copiaza cheia deja autorizata a operatorului in "
-                        "files/op_adbkey + files/op_adbkey.pub - semnatura e acceptata instant.")
+                        "adbd did not accept the authorisation (signature + public key). On the phone: "
+                        "Developer options -> disable and re-enable Wireless debugging / USB "
+                        "debugging and press Allow (with 'Always allow'); from a PC: adb tcpip 5555. "
+                        "OR (no dialog): copy the key the operator already authorised into "
+                        "files/op_adbkey + files/op_adbkey.pub - the signature is then accepted instantly.")
             else:
-                raise RuntimeError("neasteptat %#x a0=%d" % (cmd,a0))
+                raise RuntimeError("unexpected %#x a0=%d" % (cmd,a0))
     def _drain(self):
         """Empties leftovers... (serializat: vezi _SOCK_LOCK)."""
         with _SOCK_LOCK:
@@ -672,7 +672,7 @@ class Adb:
         out = _demux_shellv2(raw)
         txt = out.decode(errors="replace")
         if timed_out and not txt.strip():
-            txt = "[adb] comanda a depasit %ss (procesul poate continua in fundal)" % int(timeout)
+            txt = "[adb] command exceeded %ss (the process may still run in the background)" % int(timeout)
         return txt
 
     def ping(self):

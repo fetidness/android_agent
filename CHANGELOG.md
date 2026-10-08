@@ -9,6 +9,49 @@
 
 ---
 
+### 2026-10-08 (4) (mesaje in ENGLEZA + self-heal vizibil IMEDIAT la deschidere, in fundal)
+
+> **Cerut de operator:** (a) „doresc sa fie in engleza toate mesajele"; (b) „as dori ca atunci
+> cand deschidem agentul sa fie afisat un mesaj gen ca self healing e in progress si sa
+> asteptam apoi porneste self-heal"; (c) „a aparut foarte greu ca self heal e in progress.
+> trebuie sa apara exact dupa ce deschidem agentul apoi self heal in fundal sa ruleze".
+
+**(a) Traducere completa a mesajelor in engleza** (toate fisierele Python: `agent.py`,
+`toolchain.py`, `selfheal.py`, `android_build.py`, `adb_client.py`, `build.py`, `jsengine.py`,
+`jsfetch.py`, `scraper.py`, `websearch.py`, `adb_setup.py`): linii de ecran, rezultate de unelte,
+diagnostice, descrieri de tool-uri si **ghidul modelului** (`ANDROID_GUIDE` / MISSION RULES,
+regulile 3a-3v, 4a, 4b). Renumeri pentru consistenta: coduri de diagnostic
+(`rust_lipsa`→`missing_rust`, `umbrire_site_packages`→`shadowed_site_packages`, ...), chei
+`toolchain.selftest()` (`lipsa`→`missing`, `detalii`→`details`, `ram_liber_mb`→`ram_free_mb`, ...),
+chei `selfheal` (`reparate`→`repaired`, `nereparabile`→`unresolved`, `faza`→`phase`, ...),
+etichete (`pasi:`→`steps:`, `reparat:`→`repaired:`). Raman in romana DOAR docstring-urile,
+comentariile, regexurile interne de detectie a formularii si documentatia repo-ului.
+
+**(b)+(c) Self-heal vizibil IMEDIAT + in fundal.** Problema: mesajul de progres venea din procesul
+python, care porneste abia DUPA extragerea assets (zeci de secunde) -> operatorul nu vedea nimic si
+credea ca aplicatia s-a blocat.
+
+* `MainActivity.startCore()`: linie albastra **INSTANT la deschidere** (inainte de orice munca
+  grea): `[self-heal] in progress, please wait - checking the environment (launchers, packages,
+  toolchain)`. Verificat pe device: apare in ~2 s de la `am start`.
+* Heal-ul de la pornire ruleaza **in FUNDAL**, intr-un thread daemon: promptul e disponibil
+  imediat. Ca sa nu existe cursa intre un task si reparatii, `call_tool` asteapta terminarea lui
+  (`_SELFHEAL_DONE.wait(60)`, de obicei < 1 s).
+* Python-ul NU mai afiseaza linia de progres la startup (`show_progress=False`) - mesajul vine din
+  Kotlin, deci nu se dubleaza; linia de progres cu timp scurs rămâne pentru `pip_install`,
+  hook-ul de eroare si `/heal`.
+* Rezultatul (python, colorat): `[self-heal] OK - 1 repaired in 305 ms: shadowed: pathspec,
+  scikit_build_core,setuptools_scm` (verde) / `OK - environment healthy (7 checks, 33 ms)` (gri) /
+  `UNRESOLVED: ...` (rosu).
+
+**Build:** schimbarea din Kotlin cere un build gradle complet (`:app:assembleDebug`, ~2-3 min cu
+cache-ul cald), nu doar repack de assets - APK-ul rezultat contine si assets-urile actualizate si
+e semnat cu debug keystore-ul corect (`ANDROID_USER_HOME=/home/gab/.config/.android`).
+
+**Verificat pe SM-A366B:** la 2 s dupa deschidere pe ecran: `[self-heal] in progress, please wait
+- checking the environment (launchers, packages, toolchain)`; la ~42 s (dupa extragere + pornirea
+python): `[self-heal] OK - 1 repaired in 305 ms: shadowed: pathspec,scikit_build_core,setuptools_scm`.
+
 ### 2026-10-08 (3) (self-heal: feedback pe ecran — linie live + rezultat colorat)
 
 > **Cerut de operator:** „ar fi indicat sa arate pe ecran ca ruleaza procesul de self-healing

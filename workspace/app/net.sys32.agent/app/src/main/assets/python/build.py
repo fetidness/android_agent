@@ -52,7 +52,7 @@ def compile_c(c_file, module_name):
     out = _sh(cmd, timeout=180)
     print(out.strip()[:800])
     if not os.path.exists(out_path):
-        print("EROARE: nu s-a produs .so")
+        print("ERROR: no .so was produced")
         return None
     print("compilat:", out_path, os.path.getsize(out_path), "bytes")
     return out_path
@@ -73,7 +73,7 @@ def install(so_path, module_name):
     # copie si in libs (pentru linker namespace)
     os.makedirs(LIBS, exist_ok=True)
     shutil.copy2(so_path, os.path.join(LIBS, os.path.basename(dst)))
-    print("instalat:", dst)
+    print("installed:", dst)
     return dst
 
 
@@ -84,7 +84,7 @@ def main():
     c_file = sys.argv[1]
     module = sys.argv[2]
     if not os.path.exists(c_file):
-        print("nu exista:", c_file); return
+        print("does not exist:", c_file); return
     so = compile_c(c_file, module)
     if so:
         install(so, module)

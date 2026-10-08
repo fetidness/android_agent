@@ -85,6 +85,6 @@ if __name__ == "__main__":
         print(__doc__); sys.exit(0)
     try:
         r = run(sys.argv[1])
-        print(r if r is not None else "(fara valoare)")
+        print(r if r is not None else "(no value)")
     except Exception as e:
-        print("EROARE JS:", e); sys.exit(1)
+        print("JS ERROR:", e); sys.exit(1)

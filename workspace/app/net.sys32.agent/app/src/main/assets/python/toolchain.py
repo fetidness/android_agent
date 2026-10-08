@@ -131,12 +131,12 @@ def preflight():
     out = {}
     for k in ("c_compile_link", "cxx_stl", "python_extension", "fortran_compile", "rust", "cargo",
               "cmake", "ninja", "make", "pkg_config", "lld", "setuptools", "pybind11", "cython",
-              "ram_liber_mb", "lipsa", "verdict", "detalii"):
+              "ram_free_mb", "missing", "verdict", "details"):
         if k in r:
             out[k] = r[k]
     out["api"] = _device_api()
-    out["nota"] = ("preflight == selftest (compilare+linkare reala, in procesul aplicatiei); "
-                   "varianta veche pe script shell era perimata si raporta fals totul")
+    out["nota"] = ("preflight == selftest (a REAL compile+link inside the app process); "
+                   "the old shell-script variant was stale and reported everything as false")
     return out
 
 def doctor():
@@ -179,8 +179,8 @@ def doctor():
     r["site-packages"] = (lambda p: (os.path.isdir(p) and len(os.listdir(p)) or 0))(
         F + "/pyhome/lib/python3.14/site-packages")
     if r.get("clang") and os.path.isdir(ROOT + "/sysroot/usr/include"):
-        r["verdict"] = ("OK - toolchain din APK (clang 21 + sysroot + deps + make/ninja), "
-                        "se foloseste CA APP: pip_install compileaza direct")
+        r["verdict"] = ("OK - toolchain from the APK (clang 21 + sysroot + deps + make/ninja), "
+                        "used AS THE APP: pip_install compiles directly")
     else:
         r["verdict"] = "INCOMPLET - reinstaleaza APK-ul (lipsesc assets bin/sysroot)"
     return r
@@ -310,8 +310,8 @@ def check():
     need["deps_ok"] = _hd
     need["prefix"] = ROOT
     if _hc and _hs:
-        need["verdict"] = ("OK - toolchain din APK (clang 21 + sysroot + deps), "
-                           "se foloseste CA APP: pip_install compileaza direct")
+        need["verdict"] = ("OK - toolchain from the APK (clang 21 + sysroot + deps), "
+                           "used AS THE APP: pip_install compiles directly")
     else:
         need["verdict"] = "INCOMPLET - reinstaleaza APK-ul (lipsesc assets bin/sysroot)"
     return need
@@ -394,7 +394,7 @@ print("NEEDCXX " + " ".join(need))
         files = line[0].split(" ", 1)[1].split() if line and len(line[0].split(" ", 1)) > 1 else []
         if not files:
             if os.environ.get("AGENT_VERBOSE"):
-                print("[toolchain] libc++_shared: nimic de adaugat")
+                print("[toolchain] libc++_shared: nothing to add")
             return
         bat = "L=%s; PE=%s/patchelf; " % (ROOT + "/usr/lib", BIN)
         bat += "; ".join('"$PE" --add-needed libc++_shared.so "%s" 2>/dev/null' % f for f in files)
@@ -402,7 +402,7 @@ print("NEEDCXX " + " ".join(need))
         out2 = _sh("export LD_LIBRARY_PATH=$L:$LD_LIBRARY_PATH; " + bat, 900)
         if "CXXDONE" in out2:
             if os.environ.get("AGENT_VERBOSE"):
-                print("[toolchain] libc++_shared adaugat pe %d .so" % len(files))
+                print("[toolchain] libc++_shared added to %d .so files" % len(files))
     except Exception as e:
         print("[toolchain] libcxx err:", e)
 
@@ -857,7 +857,7 @@ def _ensure_libcxx():
                 z.extractall(inc)
             if os.path.exists(marker):
                 if os.environ.get("AGENT_VERBOSE"):
-                    print("[toolchain] libc++ complet extras (%d fisiere)" % n)
+                    print("[toolchain] libc++ fully extracted (%d files)" % n)
                 return inc
         except Exception:
             pass
@@ -3355,10 +3355,10 @@ def selftest():
             _k, _, _v = _l.partition(":")
             _mi[_k.strip()] = int(_v.split()[0])
         _av = _mi.get("MemAvailable", 0) // 1024
-        r["ram_liber_mb"] = _av
+        r["ram_free_mb"] = _av
         if _av < 900:
-            r["ram_atentionare"] = ("doar %d MB liberi - build-urile Rust pot cadea cu SIGSEGV "
-                                    "fara mesaj (inchide aplicatii de fundal)" % _av)
+            r["ram_warning"] = ("only %d MB free - Rust builds can die with SIGSEGV "
+                                    "and no message (close background apps)" % _av)
     except Exception:
         pass
 
@@ -3462,28 +3462,28 @@ def selftest():
     # 8. ce lipseste si ce se poate instala cu ce avem
     _bools = [k for k, v in r.items() if isinstance(v, bool)]
     r["ok"] = sorted([k for k in _bools if r[k]])
-    r["lipsa"] = sorted([k for k in _bools if not r[k]])
-    r["timpi_s"] = tm
+    r["missing"] = sorted([k for k in _bools if not r[k]])
+    r["times_s"] = tm
     # ★ ce este INSTALAT concret: fara asta agentul inventa nume (libstdc++/gfortran) in rapoarte
-    r["detalii"] = {
+    r["details"] = {
         "c_cxx": "clang 21.1.8 + libc++ (LLVM; NU libstdc++)",
         "fortran": "FLANG 21.1.8 (LLVM; NU gfortran)",
-        "rust": "rustc/cargo 1.98.1 + maturin 1.15.0 (backend Rust pentru pip)",
+        "rust": "rustc/cargo 1.98.1 + maturin 1.15.0 (Rust backend for pip)",
         "build_systems": "cmake 3.31.6, ninja, make 4.4.1, meson, scikit-build-core, setuptools, cython, pybind11",
         "perl": "perl 5.42.0",
-        "binare": "ELF in lib-ul APK (lib*_exec.so) + symlink in files/tmp si files/toolchain/bin",
-        "rulare_elf": "/apex/com.android.runtime/bin/linker64 <binar> sau adbsh (exec direct interzis)",
-        "build_dir": "files/tmp (nu /sdcard: noexec)",
+        "binaries": "ELF inside the APK lib dir (lib*_exec.so) + symlink in files/tmp and files/toolchain/bin",
+        "run_elf": "/apex/com.android.runtime/bin/linker64 <binary> or adbsh (direct exec is forbidden)",
+        "build_dir": "files/tmp (NOT /sdcard: noexec)",
     }
     if r.get("python_extension") and r.get("cxx_stl"):
-        r["verdict"] = ("TOOLCHAIN COMPLET pentru pip: extensii C si C++ compilate+linkate pe "
-                        "device" + (" | ATENTIE (nu sunt capabilitati): "
+        r["verdict"] = ("FULL TOOLCHAIN for pip: C and C++ extensions compiled+linked on "
+                        "device" + (" | WARNING (not capabilities): "
                         + ", ".join(sorted([k for k in ("cmake", "rust", "perl", "cargo")
                                             if not r.get(k)])) if any(not r.get(k) for k in ("cmake", "rust", "perl", "cargo")) else ""))
     elif r.get("c_compile_link"):
-        r["verdict"] = "PARTIAL: C merge, C++/extensii Python nu - vezi cheile *_error"
+        r["verdict"] = "PARTIAL: C works, C++/Python extensions do not - see the *_error keys"
     else:
-        r["verdict"] = "RUPT: nici macar C nu compileaza - vezi c_error"
+        r["verdict"] = "BROKEN: not even C compiles - see c_error"
     return r
 
 
@@ -3540,7 +3540,7 @@ if __name__ == "__main__":
         print(json.dumps({k: v for k, v in env_vars().items() if v}, indent=2, ensure_ascii=False))
     elif _a == "env-file":
         _write_env_file()
-        print("fisier: " + ROOT + "/env.sh")
+        print("file: " + ROOT + "/env.sh")
     elif _a == "heal":
         print(json.dumps(heal_site_packages(), indent=2, ensure_ascii=False))
     elif _a == "audit":
@@ -3550,4 +3550,4 @@ if __name__ == "__main__":
     elif _a == "fix":
         print(json.dumps(install(), indent=2, ensure_ascii=False))
     else:
-        print("actiune necunoscuta: " + str(_a))
+        print("unknown action: " + str(_a))

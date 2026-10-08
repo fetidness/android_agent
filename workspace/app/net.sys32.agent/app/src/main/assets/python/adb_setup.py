@@ -72,7 +72,7 @@ def ensure_key():
     bn = c.BN_new(); c.BN_set_word(bn, 65537)
     rsa = c.RSA_new()
     if c.RSA_generate_key_ex(rsa, 2048, bn, None) != 1:
-        log("EROARE RSA"); return False
+        log("RSA ERROR"); return False
     pkey = c.EVP_PKEY_new(); c.EVP_PKEY_set1_RSA(pkey, rsa)
     b = c.BIO_new_file(LKEY.encode(), b"w")
     c.PEM_write_bio_PrivateKey(b, pkey, None, None, 0, None, None); c.BIO_free(b)
@@ -109,7 +109,7 @@ def ensure_key():
     rr_be = rr_int.to_bytes(N, "big")
     blob = (struct.pack(">I", N) + mod_be + struct.pack(">I", n0inv)
             + rr_be + struct.pack(">I", 65537))
-    assert len(blob) == 524, "android_pubkey blob trebuie 524 bytes, e %d" % len(blob)
+    assert len(blob) == 524, "android_pubkey blob must be 524 bytes, got %d" % len(blob)
     open(LPUBC,"w").write(base64.b64encode(blob).decode())
     # ★ salvez in /sdcard (persistent!)
     try:

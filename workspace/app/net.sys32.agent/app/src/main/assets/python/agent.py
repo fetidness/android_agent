@@ -983,8 +983,8 @@ def _binary_guard(o):
             trailer = " | e_type=%s" % {2: "EXEC", 3: "DYN(PIE/shared)"}.get(et, str(et))
         except Exception:
             pass
-    return ("[output BINAR %s: %d bytes, sha256=%s%s]\n(pentru binare foloseste python "
-            "(struct/hashlib) sau scrie in fisier; nu le afisa)" % (kind, len(raw),
+    return ("[BINARY output %s: %d bytes, sha256=%s%s]\n(for binary data use python "
+            "(struct/hashlib) or write it to a file; do not print it)" % (kind, len(raw),
                                                                     _h.sha256(raw).hexdigest()[:16], trailer))
 
 
@@ -1089,7 +1089,7 @@ def _learn_ckpt_save(idx):
         tmp=LEARN_CKPT+".tmp"
         with open(tmp,"w",encoding="utf-8") as f: json.dump(ck,f)
         os.replace(tmp,LEARN_CKPT)
-    except Exception as e: print(R+" [learn] nu am putut salva checkpointul: "+str(e)+N)
+    except Exception as e: print(R+" [learn] could not save the checkpoint: "+str(e)+N)
     return ck
 
 def last_learn_idx():
@@ -1124,8 +1124,8 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
-   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) SAU o cale locala/.tar.gz/URL de pe device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
-   {"type":"function","function":{"name":"build_apk","description":"COMPILEAZA UN APK ANDROID PE DEVICE, COMPLET OFFLINE (fara PC). Foloseste Gradle+AGP+JDK+aapt2+cmake+NDK toate ambalate in APK. Actions: setup (extrage uneltele din assets in filesDir, o singura data - ruleaza primul, face si selftest java+aapt2); build (compileaza un proiect Android din <dir> -> APK, face preflight si PUBLICA automat APK-ul pe /sdcard/Download/Agent/workspace/; params: dir=path proiect, task=assembleDebug default); verify (verifica un APK existent: params: apk=path); install (instaleaza APK-ul FARA PC: incearca publish -> /data/local/tmp -> pm install ca shell uid=2000; daca adb nu e autorizat, deschide INSTALATORUL DE SISTEM pe telefon (o confirmare cu un tap, fara adb); params: apk=path SAU dir=proiect); selftest (verifica daca java+aapt2 chiar ruleaza, repara singur libX.so.N lipsa). Ex: build_apk action=build dir=/path/to/android_project, apoi build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"calea proiectului Android (pentru build)"},"apk":{"type":"string","description":"calea APK-ului (pentru verify/install; la install poti da si dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) OR a local path/.tar.gz/URL on the device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"build_apk","description":"COMPILES AN ANDROID APK ON THE DEVICE, FULLY OFFLINE (no PC). Uses Gradle+AGP+JDK+aapt2+cmake+NDK, all bundled in the APK. Actions: setup (extracts the tools from assets into filesDir, once - run it first; it also self-tests java+aapt2); build (compiles an Android project from <dir> -> APK, runs preflight and automatically PUBLISHES the APK to /sdcard/Download/Agent/workspace/; params: dir=project path, task=assembleDebug default); verify (checks an existing APK: params: apk=path); install (installs the APK WITHOUT a PC: tries publish -> /data/local/tmp -> pm install as shell uid=2000; if adb is not authorised it opens the SYSTEM INSTALLER on the phone (one tap, no adb); params: apk=path OR dir=project); selftest (checks that java+aapt2 really run, heals a missing libX.so.N by itself). Ex: build_apk action=build dir=/path/to/android_project, then build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"the Android project path (for build)"},"apk":{"type":"string","description":"the APK path (for verify/install; for install you may also pass dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"help","description":"Return the FULL guide for an advanced Android topic, on demand - the detailed reflection/objects reference is kept OUT of the fixed prompt to save tokens and delivered here instead. Topics: \"reflection\" (eval ops: services/info/call/new/get/set/objs, targets svc:/class:/obj:/ctx/app, how to pass object refs), \"objects\" (proxy vs subclass for callbacks, await/events, getSystemService, Executor), \"privileged\" (capture/vpn/guard detail), \"all\" (everything). Call it the moment the native shortcuts are not enough.","parameters":{"type":"object","properties":{"topic":{"type":"string","description":"reflection | objects | privileged | all"}},"required":["topic"]}}}]
 
@@ -1191,7 +1191,7 @@ ANDROID_GUIDE=("BE EXHAUSTIVE: for any hardware/system question, do not stop at 
  "IMPORTANT: when the user asks for the CURRENT/real-time value, use location action=fresh (real new fix) - NOT action=last/current which can serve a cached fused fix - and sensors action=read/stream - do NOT keep re-reading cached values (getLastKnownLocation is cache). "
  "For complex APIs go step by step: info -> call/new -> reuse obj:<id> -> call further. "
  "Everything the Android SDK exposes to an app, you can reach."
- " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`lipsa` + a `detalii` map with the EXACT implementations. When you report, use the real names from `detalii` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_liber_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (nu raporta nimic ca lipsa fara asta): fiecare unealta este un ELF in directorul lib al APK-ului (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) cu symlink-uri in files/tmp/ SI in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). Daca o unealta pare lipsa, ruleaza `toolchain action=env` si foloseste PATH-ul returnat; NU concluziona ca o capabilitate lipseste doar pe baza unui `ls`. (3b) RUNNING A COMPILED BINARY: **testeaza intai**. Executia directa a unui ELF din filesDir CU-ul uneori merge (dovedit: subprocess.run([cale]) pe un helper git din files/toolchain a returnat rc=1 cu usage, deci a RULAT) si uneori da Permission denied (SELinux data_file_type / Android 10+). Deci: incearca intai `subprocess.run([cale])`; daca da Permission denied, atunci (a) /apex/com.android.runtime/bin/linker64 <binar> [args] - linkerul de sistem mapeaza binarul, ocolind restrictia; (b) prin adbsh (uid=2000). NU declara eu cred ca exec-ul e blocat fara test, si NU muta un proiect intreg in /data/local/tmp din presupunerea asta (intr-o sesiune reala asta a costat ~40 de pasi). (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: foloseste `toolchain`/cargo sau `$TC/bin/cargo build --release` - in `files/cargo/config.toml` linker-ul e deja setat (cc-rust) si build-ul merge (dovedit). NU te lupta cu `rustc` invocat direct: linkerul lui implicit `cc` nu se rezolva in mediul spawn-uit de rustc (pierzi zeci de pasi; cargo e calea corecta). (3e) EXEC: ruleaza binarele compilate in files/tmp in doua feluri DOVEDITE: (a) direct, ca subproces lansat din python (functia ta), sau (b) `/apex/com.android.runtime/bin/linker64 <cale absoluta>`. NU le rula prin `sh -c <cale>` si nu le rula din /sdcard: asa primesti 'Permission denied' chiar daca binarul e corect (dovedit in E2E). SCRIPTURILE shell din filesDir NU se executa (Permission denied) - pentru scripturi foloseste lansatoarele ELF (libshwrap_exec.so + <nume>.sh). (3f) CAPCANE DE RULARE (dovedite in testele din UI): linker64 cere o cale ABSOLUTA (`./x` da 'expected absolute path'). Un modul .so compilat NU poate fi importat din /sdcard (namespace de linker; /storage e noexec) - copiaza-l in files/libs sau files/tmp inainte de import. Fortran merge DOAR prin wrapperul files/tmp/flang; driverul brut toolchain/bin/flang EȘUEAZĂ cu 'gcc frontend command failed' - nu-l folosi. Daca adbsh raporteaza ca adbd asteapta autorizarea cheii, NU insista si NU repeta la infinit: foloseste uneltele native (android/ime/notif/capture) si spune operatorului sa apese Allow in dialogul de pe telefon. (3g) .so vs EXECUTABIL (a costat 20+ pasi): daca iesirea se termina in .so, compile face o LIBRARIE PARTEJATA (-shared) si NU se ruleaza (linker64 da SIGSEGV). Pentru un program care ruleaza, foloseste o iesire FARA .so (ex. t_bin): clang produce atunci un PIE executabil normal (are INTERP + entry) care ruleaza direct. (3h) cmake: PREFIX trebuie sa fie <toolchain>/sysroot/usr (NU <toolchain>: acolo nu exista include/android/api-level.h, si CMakeDetermineSystem.cmake cade - 4 incercari pierdute intr-un test real), plus CMAKE_ROOT=<toolchain>/cmake si CMAKE_SYSTEM_VERSION. (3j) Cython/pybind11 NU sunt binare: ruleaza `python3 -m cython --version` si foloseste pybind11.get_include() DOAR din pachetul de pe disc; daca intoarce o cale din .zip, headerele reale sunt in pyhome/lib/python3.14/site-packages/pybind11/include. (3k) Rust cu dependinte care au build.rs MERGE (dovedit: quote/cargo rc=0, BS_TEST BS_OK); daca vezi 'failed to run custom build command ... Permission denied', NU e o limita de executie: proiectul avea target/ copiat de pe /sdcard (noexec). Sterge target/ si rebuild in files/tmp. NU copia niciodata un proiect cu target/ de pe /sdcard. (3i) rustc invocat DIRECT are nevoie de LD_LIBRARY_PATH cu <toolchain>/rust/lib, altfel da library librustc_driver not found; cargo merge fara asta (configul e deja pregatit). (3q) GIT: exista deja `git` compilat nativ pe device (2.47.1) - NU-l recompila. Foloseste `files/tmp/git <comanda>` (lansator; binarul brut din filesDir NU se poate rula direct). Verificat functional: init/add/commit/log, push in repo local si clone HTTPS de pe GitHub (`files/tmp/git clone https://github.com/user/repo.git`). PUSH: sunt DOUA cai, ambele verificate pe device: (i) SSH - `files/tmp/git push git@github.com:user/repo.git main` (in lansator e deja setat GIT_SSH_COMMAND catre dbclient cu cheia operatorului convertita; `ls-remote`/clone/push merg); (ii) HTTPS cu token - `files/tmp/git push https://<TOKEN>@github.com/user/repo.git main`. Prefera SSH cand cheia exista. NU recompila git sau dropbear. (3r) DACA `files/toolchain/git/bin/git` LIPSESTE complet (dupa curatare/uninstall), reconstruieste git+ssh urmand RETETA EXACTA din fisierul livrat cu aplicatia: `files/python/git_build_recipe.md` (surse, ordine, flag-uri, dropbearconvert, known_hosts, verificari). NU improviza. Esentialul merge in `files/toolchain/git/` (durabil); cheia SSH sta DOAR in `files/home/.ssh/` si NU se pune niciodata in APK/assets/git. (3o) DACA O COMANDA PE CARE AI RULAT-O IDENTIC REUSESTE, dar aceeasi operatiune eșueaza in scriptul tau, suspecteaza INTÂI mediul tau (env poluat, __pycache__, cwd) si ruleaza testul intr-un subproces curat - NU săpa 20 de pasi in biblioteca. Dovedit intr-un test real: un esec 'cffi' a fost de fapt mediul sesiunii, iar comanda identica rula corect. (3p) Fisiere temporare: scrie in $TMPDIR (= files/tmp), NU in /tmp sau /sdcard (noexec). (3s) NU INVENTA CONCLUZII DESPRE MEDIU. Daca iti vine sa spui eu cred ca X e blocat (exec/SELinux/grep/path), TESTEAZA DIRECT intai: ruleaza binarul cu subprocess.run([cale]) sau `grep -n x fisier`. Intr-o sesiune reala: s-a concluzionat eu cred ca SELinux blocheaza exec din filesDir si ca grep e mut, iar AMBELE erau FALSE - s-a pierdut ~40 de pasi pe ocolisuri (mutat git in /data/local/tmp, patchat binarul). O concluzie de mediu se scrie in raport DOAR dupa un test care a esuat, cu comanda si eroarea exacta. (3t) bg: NU pune pipe in comanda (ex. `cmd | tail -20`) - log-ul jobului iese GOL si pierzi output-ul; redirectioneaza in fisier sau lasa comanda simpla. (3u) git: identitatea si .gitconfig sunt deja pregatite la files/home/.gitconfig; daca update-ref/fetch/commit crapa cu SIGSEGV, cauza tipica e identitatea lipsa (HOME greșit) - verific-o, NU rescrie binarul. NU patch-ui binarul git pentru prefix: prefixul se rezolva prin config/symlink (vezi reteta). (3m) CARGO: cu configul nostru, binarul iese in target/aarch64-linux-android/release/<nume> (NU target/release) - verifica acolo. (3n) `bg` ruleaza acum joburile IN PROCESUL APLICATIEI (uid app) - deci poate intra in filesDir si vede toolchain-ul; foloseste `bg` pentru build-uri lungi (cargo/cmake/pip). Doar comenzile care chiar au nevoie de uid 2000 (run_su, /data/local/tmp) merg prin adbsh. (3l) SCRIPTURILE TALE DE TEST: 4 din 5 opriri in ultimele 3 sesiuni E2E au fost typo-uri in propriul script python (string neinchis cu slash duplicat, lipsa `import time`, cale scrisa de mana in loc de env). Scrie scriptul, apoi ruleaza-l; daca da SyntaxError/NameError, repara-l si reia - NU re-scrie testul de la zero si NU pune flag-uri de compilare scrise de mana: foloseste CFLAGS/LDFLAGS din `toolchain action=env` (acolo e si -L spre lib/clang/21/lib/linux pentru -latomic). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH. (3v) BUILD APK PE DEVICE (tool build_apk): ruleaza `action=setup` o singura data, apoi `action=build dir=<proiect>`. build() face singur PREFLIGHT (verifica REAL ca java+aapt2 ruleaza si repara automat symlink-urile libX.so.N) si PUBLICA APK-ul in /sdcard/Download/Agent/workspace/. Pentru instalare NU copia manual APK-ul si NU incerca pm install pe o cale din filesDir: system_server nu are voie SELinux pe app_data_file (eroarea exacta: System server has no access to read file context app_data_file). Foloseste `action=install apk=<apk>` sau `action=install dir=<proiect>`: face publish -> /data/local/tmp -> pm install ca shell uid=2000 si intoarce campul out cu Success. Daca acel apel raporteaza ca adb_client lipseste, ruleaza prin adbsh exact comanda din campul manual. Diagnostice: `action=selftest` verifica java+aapt2 si auto-vindeca libX.so.N. Daca `install` raspunde cu installer_opened=true, instalatorul DE SISTEM s-a deschis pe telefon (adb-ul aplicatiei nu e autorizat de adbd): spune operatorului sa apese Install pe ecran si NU repeta apelul in bucla. (4a) BUILD FAILED WITH ModuleNotFoundError IN A SUBMODULE (pathspec._backends, scikit_build_core._compat, setuptools_scm._integration) = SHADOWING, not a missing package: the app's Python looks FIRST in <filesDir>/pyhome/lib/python3.14/site-packages and ONLY THEN in the pysitepkg.zip bundled in the APK, and that order is fixed in the binary (it CANNOT be changed from PYTHONPATH). If a TRUNCATED copy landed on disk (AAPT2 does not package folders/files starting with '_' when building the APK), the broken copy hides the COMPLETE package from the zip and every build that touches the missing submodule dies. Do NOT reinstall and do NOT pip install that package (you would recreate a copy that shadows the good one): run `toolchain action=heal` - it repairs the disk copy in place from the zip (offline, seconds, idempotent); it also runs automatically at every startup and before every pip_install. (4b) PIP FOR A PACKAGE WITHOUT A WHEEL (C/C++ extensions on Python 3.14): `toolchain action=pip_install` also accepts a LOCAL PATH (a source directory or a .tar.gz already on the device) or a URL, not only a PyPI name - use that when the sdist PyPI picks has broken build requirements. Keep `--no-build-isolation` (the environment already ships setuptools/scikit-build-core/meson/Cython), and `./configure` does NOT run directly from filesDir (noexec on shebangs) - run it as `sh ./configure`.")
+ " MISSION RULES: (0) CAPABILITY QUESTIONS (\"can you install X?\", \"what can this phone build?\") -> run `toolchain` action=selftest FIRST: it compiles+links C, C++ (libc++), a Python.h extension and Fortran (FLANG) ON THIS DEVICE in ~5s and returns `ok`/`missing` + a `details` map with the EXACT implementations. When you report, use the real names from `details` (clang/libc++/FLANG/rustc 1.98.1/maturin/cmake 3.31.6/perl 5.42) - NEVER say libstdc++ or gfortran, they are not what is installed. If a Rust/cargo build or `rustc`/`cargo --version` dies with SIGSEGV / exit -11 / 139, the FIRST thing to check is free RAM (`selftest` returns `ram_free_mb`): rustc maps librustc_driver (~90 MB) + libLLVM, and under ~900 MB free it dies silently - close background apps and retry; and NEVER REPLACE LD_LIBRARY_PATH, always PREPEND to it (dropping the APK nativeLibraryDir path is what makes rustc segfault). (1) a missing library is never a dead end - install it via `toolchain` (pip_install for PyPI incl. C/C++ extensions, compile for your own C/C++); prefer the already-installed pure-Python tools first. (2) LONG work (build/download/server, anything over ~30s) goes ONLY through `bg` - never raw nohup/& via adbsh (you will lose it and read a stale log). Before starting a new run of the same thing, check bg(action=status) and kill leftovers. (3a) WHERE THE BINARIES ARE (do not report anything as missing before this): every tool is an ELF in the APK lib dir (libclang_exec.so, libcmake_exec.so, libllvmar_exec.so, libninja_exec.so, libperl_exec.so, librustc_exec.so, libcargo_exec.so, libmaturin_exec.so, libccrust_exec.so...) with symlinks in files/tmp/ AND in files/toolchain/bin/ (cmake, ninja, make, perl, ar, llvm-ar, ranlib, nm, strip, clang, rustc, cargo, maturin, patchelf...). If a tool looks missing, run `toolchain action=env` and use the PATH it returns; do NOT conclude that a capability is missing just because of an `ls`. (3b) RUNNING A COMPILED BINARY: **test it first**. Directly executing an ELF from filesDir SOMETIMES works (proven: subprocess.run([path]) on a git helper in files/toolchain returned rc=1 with usage, so it RAN) and sometimes gives Permission denied (SELinux data_file_type / Android 10+). So: try `subprocess.run([path])` first; if it gives Permission denied, then (a) /apex/com.android.runtime/bin/linker64 <binary> [args] - the system linker maps the binary, bypassing the restriction; (b) through adbsh (uid=2000). Do NOT declare that exec is blocked without a test, and do NOT move a whole project into /data/local/tmp on that assumption (in a real session that cost ~40 steps). (3c) WHERE TO BUILD: compile in `files/tmp` (or the app workspace), NEVER on /sdcard - /storage is NOEXEC, the binary cannot even be mapped from there (couldn't map ... segment 3: Permission denied), so you would have to copy it again. `toolchain action=env` prints the exact CC/CXX/CFLAGS/LDFLAGS plus ready-to-copy examples (C, C++, Python extension, Fortran, Rust, cmake) - use it instead of guessing flags (guessing cost steps in real sessions: -latomic, --target, -resource-dir, -static-libstdc++). (3d) RUST: use `toolchain`/cargo or `$TC/bin/cargo build --release` - in `files/cargo/config.toml` the linker is already set (cc-rust) and the build works (proven). Do NOT fight directly-invoked `rustc`: its default linker `cc` does not resolve inside the environment rustc spawns (you lose dozens of steps; cargo is the right path). (3e) EXEC: run the binaries compiled in files/tmp in two PROVEN ways: (a) directly, as a subprocess launched from python (your function), or (b) `/apex/com.android.runtime/bin/linker64 <absolute path>`. Do NOT run them through `sh -c <path>` and do not run them from /sdcard: that gives 'Permission denied' even when the binary is correct (proven in E2E). Shell SCRIPTS in filesDir do NOT execute (Permission denied) - for scripts use the ELF launchers (libshwrap_exec.so + <name>.sh). (3f) RUN-TIME TRAPS (proven in the UI tests): linker64 needs an ABSOLUTE path (`./x` gives 'expected absolute path'). A compiled .so module CANNOT be imported from /sdcard (linker namespace; /storage is noexec) - copy it into files/libs or files/tmp before importing. Fortran works ONLY through the files/tmp/flang wrapper; the raw toolchain/bin/flang driver FAILS with 'gcc frontend command failed' - do not use it. If adbsh reports that adbd is waiting for the key to be authorised, do NOT insist and do NOT retry forever: use the native tools (android/ime/notif/capture) and tell the operator to press Allow in the dialog on the phone. (3g) .so vs EXECUTABLE (this cost 20+ steps): if the output ends in .so, compile builds a SHARED LIBRARY (-shared) and it does NOT run (linker64 gives SIGSEGV). For a program that runs, use an output WITHOUT .so (e.g. t_bin): clang then produces a normal PIE executable (it has INTERP + entry) that runs directly. (3h) cmake: PREFIX must be <toolchain>/sysroot/usr (NOT <toolchain>: include/android/api-level.h does not exist there and CMakeDetermineSystem.cmake fails - 4 attempts lost in a real test), plus CMAKE_ROOT=<toolchain>/cmake and CMAKE_SYSTEM_VERSION. (3j) Cython/pybind11 are NOT binaries: run `python3 -m cython --version` and use pybind11.get_include() ONLY from the on-disk package; if it returns a path inside the .zip, the real headers are in pyhome/lib/python3.14/site-packages/pybind11/include. (3k) Rust with dependencies that have a build.rs WORKS (proven: quote/cargo rc=0, BS_TEST BS_OK); if you see 'failed to run custom build command ... Permission denied', that is NOT an execution limit: the project had target/ copied from /sdcard (noexec). Delete target/ and rebuild in files/tmp. NEVER copy a project with target/ from /sdcard. (3i) directly-invoked rustc needs LD_LIBRARY_PATH to contain <toolchain>/rust/lib, otherwise it gives library librustc_driver not found; cargo works without that (the config is already prepared). (3q) GIT: `git` is already natively compiled on the device (2.47.1) - do NOT rebuild it. Use `files/tmp/git <command>` (a launcher; the raw binary in filesDir cannot be run directly). Verified working: init/add/commit/log, push to a local repo and clone over HTTPS from GitHub (`files/tmp/git clone https://github.com/user/repo.git`). PUSH: there are TWO routes, both verified on the device: (i) SSH - `files/tmp/git push git@github.com:user/repo.git main` (the launcher already sets GIT_SSH_COMMAND to dbclient with the operator key converted; `ls-remote`/clone/push work); (ii) HTTPS with a token - `files/tmp/git push https://<TOKEN>@github.com/user/repo.git main`. Prefer SSH when the key exists. Do NOT rebuild git or dropbear. (3r) IF `files/toolchain/git/bin/git` is COMPLETELY MISSING (after a cleanup/uninstall), rebuild git+ssh following the EXACT recipe shipped with the app: `files/python/git_build_recipe.md` (sources, order, flags, dropbearconvert, known_hosts, checks). Do NOT improvise. The essentials go into `files/toolchain/git/` (durable); the SSH key lives ONLY in `files/home/.ssh/` and is NEVER placed in APK/assets/git. (3o) IF A COMMAND YOU ALREADY RAN IDENTICALLY SUCCEEDS, but the same operation fails inside your script, suspect YOUR environment FIRST (polluted env, __pycache__, cwd) and run the test in a clean subprocess - do NOT dig 20 steps into the library. Proven in a real test: a 'cffi' failure was in fact the session environment, and the identical command ran fine. (3p) Temporary files: write into $TMPDIR (= files/tmp), NOT into /tmp or /sdcard (noexec). (3s) DO NOT INVENT CONCLUSIONS ABOUT THE ENVIRONMENT. If you are about to say 'I think X is blocked' (exec/SELinux/grep/path), TEST IT DIRECTLY first: run the binary with subprocess.run([path]) or `grep -n x file`. In a real session it was concluded that SELinux blocks exec from filesDir and that grep is mute, and BOTH were FALSE - ~40 steps were lost on workarounds (moving git to /data/local/tmp, patching the binary). An environment conclusion goes into the report ONLY after a test that failed, with the exact command and error. (3t) bg: do NOT put a pipe in the command (e.g. `cmd | tail -20`) - the job log comes out EMPTY and you lose the output; redirect to a file or keep the command simple. (3u) git: the identity and .gitconfig are already prepared in files/home/.gitconfig; if update-ref/fetch/commit dies with SIGSEGV, the typical cause is a missing identity (wrong HOME) - check it, do NOT rewrite the binary. Do NOT patch the git binary for the prefix: the prefix is resolved through config/symlink (see the recipe). (3m) CARGO: with our config the binary lands in target/aarch64-linux-android/release/<name> (NOT target/release) - look there. (3n) `bg` now runs jobs INSIDE THE APP PROCESS (uid app) - so it can enter filesDir and sees the toolchain; use `bg` for long builds (cargo/cmake/pip). Only commands that really need uid 2000 (run_su, /data/local/tmp) go through adbsh. (3l) YOUR OWN TEST SCRIPTS: 4 out of 5 stops in the last 3 E2E sessions were typos in your own python script (an unterminated string with a duplicated slash, a missing `import time`, a hand-written path instead of the env). Write the script, then run it; if it gives SyntaxError/NameError, fix it and resume - do NOT rewrite the test from scratch and do NOT hand-write compile flags: use CFLAGS/LDFLAGS from `toolchain action=env` (it also carries -L to lib/clang/21/lib/linux for -latomic). (3) To hand the operator something runnable from /data/local/tmp (a compiled binary, llama.cpp, a GGUF), tell them to use /run_su <script> [args] (SHELL rights uid=2000); /run has only APP rights and cannot see /data/local/tmp. Write the launcher as a .sh in the workspace exporting PATH/LD_LIBRARY_PATH. (3v) BUILD AN APK ON DEVICE (tool build_apk): run `action=setup` once, then `action=build dir=<project>`. build() runs PREFLIGHT itself (it REALLY checks that java+aapt2 run and automatically repairs the libX.so.N symlinks) and PUBLISHES the APK into /sdcard/Download/Agent/workspace/. To install, do NOT copy the APK by hand and do NOT try pm install on a path inside filesDir: system_server has no SELinux access to app_data_file (the exact error: System server has no access to read file context app_data_file). Use `action=install apk=<apk>` or `action=install dir=<project>`: it does publish -> /data/local/tmp -> pm install as shell uid=2000 and returns the `out` field with Success. If that call reports adb_client missing, run through adbsh exactly the command from the `manual` field. Diagnostics: `action=selftest` checks java+aapt2 and auto-heals libX.so.N. If `install` answers with installer_opened=true the SYSTEM installer opened on the phone (the app adb is not authorised by adbd): tell the operator to press Install on screen and do NOT repeat the call in a loop. (4a) BUILD FAILED WITH ModuleNotFoundError IN A SUBMODULE (pathspec._backends, scikit_build_core._compat, setuptools_scm._integration) = SHADOWING, not a missing package: the app's Python looks FIRST in <filesDir>/pyhome/lib/python3.14/site-packages and ONLY THEN in the pysitepkg.zip bundled in the APK, and that order is fixed in the binary (it CANNOT be changed from PYTHONPATH). If a TRUNCATED copy landed on disk (AAPT2 does not package folders/files starting with '_' when building the APK), the broken copy hides the COMPLETE package from the zip and every build that touches the missing submodule dies. Do NOT reinstall and do NOT pip install that package (you would recreate a copy that shadows the good one): run `toolchain action=heal` - it repairs the disk copy in place from the zip (offline, seconds, idempotent); it also runs automatically at every startup and before every pip_install. (4b) PIP FOR A PACKAGE WITHOUT A WHEEL (C/C++ extensions on Python 3.14): `toolchain action=pip_install` also accepts a LOCAL PATH (a source directory or a .tar.gz already on the device) or a URL, not only a PyPI name - use that when the sdist PyPI picks has broken build requirements. Keep `--no-build-isolation` (the environment already ships setuptools/scikit-build-core/meson/Cython), and `./configure` does NOT run directly from filesDir (noexec on shebangs) - run it as `sh ./configure`.")
 
 
 M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
@@ -1207,7 +1207,7 @@ M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a mi
   "to see each step - a failure must stay isolated and visible. Small steps are GOOD for reliability; the "
   "only waste is running them one request at a time. "
   "STOPPING CRITERION (a real failure from the numpy build): before you call a task done, state to yourself WHAT the finish line is (e.g. `python -c \"import numpy\"` exits 0 and prints the version). The task is NOT done because a tool printed OK - it is done when the FINAL verification returns the result that was asked for. After EVERY step that reports success, check the EFFECT on disk (does the file exist? does the command run?), not the status message. If a tool says OK but the effect is missing, treat it as a FAILURE and investigate the tool. NEVER end a turn with \"I did X, next comes Y\" when the operator asked for Y: finish Y. A half-done task reported as progress is worse than an honest \"I am blocked on Z\". " +
-  "UID 2000 (adbsh) - CE POATE SI CE NU: shell-ul are puteri privilegiate (pm grant/revoke, appops, settings, dumpsys, input, screencap, run-as, logcat) si poate scrie in /data/local/tmp, dar NU POATE CITI filesDir-ul aplicatiei (mod 700, alt proprietar): toolchain-ul din APK ramane EXCLUSIV al aplicatiei, nu-l cauta din adbsh. In /data/local/tmp pot exista wrapper-e VECHI (clang/cython) care arata spre cai de APK demultate - ignorale; compilarea se face cu tool-ul toolchain (in procesul aplicatiei), nu prin shell. " +
+  "UID 2000 (adbsh) - WHAT IT CAN AND CANNOT DO: the shell has privileged powers (pm grant/revoke, appops, settings, dumpsys, input, screencap, run-as, logcat) and can write to /data/local/tmp, but it CANNOT READ the app filesDir (mode 700, different owner): the toolchain from the APK stays EXCLUSIVELY the app's, do not look for it from adbsh. In /data/local/tmp there may be OLD wrappers (clang/cython) pointing at uninstalled APK paths - ignore them; compilation is done with the toolchain tool (inside the app process), not through the shell. " +
   "CODE DENSITY (the code you send is billed on EVERY later request): the `code`/`cmd` field of a tool call "
   "stays in the context forever and is re-sent each round. So write the SHORTEST code that does the job: no "
   "decorative comments (only the one required label line), no re-printing data you already printed, no "
@@ -1466,9 +1466,9 @@ def adbsu_capture(argv, timeout=3600):
     sys.stdout.write(out if out.endswith("\n") else out + "\n")
     sys.stdout.flush()
     if not (out or "").strip():
-        return ("(comanda a rulat OK, dar nu a scris nimic la stdout/stderr - normal pentru "
-                "redirectari, scrieri de fisiere, chmod/mv/cp; verifica efectul pe disc in loc sa "
-                "repeta comanda)")
+        return ("(the command ran OK but wrote nothing to stdout/stderr - normal for "
+                "redirections, file writes, chmod/mv/cp; verify the effect on disk instead of "
+                "repeating the command)")
     return out
 
 
@@ -1521,23 +1521,23 @@ def _classify_build_fail(txt):
     t = str(txt or "")
     low = t.lower()
     if "maturin" in low or ("cargo" in low and "rust" in low):
-        return ("rust_lipsa",
-                "backend-ul de build e scris in Rust (maturin) si nu exista rustc/cargo pentru aarch64-linux-android",
-                "nu exista wheel binar pentru acest pachet; FAZA 2 din PLAN_AUTONOMIE.md deblocheaza Rust")
+        return ("missing_rust",
+                "the build backend is written in Rust (maturin) and there is no rustc/cargo for aarch64-linux-android",
+                "no binary wheel exists for this package; PHASE 2 of PLAN_AUTONOMIE.md unblocks Rust")
     if "cmake" in low and ("not found" in low or "no such file" in low or "executable" in low):
-        return ("cmake_lipsa", "build-ul cere cmake (>= 3.29), care nu e in toolchain",
-                "FAZA 1 din PLAN_AUTONOMIE.md; alternativ cauta o versiune a pachetului cu wheel binar")
+        return ("missing_cmake", "the build needs cmake (>= 3.29), which is not in the toolchain",
+                "PHASE 1 of PLAN_AUTONOMIE.md; alternatively look for a version of the package with a binary wheel")
     if "perl" in low and ("not found" in low or "no such file" in low):
-        return ("perl_lipsa", "build-ul cere perl (autoconf/asm BoringSSL)", "FAZA 3 din PLAN_AUTONOMIE.md; vezi si GRPC_BUILD_WITH_BORING_SSL_ASM=0")
+        return ("missing_perl", "the build needs perl (autoconf/asm BoringSSL)", "PHASE 3 of PLAN_AUTONOMIE.md; see also GRPC_BUILD_WITH_BORING_SSL_ASM=0")
     if "no space left" in low or "enospc" in low:
-        return ("spatiu_insuficient", "spatiu liber insuficient pe device", "elibereaza files/tmp si wheelhouse-ul vechi")
+        return ("no_space", "not enough free space on the device", "free files/tmp and the old wheelhouse")
     if "cannot allocate memory" in low or "memoryerror" in low or "out of memory" in low:
-        return ("ram_insuficient", "RAM insuficient pentru acest build", "reia build-ul prin `bg` cu MAKEFLAGS=-j1 si scoate alte procese")
+        return ("no_ram", "not enough RAM for this build", "restart the build through `bg` with MAKEFLAGS=-j1 and close other processes")
     if "no matching distribution" in low or "could not find a version" in low:
-        return ("wheel_inexistent", "nu exista distributie compatibila (wheel sau sdist) pentru android/arm64",
-                "verifica numele/versiunea; unele pachete nu publica sdist")
+        return ("no_wheel", "no compatible distribution (wheel or sdist) exists for android/arm64",
+                "check the name/version; some packages do not publish an sdist")
     if "missing setup required dependencies" in low:
-        return ("cerinte_build", "lipsesc cerintele de build din pyproject.toml", "se repara automat (prefetch) - vezi linia `pasi:`")
+        return ("build_requires", "the build requirements from pyproject.toml are missing", "fixed automatically (prefetch) - see the `steps:` line")
     # ★ FAZA 4x: ModuleNotFoundError intr-un SUBMODUL al unui pachet de BUILD instalat
     # (pathspec._backends, scikit_build_core._compat, setuptools_scm._integration) NU e un
     # pachet lipsa: e UMBRIRE - copia trunchiata de pe disc ascunde pachetul COMPLET din
@@ -1548,15 +1548,15 @@ def _classify_build_fail(txt):
         if _top in ("pathspec", "scikit_build_core", "setuptools_scm", "packaging",
                     "pyproject_metadata", "pyproject_hooks", "vcs_versioning",
                     "mesonpy", "mesonbuild", "pybind11", "Cython", "setuptools", "wheel"):
-            return ("umbrire_site_packages",
-                    "submodulul %s lipseste din copia de pe disc, care UMBREȘTE pachetul COMPLET din pysitepkg.zip" % _mm.group(1),
-                    "ruleaza `toolchain action=heal` (se face oricum automat inainte de pip_install); NU reinstala pachetul")
+            return ("shadowed_site_packages",
+                    "submodule %s is missing from the on-disk copy, which SHADOWS the COMPLETE package in pysitepkg.zip" % _mm.group(1),
+                    "run `toolchain action=heal` (it also happens automatically before every pip_install); do NOT reinstall the package")
     if "python.h" in low or "stddef.h" in low or "stdint.h" in low:
-        return ("headers_lipsa", "headerele de compilare nu sunt gasite", "ruleaza toolchain action=fix (rescrit sysconfig/INCLUDEPY)")
+        return ("missing_headers", "the compile-time headers are not found", "run toolchain action=fix (rewrites sysconfig/INCLUDEPY)")
     if "undefined symbol" in low or "cannot locate symbol" in low:
-        return ("link_runtime", "simbol nerezolvat la link/rulare (libc++/libm)", "ruleaza toolchain action=fix")
-    return ("eroare_build", "build-ul a esuat (cauza in liniile de mai sus)",
-            "ruleaza toolchain action=selftest ca sa vezi ce capabilitati are telefonul ACUM")
+        return ("link_runtime", "unresolved symbol at link/run time (libc++/libm)", "run toolchain action=fix")
+    return ("build_error", "the build failed (cause in the lines above)",
+            "run toolchain action=selftest to see what the phone can do RIGHT NOW")
 
 
 def py_capture(argv, timeout=600):
@@ -1584,9 +1584,9 @@ def py_capture(argv, timeout=600):
         buf.append("[run error: "+str(e)+"]\n")
     out="".join(buf)
     if not out.strip():
-        return ("(comanda a rulat OK, dar nu a scris nimic la stdout/stderr; daca te asteptai la "
-                "output, verifica sa nu fi pus un pipe care inghite tot (ex. `| tail`), si verifica "
-                "efectul pe disc)")
+        return ("(the command ran OK but wrote nothing to stdout/stderr; if you expected "
+                "output, check that you did not add a pipe that swallows everything (e.g. `| tail`), and check "
+                "the effect on disk)")
     return out
 
 def _raise_fd_limit():
@@ -1651,8 +1651,8 @@ def py(c,cwd):
     # ca agentul sa nu creada ca unealta e rupta si sa treaca pe alt tool.
     _txt = o.read().decode("utf-8","replace")
     if not _txt.strip():
-        return ("(comanda a rulat OK, rc=%s, dar nu a scris nimic la stdout/stderr - normal pentru "
-                "redirectari/scrieri de fisiere; verifica efectul pe disc in loc sa repeti comanda)"
+        return ("(the command ran OK, rc=%s, but wrote nothing to stdout/stderr - normal for "
+                "redirections/file writes; verify the effect on disk instead of repeating the command)"
                 % getattr(p, "returncode", "?"))
     return _txt
 
@@ -1853,7 +1853,7 @@ def bg_tool(a):
     if act == "start":
         cmd = (a.get("cmd") or "").strip()
         if not cmd:
-            return "lipseste 'cmd'"
+            return "missing 'cmd'"
         name = (a.get("name") or "job").strip().replace(" ", "_")[:24]
         uid_req = str(a.get("uid") or "").strip().lower()
         ts = time.strftime("%Y%m%d-%H%M%S")
@@ -1914,9 +1914,9 @@ def bg_tool(a):
                     "started": time.strftime("%Y-%m-%d %H:%M:%S"), "ts": time.time(),
                     "status": "running"}
         _bg_save(reg)
-        return ("job pornit: %s\n  pid=%d  (ruleaza ca: %s)\n  log=%s\n"
-                "  (verifica progresul cu bg action=status, apoi bg action=log job=%s)"
-                % (jid, pid, "aplicatie (uid app, vede filesDir)" if where == "app"
+        return ("job started: %s\n  pid=%d  (running as: %s)\n  log=%s\n"
+                "  (check progress with bg action=status, then bg action=log job=%s)"
+                % (jid, pid, "app (uid app, sees filesDir)" if where == "app"
                    else "shell uid=2000 (adbsh)", log, jid))
 
     if act in ("status", "list"):
@@ -1957,7 +1957,7 @@ def bg_tool(a):
                 j["status"] = "done"; j["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
         _bg_save(reg)
         if not rows:
-            return "niciun job inregistrat (bg action=start pentru a lansa unul)"
+            return "no job registered (use bg action=start to launch one)"
         if act == "status":
             rows = [r for r in rows if "RUNNING" in r] or ["(niciun job activ; vezi bg action=list)"]
         return "JOBURI:\n" + "\n".join(rows)
@@ -1966,7 +1966,7 @@ def bg_tool(a):
         jid = (a.get("job") or "").strip()
         n = int(a.get("lines") or 40)
         if not jid:
-            return "lipseste 'job' (vezi bg action=list)"
+            return "missing 'job' (see bg action=list)"
         j = None
         for k in reg:
             if k == jid or k.startswith(jid):
@@ -1981,7 +1981,7 @@ def bg_tool(a):
                 out = "(log necitibil: %r)" % (_e,)
         else:
             out = run_adbsh_tool("tail -n %d %s 2>/dev/null" % (n, j["log"]), 60)
-        hdr = ("=== %s (pornit %s, pid %d) ===\n" % (jid, j.get("started"), j.get("pid", 0)))
+        hdr = ("=== %s (started %s, pid %d) ===\n" % (jid, j.get("started"), j.get("pid", 0)))
         return hdr + (out or "(log gol)")
 
     if act == "kill":
@@ -2039,9 +2039,9 @@ def _adbsh_guard(cmd):
     _f = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
         if _f in (cmd or "") and "|" not in cmd and "<<" not in cmd:
-            return ("uid=2000 (adbsh) NU poate citi %s - toolchain-ul, pip, cargo, python si tot ce "
-                    "tine de compilare ruleaza IN APLICATIE (uid app): foloseste python/bash/bg/"
-                    "toolchain (au acces la filesDir). adbsh e doar pentru ce tine de sistem: "
+            return ("uid=2000 (adbsh) cannot read %s - the toolchain, pip, cargo, python and everything "
+                    "build-related runs INSIDE THE APP (uid app): use python/bash/bg/"
+                    "toolchain (they have access to filesDir). adbsh is only for system-level things: "
                     "settings/pm/dumpsys/screencap/input/force-stop, /data/local/tmp, run_su."
                     % _f)
     except Exception:
@@ -2111,11 +2111,11 @@ def run_adbsh_tool(cmd, timeout=20):
             except Exception as e:
                 _m = str(e)[:200]
                 if ("timed out" in _m.lower()) or ("auth" in _m.lower()) or ("connection" in _m.lower()):
-                    return ("adbsh: conexiunea ADB cere AUTORIZARE (adbd a afisat dialogul "
-                            "Allow USB debugging si nimeni nu a raspuns).\n"
-                            "REMEDIU (o singura data, pe telefon): Settings -> Developer options "
-                            "-> dezactiveaza si reactiveaza USB debugging, apoi la urmatorul "
-                            "dialog apasa Allow CU bifa Always allow from this computer.\n"
+                    return ("adbsh: the ADB connection needs AUTHORISATION (adbd showed the "
+                            "Allow USB debugging dialog and nobody answered).\n"
+                            "FIX (once, on the phone): Settings -> Developer options "
+                            "-> disable and re-enable USB debugging, then at the next "
+                            "dialog press Allow WITH the Always allow from this computer box ticked.\n"
                             "Detaliu: " + _m)
                 return "adbsh error: " + _m
             if mk in out:
@@ -2132,7 +2132,7 @@ def run_adbsh_tool(cmd, timeout=20):
                         except Exception:
                             pass
                         continue
-                    return ("[adb] desync de protocol (raspuns binar): comanda NU a fost confirmata: "
+                    return ("[adb] protocol desync (binary reply): the command was NOT confirmed: "
                             + cmd[:60])
                 return out
             last = out
@@ -2143,8 +2143,8 @@ def run_adbsh_tool(cmd, timeout=20):
                     _t.sleep(0.2)
                 except Exception:
                     pass
-        return ("[adb] protocol desync - marker-ul nu a revenit de 2 ori; comanda NU e "
-                "confirmata: " + cmd[:80] + ("\n(ultim raspuns: " + last[:120] + ")" if last else ""))
+        return ("[adb] protocol desync - the marker did not come back twice; the command is NOT "
+                "confirmed: " + cmd[:80] + ("\n(last reply: " + last[:120] + ")" if last else ""))
 
     try:
         o = _spin(_run, phase="tool", desc=dsc, col=HCLR[sum(map(ord, dsc)) % len(HCLR)])
@@ -2186,7 +2186,7 @@ def run_android_tool(tool, action, params):
     # stie sa ceara mai putin (max/depth) sau sa foloseasca action="find".
     _lim = 12000 if (tool=="ui" and action in ("read","screen","tree","find","search") and ("\"text\"" in o or "\"matches\"" in o)) else 8000
     if len(o) > _lim:
-        _taie = o[:_lim] + "\n... [TRUNCHIAT la %d chars din %d. Pentru mai putin zgomot: ui read cu max/depth mici, SAU ui find <text> ca sa cauti direct un nod.]" % (_lim, len(o))
+        _taie = o[:_lim] + "\n... [TRUNCATED at %d chars out of %d. For less noise: ui read with small max/depth, OR ui find <text> to search for a node directly.]" % (_lim, len(o))
         return _taie
     return o
 
@@ -2214,9 +2214,9 @@ def run_multi_tool(ops):
         if not body.strip():
             out.append(head + "\n(empty body - skipped)"); continue
         if kind not in ("python", "bash"):
-            out.append(head + "\n(kind necunoscut %r - pune codul in body cu kind=python, sau "
-                       "kind=bash pentru shell; uneltele native (toolchain/android) se cheama "
-                       "din COD python)" % kind)
+            out.append(head + "\n(unknown kind %r - put the code in body with kind=python, or "
+                       "kind=bash for shell; the native tools (toolchain/android) are called "
+                       "from PYTHON CODE)" % kind)
             continue
         try:
             r = run_tool(body) if kind == "python" else run_bash_tool(body)
@@ -2295,6 +2295,9 @@ def _call_tool_inner(c):
     return run_tool(a.get("code",""))
 
 _HEALRETRY = {"n": 0, "t": 0.0}
+# ★ self-heal-ul de la pornire ruleaza in FUNDAL: prima unealta asteapta terminarea lui
+# (max 60 s) ca sa nu existe cursa intre un task si reparatii. Dupa prima secunda e deja setat.
+_SELFHEAL_DONE = threading.Event()
 
 
 def _safe_print(s, end="\n"):
@@ -2310,53 +2313,72 @@ def _safe_print(s, end="\n"):
         pass
 
 
-def _selfheal_visible(phase, label="pornire", quiet_ok=False):
-    """★ Ruleaza heal-ul CU feedback pe ECRAN (acelasi mecanism ca spinner-ul), 0 tokeni.
+def _selfheal_visible(phase, label="startup", quiet_ok=False, show_progress=True):
+    """★ Ruleaza heal-ul CU feedback pe ECRAN (0 tokeni) - cerut explicit de operator.
 
-    Doua linii, amandoua pe ecran (nu intra in contextul modelului):
-      1) o linie LIVE, rescrisa in loc ('[self-heal] verific mediul (pornire) 0.2s'),
-         care dispare la final - scrollback-ul rămâne curat;
-      2) o linie de REZULTAT care rămâne, colorata dupa rezultat:
-         VERDE = a reparat ceva, gri discret = nimic de reparat, ROSU = a rămas rupt.
+    Secventa pe ecran (o SINGURA linie, rescrisa in loc, apoi rezultatul care rămâne):
+      1) '[self-heal] in progress, please wait...'  - se afiseaza INAINTE de heal si rămâne
+         vizibil cel putin SELFHEAL_MIN_SHOW secunde (altfel, cu heal-ul de ~30 ms, operatorul
+         nu apuca sa vada nimic si nu stie ca aplicatia se auto-vindeca);
+      2) cat ruleaza, linia se actualizeaza cu timpul scurs ('... 0.4s');
+      3) la final linia de progres e stearsa si pe ACEEASI linie apare REZULTATUL, colorat:
+         VERDE = a reparat, gri discret = nimic de reparat, ROSU = a rămas rupt.
     ROSU rămâne rezervat ERORILOR: vindecarea nu e o eroare, deci nu scrie rosu cand merge.
-    quiet_ok=True (folosit de hook-ul de eroare): daca nu s-a reparat nimic, nu scrie nimic.
+    quiet_ok=True (hook-ul de eroare): daca nu s-a reparat nimic, nu scrie nimic.
     ★ Numai ASCII in text (fara sageti/checkmark): stdout-ul aplicatiei poate fi ASCII-only si
     un singur caracter unicode ar arunca UnicodeEncodeError -> linia disparea silentios.
     """
     import selfheal as _sh
-    live = SELFHEAL_UI[0] and (not NOSPIN[0]) and sys.stdout.isatty()
+    live = show_progress and SELFHEAL_UI[0] and (not NOSPIN[0]) and sys.stdout.isatty()
     stop = threading.Event()
     t0 = time.time()
+    _prog = (SD + "[self-heal] " + U + "in progress, please wait" + N)
 
     def loop():
         while not stop.is_set():
-            _safe_print("\r" + SD + "[self-heal] " + U + ">> verific mediul" + SD + " (" + label +
-                        ") %.1fs" % (time.time() - t0) + N + "\33[K", end="")
+            if live:
+                _safe_print("\r" + _prog + SD + " ... %.1fs" % (time.time() - t0) + N + "\33[K",
+                            end="")
             stop.wait(0.1)
 
     th = threading.Thread(target=loop, daemon=True) if live else None
     if th:
         th.start()
+    elif show_progress:
+        # fara linie live (NOSPIN sau stdout non-tty): scriem progresul ca linie normala.
+        # show_progress=False (pornirea: mesajul il afiseaza KOTLIN, instant) -> nimic.
+        _safe_print(_prog, end="\n")
     try:
         res = _sh.run(phase)
     finally:
         stop.set()
         if th:
             th.join(timeout=0.4)
-            _safe_print("\r\33[K", end="")            # stergem linia live (ca spinner-ul)
+    # timp MINIM de afisare a mesajului de progres (ca sa fie VIZIBIL, nu un flash de 30 ms)
+    try:
+        _rest = (SELFHEAL_MIN_SHOW if show_progress else 0) - (time.time() - t0)
+        if _rest > 0:
+            time.sleep(_rest)
+    except Exception:
+        pass
+    if th:
+        _safe_print("\r\33[K", end="")                # stergem linia de progres (ca spinner-ul)
     # linia de REZULTAT (rămâne pe ecran; 0 tokeni)
-    if res.get("nereparabile"):
+    if res.get("unresolved"):
         _safe_print(RED + "[self-heal] " + _sh.report(res) + N)
-    elif res.get("reparate"):
+    elif res.get("repaired"):
         _safe_print(G + "[self-heal] OK - " + _sh.report(res) + N)
     elif SELFHEAL_UI[0] and not quiet_ok:
-        _safe_print(FR + "[self-heal] OK - mediu sanatos" + SD + "  (%d verificari, %d ms)" %
-                    (res.get("verificate", 0), res.get("ms", 0)) + N)
+        _safe_print(FR + "[self-heal] OK - environment healthy" + SD + "  (%d checks, %d ms)" %
+                    (res.get("checked", 0), res.get("ms", 0)) + N)
     return res
 
 
 SELFHEAL_UI = [True]      # arata linia "mediu sanatos"? (/selfheal o stinge; liniile de
                           # REPARATIE si NEREZOLVAT se afiseaza mereu - sunt informatii reale)
+SELFHEAL_MIN_SHOW = 0.8   # secunde: cat rămâne pe ecran mesajul "in progress, please wait"
+                          # (cerut de operator: sa VADA ca aplicatia se auto-vindeca; fara asta
+                          #  un heal de 30 ms ar fi un flash invizibil)
 
 
 def call_tool(c):
@@ -2370,6 +2392,12 @@ def call_tool(c):
        Daca nu s-a reparat nimic, iesirea rămâne EXACT cea originala -> 0 tokeni in plus.
     """
     try:
+        # ★ daca self-heal-ul de la pornire inca ruleaza, asteptam (de obicei < 1 s; limita 60 s)
+        try:
+            if not _SELFHEAL_DONE.is_set():
+                _SELFHEAL_DONE.wait(60)
+        except Exception:
+            pass
         out = _call_tool_inner(c)
     except BaseException as _ex:
         try:
@@ -2380,7 +2408,7 @@ def call_tool(c):
             _msg = "[tool error] %s" % type(_ex).__name__
         return _msg
     if out is None:
-        return "(fara output)"          # un rezultat gol se citeste ca "unealta rupta"
+        return "(no output)"          # un rezultat gol se citeste ca "unealta rupta"
     if not isinstance(out, str) or not out:
         return out
     try:
@@ -2393,12 +2421,12 @@ def call_tool(c):
             return out
         _HEALRETRY["n"] += 1
         _HEALRETRY["t"] = time.time()
-        r = _selfheal_visible("error", "dupa eroare", quiet_ok=True)
-        if not (r.get("reparate") or []):
+        r = _selfheal_visible("error", "after error", quiet_ok=True)
+        if not (r.get("repaired") or []):
             return out
         out2 = _call_tool_inner(c)                 # O singura reincercare, cu mediul reparat
         if isinstance(out2, str) and out2:
-            return "[selfheal: %s]\n%s" % (",".join(r["reparate"]), out2)
+            return "[selfheal: %s]\n%s" % (",".join(r["repaired"]), out2)
         return out
     except Exception:
         return out
@@ -2525,18 +2553,18 @@ def run_toolchain_tool(a):
                         for _k in ("PATH", "CC", "CXX", "AR", "CFLAGS", "LDFLAGS", "PKG_CONFIG_PATH"):
                             if _e.get(_k):
                                 print("%s=%s" % (_k, _e[_k]))
-                        print("EXEMPLE GATA DE COPIAT (fara ghicit de flag-uri):")
+                        print("READY-TO-COPY EXAMPLES (no flag guessing):")
                         print("  C:       $CC s.c -o s_bin $LDFLAGS")
                         print("  C++:     $CXX -std=c++17 s.cpp -o s_bin $LDFLAGS")
                         print("  pyext:   $CC -shared -fPIC m.c -o m.so $LDFLAGS -lpython3.14")
                         print("  Fortran: %s/bin/flang t.f90 -o t_bin" % _P)
                         print("  Rust:    %s/bin/cargo build --release" % _P)
                         print("  cmake:   export PREFIX=%s && %s/bin/cmake -G Ninja -S . -B b && %s/bin/ninja -C b"
-                              "   (fara PREFIX, CMakeDetermineSystem.cmake esueaza)" % (_P, _P, _P))
-                        print("  RULARE:  /apex/com.android.runtime/bin/linker64 <binar>  (exec direct din filesDir e INTERZIS)")
-                        print("  BUILD DIR: files/tmp sau workspace-ul app-ului; /sdcard e NOEXEC.")
+                              "   (without PREFIX, CMakeDetermineSystem.cmake fails)" % (_P, _P, _P))
+                        print("  RUN:     /apex/com.android.runtime/bin/linker64 <binary>  (direct exec from filesDir is FORBIDDEN)")
+                        print("  BUILD DIR: files/tmp or the app workspace; /sdcard is NOEXEC.")
                     elif _act == "env-file":
-                        _mod._write_env_file(); print("fisier: %s/env.sh" % _mod.ROOT)
+                        _mod._write_env_file(); print("file: %s/env.sh" % _mod.ROOT)
 
 
 
@@ -2561,9 +2589,9 @@ def run_toolchain_tool(a):
                         cwd="/data/local/tmp")
             return (r.stdout + r.stderr).strip()
         except _sp.TimeoutExpired:
-            return "[timeout dupa %ss]" % timeout
+            return "[timeout after %ss]" % timeout
         except Exception as ex:
-            return "EROARE: " + str(ex)
+            return "ERROR: " + str(ex)
 
     if action == "status":
         return _run([sys.executable, tc, "check"], 60)
@@ -2668,7 +2696,7 @@ def run_toolchain_tool(a):
         return _run([sys.executable, tc, "env"], 30)
     if action == "pip_install":
         pkg = (a.get("package") or "").strip()
-        if not pkg: return "lipseste 'package'"
+        if not pkg: return "missing 'package'"
         # ★ FAZA 4x (raportul de scraping): `package` poate fi si o CALE LOCALA (dir de surse,
         # .tar.gz/.zip) sau un URL. Cazul real lxml: sdist-ul de pe PyPI era ales cu un
         # build-deps rupt, iar solutia a fost `pip install --no-build-isolation .` din sursa
@@ -2789,7 +2817,7 @@ def run_toolchain_tool(a):
                         "from pip._internal.cli.main import main\n"
                         "sys.exit(main(sys.argv[1:]))\n" % (_zp0, _ze0))
                 except Exception as ex:
-                    return 1, "[nu pot scrie _pipx.py] %r" % (ex,)
+                    return 1, "[cannot write _pipx.py] %r" % (ex,)
                 try:
                     _rp = _sp.run([(F + "/tmp/python3" if os.path.exists(F + "/tmp/python3")
                                     else sys.executable), _sf] + list(args), capture_output=True,
@@ -2817,8 +2845,8 @@ def run_toolchain_tool(a):
             try:
                 import selfheal as _shB
                 _rb = _shB.run("build")
-                if _rb.get("reparate"):
-                    _steps.append("heal:" + ",".join(_rb["reparate"]))
+                if _rb.get("repaired"):
+                    _steps.append("heal:" + ",".join(_rb["repaired"]))
             except Exception:
                 pass
             # ★ FAZA 4u: verifica instalari INCOMPLETE de pachete de build (pathspec._backends,
@@ -2827,7 +2855,7 @@ def run_toolchain_tool(a):
                 import toolchain as _tcR
                 _rep = _tcR._repair_build_backends()
                 if _rep.get("reparate"):
-                    _steps.append("reparat:" + ",".join(_rep["reparate"]))
+                    _steps.append("repaired:" + ",".join(_rep["reparate"]))
             except Exception:
                 pass
 
@@ -2868,7 +2896,7 @@ def run_toolchain_tool(a):
                         _rc, _out = _pip_fresh(["install", "--disable-pip-version-check",
                                                "--no-index", "--find-links", _wh, pkg])
                         if _rc == 0:
-                            _out = "instalat din wheelhouse local (fara retea, fara compilare)\n" + _out
+                            _out = "installed from the local wheelhouse (no network, no compilation)\n" + _out
                     else:
                         # ★ Drumul PRINCIPAL ramane `pip install --no-build-isolation -v`:
                         # `pip wheel` ascunde cauza reala a cerintelor de build lipsa
@@ -2889,9 +2917,9 @@ def run_toolchain_tool(a):
                                      % (" ".join(_deps), _rcd, time.time() - _t1)) + _outd[-1500:]
                             if _rcd == 0:
                                 _rc, _out2 = _pip_run(["--no-build-isolation"])
-                                _steps.append("retry_dupa_deps=%s" % _rc)
-                                _out += "\n--- [retry dupa deps: %s] ---\n" % _rc + _out2
-                                _out += "(retry dupa deps)"
+                                _steps.append("retry_after_deps=%s" % _rc)
+                                _out += "\n--- [retry after deps: %s] ---\n" % _rc + _out2
+                                _out += "(retry after deps)"
                     # ★ PAS 2: backend tot indisponibil -> reincercam CU izolare (pip isi
                     # aduce singur backend-ul + cerintele in mediu izolat).
                     _missm = _rc != 0 and any(
@@ -2936,17 +2964,17 @@ def run_toolchain_tool(a):
             _tail = "\n".join([l for l in _out.splitlines() if l.strip()][-11:])
             # ★ pasii incercati, PE SCURT, in prima linie (altfel tail-ul de 11 linii
             # ascunde exact informatia de care e nevoie: ce s-a incercat si cu ce rezultat).
-            _sdep = (" pasi: " + "; ".join(_steps)) if _steps else ""
+            _sdep = (" steps: " + "; ".join(_steps)) if _steps else ""
             _diag = ""
             if _dij:
-                _diag = "\n[diagnostic] cod=%s | lipseste: %s | urmatorul pas: %s" % _dij
+                _diag = "\n[diagnostic] code=%s | missing: %s | next step: %s" % _dij
             return "pip install %s (exit %s, %.0fs)%s%s\n%s" % (
                 pkg, _rc, time.time()-_t0, _sdep, _diag, _tail)
         except Exception as _ex:
             return "pip_install error: %s" % str(_ex)[:300]
     if action == "pip_install_adbsh":
         pkg = (a.get("package") or "").strip()
-        if not pkg: return "lipseste 'package'"
+        if not pkg: return "missing 'package'"
         # ★ BUILD DEPS FIRST (raportul numpy, secțiunea 5): numpy>=2 se construieste cu meson-python,
         # nu cu setuptools. Fara meson/Cython/ninja in prefix, build-ul esueaza sau pip le descarca
         # degeaba intr-un mediu izolat. Le instalam o data, apoi buildim cu --no-build-isolation.
@@ -2997,7 +3025,7 @@ def run_toolchain_tool(a):
         out = (a.get("out") or (F + "/tmp/out.bin")).strip()
         if out.startswith("/sdcard") or out.startswith("/storage"):
             out = F + "/tmp/" + os.path.basename(out)   # /sdcard e NOEXEC
-        if not srcf: return "lipseste 'source'"
+        if not srcf: return "missing 'source'"
         if not os.path.isabs(srcf):
             srcf = F + "/tmp/" + srcf
         # ★ FAZA 4p: verificare CLARA inainte de orice (inainte dadea FileNotFoundError(2) cu
@@ -3005,10 +3033,10 @@ def run_toolchain_tool(a):
         if not os.path.exists(srcf):
             _d = os.path.dirname(srcf)
             _near = sorted(os.listdir(_d))[:8] if os.path.isdir(_d) else []
-            return ("sursa nu exista: %s\n(scrie fisierul intai; in %s: %s)" % (srcf, _d, _near))
+            return ("source does not exist: %s\n(write the file first; in %s: %s)" % (srcf, _d, _near))
         if srcf.endswith(".rs"):
-            return ("sursa e RUST (.rs): nu se compileaza cu action=compile. Foloseste cargo:\n"
-                    "  mkdir -p %s/tmp/rp/src && scrie Cargo.toml + src/main.rs\n"
+            return ("the source is RUST (.rs): it cannot be compiled with action=compile. Use cargo:\n"
+                    "  mkdir -p %s/tmp/rp/src && write Cargo.toml + src/main.rs\n"
                     "  cd %s/tmp/rp && cargo build --release\n"
                     "  binarul iese in target/aarch64-linux-android/release/<nume> (NU target/release)"
                     % (F, F))
@@ -3065,7 +3093,7 @@ def run_toolchain_tool(a):
             return "COMPILE error: %r\n%s" % (ex, _tb.format_exc()[-600:])
     if action == "run":
         exe = (a.get("source") or a.get("package") or "").strip()
-        if not exe: return "lipseste 'source' (calea binarului)"
+        if not exe: return "missing 'source' (path to the binary)"
         try:
             e = _env()
             try:
@@ -3089,7 +3117,7 @@ def run_build_apk_tool(a):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import android_build
     except Exception as e:
-        return "EROARE: android_build.py lipsa: " + str(e)
+        return "ERROR: android_build.py missing: " + str(e)
     action = (a.get("action") or "").strip()
     try:
         if action == "setup":
@@ -3098,7 +3126,7 @@ def run_build_apk_tool(a):
         if action == "build":
             d = a.get("dir") or a.get("path") or ""
             if not d:
-                return "EROARE: lipseste 'dir' (calea proiectului Android)"
+                return "ERROR: missing 'dir' (the Android project path)"
             apk = android_build.build(d, task=a.get("task") or "assembleDebug")
             if apk:
                 out = android_build.verify(apk)
@@ -3114,10 +3142,10 @@ def run_build_apk_tool(a):
                 project_dir=(a.get("dir") or a.get("path") or None)), indent=2)
         if action == "selftest":
             return _j.dumps(android_build.selftest(), indent=2)
-        return "actiuni: setup | build dir=<proiect> | verify apk=<fisier> | install apk=<fisier>|dir=<proiect> | selftest"
+        return "actions: setup | build dir=<project> | verify apk=<file> | install apk=<file>|dir=<project> | selftest"
     except Exception as e:
         import traceback
-        return "EROARE build_apk: " + str(e) + "\n" + traceback.format_exc()[-800:]
+        return "build_apk ERROR: " + str(e) + "\n" + traceback.format_exc()[-800:]
 
 def ask(messages=None, tools=None, _timeout=600):
     _msgs = M if messages is None else messages
@@ -3128,7 +3156,7 @@ def ask(messages=None, tools=None, _timeout=600):
     try:
         _n = sanitize_msgs(_msgs)
         if _n:
-            print(OF + "   [ctx] " + str(_n) + " tool_call(uri) orfane reparate automat" + N)
+            print(OF + "   [ctx] " + str(_n) + " orphan tool_call(s) repaired automatically" + N)
     except Exception:
         pass
     _body={"model":os.environ.get("DS_MODEL","deepseek-flash"),"messages":_msgs,"tools":_tools,
@@ -3210,7 +3238,7 @@ def do_learn(trigger="/learn"):
     elif d<0 and not _new: print(R+"   [mem] WARNING: memory.md SHRANK by "+str(-d)+" chars and added no new lesson - check it was not truncated: "+MEM+N)
     else:
         print(G+"   [mem] "+str(c2)+" chars ~ "+str(t2)+" tok | "+str(nb2)+" bullets | "+str(den2)+" chars/bullet | "+("+" if d>0 else "")+str(d)+" chars | unlimited size (density is the rule)"+N)
-        print(G+"   [mem] ~"+str(t2)+" tok platiti o data la pornire (prefix cache-abil), 0 in restul sesiunii."+N)
+        print(G+"   [mem] ~"+str(t2)+" tokens paid once at startup (cacheable prefix), 0 for the rest of the session."+N)
     # size never alarms (unlimited). DENSITY does: chars/bullet above ~220 means the lines are padded/filler.
     if nb2 and den2>220: print(R+"   [mem] DENSITY WARNING: "+str(den2)+" chars/bullet (target <=220) - some lines are padded or merged facts; tighten them (density, not size, is the rule)."+N)
     if nb2 and den2<=180: print(G+"   [mem] density OK: "+str(den2)+" chars/bullet - tight and reusable."+N)
@@ -3399,10 +3427,10 @@ def quarantine(reason, lines):
         fresh = not os.path.exists(QUAR)
         with open(QUAR, "a", encoding="utf-8") as f:
             if fresh:
-                f.write("# memory_quarantine.md - lectii BLOCATE de anti-poison\n\n")
-                f.write("Nu au intrat in memory.md fiindca fie contrazic o lectie existenta, fie\n")
-                f.write("contin markeri de incertitudine. Verifica-le; daca sunt corecte, muta-le\n")
-                f.write("manual in memory.md si sterge-le de aici.\n")
+                f.write("# memory_quarantine.md - lessons BLOCKED by anti-poison\n\n")
+                f.write("They did not enter memory.md because they either contradict an existing lesson or\n")
+                f.write("contain uncertainty markers. Check them; if they are correct, move them\n")
+                f.write("manually into memory.md and delete them from here.\n")
             f.write("\n## " + stamp + " - " + reason + "\n")
             for l in lines:
                 f.write("- " + l + "\n")
@@ -3468,14 +3496,26 @@ if __name__ == "__main__":
         # pysitepkg.zip, LD_LIBRARY_PATH cu stub-uri NDK, CA bundle, pip.conf, sysconfig cu
         # cai de laptop, git identity, directoare). Ruleaza in COD -> 0 tokeni; pe ecran apare
         # o linie LIVE cat ruleaza + o linie de REZULTAT colorata (verde = a reparat).
+        # ★ mesajul de progres il afiseaza KOTLIN, instant la deschiderea aplicatiei (python-ul
+        # porneste mult mai tarziu). Aici heal-ul ruleaza in FUNDAL, ca promptul sa fie
+        # disponibil imediat; orice unealta asteapta terminarea lui (_SELFHEAL_DONE), deci nu
+        # exista cursa intre un task si reparatii.
+        def _selfheal_startup_bg():
+            try:
+                _selfheal_visible("startup", "startup", show_progress=False)
+            except Exception as _heS:
+                _safe_print(OF + "[self-heal] ERROR: %r" % (_heS,) + N)
+            finally:
+                try:
+                    _SELFHEAL_DONE.set()
+                except Exception:
+                    pass
         try:
-            _selfheal_visible("startup", "pornire")
-        except Exception as _heS:
-            # ★ nu inghitim eroarea: o afisam (daca self-heal-ul cade, TREBUIE sa se vada -
-            # un heal mut este mai rau decat unul zgomotos).
-            _safe_print(OF + "[self-heal] EROARE: %r" % (_heS,) + N)
+            threading.Thread(target=_selfheal_startup_bg, daemon=True).start()
+        except Exception:
+            _selfheal_startup_bg()
     except Exception as _eS:
-        print("[pas2] EROARE: %r" % (_eS,))
+        print("[pas2] ERROR: %r" % (_eS,))
     # ★ P3/P10: colectori de stare acumulata (backup-uri + loguri), la fiecare pornire
     try: _cleanup_backups()
     except Exception: pass
@@ -3486,7 +3526,7 @@ if __name__ == "__main__":
     # cheia poate fi scrisa de UI in key.txt DUPA pornirea procesului: reincarcam.
     K=_load_key()
     if not K:
-        print(N+"\n"+OF+"[key] lipsea cheia DeepSeek la pornire - o reincarc la prima cerere."+N)
+        print(N+"\n"+OF+"[key] the DeepSeek key was missing at startup - reloading it on the first request."+N)
     refresh()   # the memory enters the system prompt ONCE, here; from now on the prefix never changes again
     if K:
         ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
@@ -3499,7 +3539,7 @@ if __name__ == "__main__":
         if not K:
             K=_load_key()
             if not K:
-                print(N+OF+"[key] nu am cheia DeepSeek. Scrie-o in key.txt si reincearca."+N); continue
+                print(N+OF+"[key] no DeepSeek key. Write it into key.txt and retry."+N); continue
         if q in ("/exit","/quit"): break
         if q in ("/help","/?"):
             print(G+"   COMMANDS"+N)
@@ -3514,9 +3554,9 @@ if __name__ == "__main__":
             print(G+"     /verbose            toggle full code/output of each step"+N)
             print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
             print(G+"     /reset              erase the conversation history"+N)
-            print(G+"     /heal               repara mediul (0 tokeni): launcher-e, pachete umbrite, pip.conf"+N)
-            print(G+"     /audit              ce e rupt acum, fara sa repare (0 tokeni)"+N)
-            print(G+"     /selfheal           arata/ascunde linia \"mediu sanatos\" de la pornire (0 tokeni)"+N)
+            print(G+"     /heal               repair the environment (0 tokens): launchers, shadowed packages, pip.conf"+N)
+            print(G+"     /audit              what is broken right now, without repairing (0 tokens)"+N)
+            print(G+"     /selfheal           show/hide the \"environment healthy\" line at startup (0 tokens)"+N)
             print(G+"     /help, /?           this list"+N)
             print(G+"     /exit, /quit        leave (empty line too)"+N)
             continue
@@ -3535,13 +3575,13 @@ if __name__ == "__main__":
                 if q == "/audit":
                     print(G + "   [audit] " + json.dumps(_shU.audit("all"), ensure_ascii=False)[:1500] + N)
                 else:
-                    _selfheal_visible("full", "la cerere")
+                    _selfheal_visible("full", "on demand")
             except Exception as _ex:
-                print(OF + "   [heal] eroare: %r" % (_ex,) + N)
+                print(OF + "   [heal] error: %r" % (_ex,) + N)
             continue
         if q in ("/selfheal", "/self-heal"):
             SELFHEAL_UI[0] = not SELFHEAL_UI[0]
-            print(G + "   [self-heal] " + ("ON: linia live + rezultatul (verde/reparat, gri/sanatos, rosu/rupt)" if SELFHEAL_UI[0] else "OFF: tacere cand e sanatos (reparatiile si NEREZOLVAT se afiseaza mereu)") + N)
+            print(G + "   [self-heal] " + ("ON: live line + result (green/repaired, grey/healthy, red/broken)" if SELFHEAL_UI[0] else "OFF: silent when healthy (repairs and UNRESOLVED are always shown)") + N)
             continue
         if q=="/compact":
             print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, not on request), so the memory inserted at startup stays intact until you give /reset. Nothing was changed."+N); continue
@@ -3553,8 +3593,8 @@ if __name__ == "__main__":
             WATCH["on"] = not WATCH["on"]
             if WATCH["on"]:
                 _watch_start()
-                print(G+"   [watch] ON - o linie de status la fiecare "+str(WATCH["sec"])+"s, DOAR cat ruleaza un job."+N)
-                print(G+"   [watch] cost: 0 tokeni (scrie pe ECRAN, nu intra in contextul modelului)."+N)
+                print(G+"   [watch] ON - one status line every "+str(WATCH["sec"])+"s, ONLY while a job runs."+N)
+                print(G+"   [watch] cost: 0 tokens (it writes on SCREEN, it does not enter the model context)."+N)
             else:
                 print(G+"   [watch] OFF."+N)
             continue
@@ -3581,7 +3621,7 @@ if __name__ == "__main__":
             # /run <script.py> [args...] - ruleaza un script Python din workspace, cu argumente.
             argv=shlex.split(q[5:].strip())
             if not argv:
-                print(R+"   usage: /run <script.py> [args...]   (scriptul trebuie sa fie in workspace)"+N); continue
+                print(R+"   usage: /run <script.py> [args...]   (the script must live in the workspace)"+N); continue
             script=argv[0]
             if not os.path.isabs(script): script=os.path.join(WORK,script)
             if not os.path.exists(script):
@@ -3607,7 +3647,7 @@ if __name__ == "__main__":
                 print(R + "   parse error: " + str(_e) + N); continue
             if not argv:
                 print(R + "   usage: /run_su <script.py|script.sh|binar> [args...]" + N)
-                print(SD + "   (ruleaza cu uid=2000: /data/local/tmp, toolchain, llama.cpp)" + N)
+                print(SD + "   (runs as uid=2000: /data/local/tmp, toolchain, llama.cpp)" + N)
                 continue
             script = argv[0]
             if not os.path.isabs(script):
@@ -3643,8 +3683,8 @@ if __name__ == "__main__":
             except Exception: pass
             print(G+"   [reset] history erased ("+os.path.basename(CTX)+") and /learn checkpoints cleared."+N); continue
         if q.startswith("/auto-learn") or q.startswith("/autolearn"):
-            print(OF+"   [auto-learn] ELIMINAT - agentul nu mai invata singur dupa task."+N)
-            print(G+"   [auto-learn] memoria se actualizeaza DOAR manual, cu /learn."+N); continue
+            print(OF+"   [auto-learn] REMOVED - the agent no longer learns by itself after a task."+N)
+            print(G+"   [auto-learn] memory is updated ONLY manually, with /learn."+N); continue
         if q=="/learn":
             do_learn("/learn"); continue
         # ★ FIX: daca task-ul anterior s-a oprit cu tool_calls fara raspuns (ex. operatorul
@@ -3653,7 +3693,7 @@ if __name__ == "__main__":
         try:
             _n = sanitize_msgs(M)
             if _n:
-                print(OF + "   [ctx] " + str(_n) + " tool_call(uri) orfane reparate (context valid)" + N)
+                print(OF + "   [ctx] " + str(_n) + " orphan tool_call(s) repaired (context valid)" + N)
         except Exception:
             pass
         M.append({"role":"user","content":q});compact_history();save_ctx(); mark=len(M); TN[0]=0

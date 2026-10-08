@@ -3298,26 +3298,59 @@ omoara procesul agentului).
 ECRAN (0 tokeni) si intra in contextul modelului DOAR la cerere (`toolchain action=heal|audit`),
 intr-o singura linie (`compact()`), niciodata JSON cu liste.
 
-**Feedback pe ecran (cerut de operator — „sa stim ca ruleaza ceva si ca se vindeca singur"):**
-liniile sunt pe ECRAN, deci 0 tokeni.
-* o linie **LIVE**, rescrisa in loc (acelasi mecanism ca spinner-ul: `\r` + erase-line), scrie
-  `[self-heal] >> verific mediul (pornire) 0.2s` cat timp ruleaza si dispare la final, ca
-  scrollback-ul sa nu se umple;
-* o linie de **REZULTAT** care rămâne, colorata dupa rezultat:
-  **VERDE** = a reparat ceva (`[self-heal] OK - 1 reparate in 307 ms: umbrire: pathspec,...`),
-  **gri discret** = nimic de reparat (`[self-heal] OK - mediu sanatos (7 verificari, 33 ms)`),
-  **ROSU** = a rămas rupt / `NEREZOLVAT`.
+**Feedback pe ecran (cerut de operator — „sa se vada ca ruleaza self-heal-ul si ca se vindeca singur"):**
+liniile sunt pe ECRAN, deci 0 tokeni. **Toate mesajele aplicatiei sunt in ENGLEZA.**
+
+* **IMEDIAT la deschiderea aplicatiei** (`MainActivity.startCore()`, inainte de orice munca grea —
+  extragerea assets si pornirea python pot dura zeci de secunde) apare, albastru:
+  `[self-heal] in progress, please wait - checking the environment (launchers, packages, toolchain)`.
+  De ce din Kotlin si nu din Python: mesajul trebuie sa se vada INSTANT; python-ul porneste abia
+  dupa extragere, iar inainte operatorul nu vedea nimic si nu stia ca aplicatia isi verifica mediul.
+* **Heal-ul ruleaza apoi in FUNDAL** (thread daemon pornit la startup-ul python): promptul e
+  disponibil imediat, iar rezultatul apare cand termina. Ca sa nu existe cursa intre un task si
+  reparatii, `call_tool` asteapta terminarea lui (`_SELFHEAL_DONE.wait(60)` — de obicei < 1 s).
+* Linia de **REZULTAT** (de la python, colorata dupa rezultat):
+  **VERDE** = a reparat (`[self-heal] OK - 1 repaired in 307 ms: shadowed: pathspec,...`),
+  **gri discret** = nimic de reparat (`[self-heal] OK - environment healthy  (7 checks, 33 ms)`),
+  **ROSU** = a rămas rupt / `UNRESOLVED`.
   Roșu rămâne rezervat ERORILOR: vindecarea nu e o eroare, deci nu scrie rosu cand merge.
-* **`/selfheal`** (comanda de operator) stinge/aprinde linia „mediu sanatos"; liniile de
-  REPARATIE si NEREZOLVAT se afiseaza mereu (sunt informatii reale, nu zgomot).
+* Linia de progres cu timp scurs (`... 0.4s`, rescrisa in loc, cu `SELFHEAL_MIN_SHOW = 0.8 s`
+  minim ca sa fie vizibila) se foloseste doar la `pip_install`, la hook-ul de eroare si la
+  `/heal` — la startup mesajul vine din Kotlin, deci python-ul nu-l mai dubleaza
+  (`_selfheal_visible(..., show_progress=False)`).
+* **`/selfheal`** (comanda de operator) stinge/aprinde linia „environment healthy"; liniile de
+  REPARATIE si UNRESOLVED se afiseaza mereu (sunt informatii reale, nu zgomot).
 * Doar ASCII in textul liniilor: stdout-ul aplicatiei poate fi ASCII-only, iar un singur
   caracter unicode (sageti, checkmark) ar arunca `UnicodeEncodeError` si linia ar disparea
   silentios (`_safe_print` face oricum fallback pe ASCII).
-* Daca heal-ul insusi cade, eroarea se AFISEAZA (`[self-heal] EROARE: ...`) — un heal mut ar
+* Daca heal-ul insusi cade, eroarea se AFISEAZA (`[self-heal] ERROR: ...`) — un heal mut ar
   fi mai rau decat unul zgomotos.
 
 **Comenzi de operator:** `/heal` (ruleaza faza `full` cu feedback live), `/audit` (ce e rupt
 acum, fara sa repare), `/selfheal` (arata/ascunde linia „mediu sanatos"). Toate 3: 0 tokeni.
+
+### Limba mesajelor: TOT in ENGLEZA (2026-10-08)
+
+Cerut de operator. Traducere completa a **mesajelor** (orice ajunge pe ecran sau in contextul
+modelului), pe toate fisierele Python: `agent.py`, `toolchain.py`, `selfheal.py`,
+`android_build.py`, `adb_client.py`, `build.py`, `jsengine.py`, `jsfetch.py`, `scraper.py`,
+`websearch.py`, `adb_setup.py` — linii de ecran, rezultate de unelte, diagnostice, descrieri de
+tool-uri si **ghidul modelului** (`ANDROID_GUIDE` / MISSION RULES, inclusiv regulile 3a-3v, 4a, 4b).
+
+Renumeri facute pentru consistenta (mesajele le citesc codul si modelul):
+* coduri de diagnostic: `rust_lipsa`→`missing_rust`, `cmake_lipsa`→`missing_cmake`,
+  `spatiu_insuficient`→`no_space`, `ram_insuficient`→`no_ram`, `wheel_inexistent`→`no_wheel`,
+  `cerinte_build`→`build_requires`, `umbrire_site_packages`→`shadowed_site_packages`,
+  `headers_lipsa`→`missing_headers`, `eroare_build`→`build_error`;
+* chei `toolchain.selftest()`: `lipsa`→`missing`, `detalii`→`details`,
+  `ram_liber_mb`→`ram_free_mb`, `ram_atentionare`→`ram_warning`, `timpi_s`→`times_s`,
+  `nota`→`note`; chei `selfheal`: `reparate`→`repaired`, `nereparabile`→`unresolved`,
+  `faza`→`phase`, `verificate`→`checked`, `detalii`→`details`;
+* etichete: `pasi:`→`steps:`, `reparat:`→`repaired:`, `dupa deps`→`after deps`.
+
+Ramane in romana (NU sunt mesaje): docstring-uri si comentarii de cod, regexurile interne de
+detectie a formularii (anti-poison / verificare de afirmatii — ele trebuie sa recunoasca text
+romanesc), textele din scripturile shell generate si documentatia repo-ului (readme/CHANGELOG).
 
 ### VERIFICARE FINALA (pe instalare CURATA: dezinstalare + reinstalare APK)
 

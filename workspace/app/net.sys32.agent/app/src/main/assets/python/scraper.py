@@ -207,7 +207,7 @@ def js_query(url_or_html, expr, pattern=None, is_html=False):
         return {"ok": False, "error": "nicio structura de date JS gasita",
                 "patterns_incercate": [p for p,_ in _DATA_PATTERNS]}
     if not _has_js():
-        return {"ok": False, "error": "jsengine.py lipseste (pip install quickjs)"}
+        return {"ok": False, "error": "jsengine.py is missing (pip install quickjs)"}
     import jsengine
     ctx = jsengine.context()
     # ld+json poate fi un array sau obiect; il incarcam tolerant

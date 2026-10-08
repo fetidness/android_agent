@@ -780,6 +780,20 @@ class MainActivity : AppCompatActivity() {
         coreStarted = true
         startWatchdog()
 
+        // ★ cerut de operator: mesaj VIZIBIL IMEDIAT la deschiderea aplicatiei, INAINTE de orice
+        // munca grea (extragerea assets + pornirea procesului python pot dura zeci de secunde -
+        // abia acolo ruleaza self-heal-ul, deci fara linia asta operatorul nu vede nimic si nu
+        // stie ca aplicatia isi verifica/vindeca mediul). Self-heal-ul ruleaza apoi SINGUR, in
+        // fundal (la pornirea python-ului, in alt thread), iar rezultatul lui apare tot aici:
+        // verde = a reparat, gri = nimic de reparat, rosu = a rămas rupt.
+        try {
+            val BLUE = "\u001b[38;5;110m"
+            val GRY = "\u001b[38;5;243m"
+            val NRM = "\u001b[0m"
+            appendAnsi(BLUE + "[self-heal] in progress, please wait" + GRY +
+                " - checking the environment (launchers, packages, toolchain)" + NRM + "\n")
+        } catch (_: Exception) {}
+
         // ★ daca setup-ul s-a facut deja -> pornesc DIRECT, fara mesaje/countdown
         if (setupDone()) {
             Thread {

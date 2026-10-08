@@ -97,14 +97,14 @@ def _chk_launchers():
     st = _state()
     old = st.get("nl") or ""
     if old and old != nat:
-        return ["nativeLibraryDir nou (%s -> %s)" % (old[-10:], nat[-10:])]
+        return ["nativeLibraryDir changed (%s -> %s)" % (old[-10:], nat[-10:])]
     pr = []
     # esantion de launcher-e critice (fiecare a fost candva raportat "lipsa")
     for p in (F + "/tmp/clang", F + "/tmp/cmake", F + "/tmp/ninja", F + "/tmp/make",
               F + "/tmp/python3", F + "/tmp/git", F + "/tmp/cargo", F + "/tmp/maturin",
               F + "/tmp/cython3", F + "/tmp/flang"):
         if os.path.lexists(p) and not tc._exec_ok(p):
-            pr.append("launcher mort: " + p)
+            pr.append("dead launcher: " + p)
     return pr
 
 
@@ -137,7 +137,7 @@ def _chk_shadow():
         a = tc.shadow_audit()
     except Exception:
         return []
-    return ["umbrire: " + r["pachet"] for r in (a.get("rupte") or [])]
+    return ["shadowed: " + r["pachet"] for r in (a.get("rupte") or [])]
 
 
 def _fix_shadow():
@@ -145,7 +145,7 @@ def _fix_shadow():
     r = tc.heal_site_packages()
     names = sorted({str(x).split("(")[0]
                     for x in (r.get("reparate") or []) + (r.get("mutate") or [])})
-    return "umbrire: " + ",".join(names)
+    return "shadowed: " + ",".join(names)
 
 
 def _chk_dirs():
@@ -159,12 +159,12 @@ def _fix_dirs():
             os.makedirs(d, exist_ok=True)
         except Exception:
             pass
-    return "directoare"
+    return "dirs"
 
 
 def _chk_ld():
     """Stub-urile NDK in LD_LIBRARY_PATH omoara ORICE proces copil (SIGSEGV)."""
-    return ["LD_LIBRARY_PATH cu %s" % p
+    return ["LD_LIBRARY_PATH with %s" % p
             for p in os.environ.get("LD_LIBRARY_PATH", "").split(":") if "sysroot" in p][:2]
 
 
@@ -212,7 +212,7 @@ def _fix_pyexe():
         tc._patch_sys_executable()
     except Exception:
         pass
-    return "sys.executable curat"
+    return "clean sys.executable"
 
 
 def _chk_gitid():
@@ -226,7 +226,7 @@ def _chk_gitid():
             return []
     except Exception:
         pass
-    return ["git identity lipsa"]
+    return ["missing git identity"]
 
 
 def _fix_gitid():
@@ -300,7 +300,7 @@ def _fix_full_dirs():
             getattr(tc, fn)(*args)
         except Exception:
             pass
-    return "piese toolchain"
+    return "toolchain parts"
 
 
 def _chk_adbkeys():
@@ -320,22 +320,22 @@ def _fix_adbkeys():
                 cwd=os.path.dirname(p), env=env, stdin=_sp.DEVNULL)
     except Exception:
         pass
-    return "chei adb/tls"
+    return "adb/tls keys"
 
 
 # (nume, faze, check, fix)
 INVARIANTS = (
     ("launchers", ("startup", "build", "error", "full"), _chk_launchers, _fix_launchers),
-    ("umbrire", ("startup", "build", "error", "full"), _chk_shadow, _fix_shadow),
-    ("directoare", ("startup", "build", "error", "full"), _chk_dirs, _fix_dirs),
+    ("shadowed", ("startup", "build", "error", "full"), _chk_shadow, _fix_shadow),
+    ("dirs", ("startup", "build", "error", "full"), _chk_dirs, _fix_dirs),
     ("ld_path", ("startup", "build", "error", "full"), _chk_ld, _fix_ld),
-    ("ca", ("startup", "full"), _chk_ca, _fix_ca),
+    ("ca_bundle", ("startup", "full"), _chk_ca, _fix_ca),
     ("pyexe", ("startup", "build", "full"), _chk_pyexe, _fix_pyexe),
     ("git_identity", ("startup", "full"), _chk_gitid, _fix_gitid),
     ("pip_conf", ("build", "error", "full"), _chk_pipconf, _fix_pipconf),
     ("sysconfig", ("build", "error", "full"), _chk_sysconfig, _fix_sysconfig),
-    ("piese", ("full",), _chk_full_dirs, _fix_full_dirs),
-    ("chei_adb", ("full",), _chk_adbkeys, _fix_adbkeys),
+    ("toolchain_parts", ("full",), _chk_full_dirs, _fix_full_dirs),
+    ("adb_keys", ("full",), _chk_adbkeys, _fix_adbkeys),
 )
 
 
@@ -368,20 +368,20 @@ def run(phase="startup", only=None):
         try:
             what = fix()
         except Exception as ex:
-            det[name] = {"eroare": ("%s: %s" % (type(ex).__name__, ex))[:140]}
+            det[name] = {"error": ("%s: %s" % (type(ex).__name__, ex))[:140]}
             continue
         try:
             ramas = chk() or []
         except Exception:
             ramas = []
         if ramas:
-            det[name] = {"ce": str(what), "verificat": "INCA rupt",
+            det[name] = {"what": str(what), "verified": "STILL broken",
                          "probleme": [str(x)[:120] for x in ramas][:2]}
             if name not in bad_known:
                 bad_known[name] = int(time.time())
                 noi_bad.append(name)
             continue
-        det[name] = {"ce": str(what), "probleme": [str(x)[:120] for x in pr][:3]}
+        det[name] = {"what": str(what), "problems": [str(x)[:120] for x in pr][:3]}
         reparate.append(name)
         bad_known.pop(name, None)
     # ★ RE-CITIM starea: fix-urile isi scriu singure marker-ul (ex. nativeLibraryDir), iar o
@@ -395,9 +395,9 @@ def run(phase="startup", only=None):
     if st2 != _state():
         _save_state(st2)          # scriem DOAR daca s-a schimbat ceva (fara I/O degeaba)
     if noi_bad:
-        det.setdefault("_nereparabile", {})["ce"] = ",".join(noi_bad)
-    return {"faza": phase, "verificate": verificate, "reparate": reparate,
-            "nereparabile": noi_bad, "detalii": det, "ms": int((time.time() - t0) * 1000)}
+        det.setdefault("_unresolved", {})["what"] = ",".join(noi_bad)
+    return {"phase": phase, "checked": verificate, "repaired": reparate,
+            "unresolved": noi_bad, "details": det, "ms": int((time.time() - t0) * 1000)}
 
 
 def audit(phase="full"):
@@ -409,41 +409,41 @@ def audit(phase="full"):
         try:
             pr = chk() or []
         except Exception as ex:
-            pr = ["check eroare: %s" % ex]
+            pr = ["check error: %s" % ex]
         if pr:
-            out.append({"invariant": name, "probleme": [str(x)[:160] for x in pr][:5]})
-    return {"faza": phase, "invariante": len(INVARIANTS), "probleme": out}
+            out.append({"invariant": name, "problems": [str(x)[:160] for x in pr][:5]})
+    return {"phase": phase, "invariants": len(INVARIANTS), "problems": out}
 
 
 def report(d):
     """O SINGURA linie, FARA prefix (0 tokeni cand nu s-a reparat nimic: intoarce '')."""
-    rep = (d or {}).get("reparate") or []
-    bad = (d or {}).get("nereparabile") or []
+    rep = (d or {}).get("repaired") or []
+    bad = (d or {}).get("unresolved") or []
     if not rep and not bad:
         return ""
-    det = (d or {}).get("detalii") or {}
-    scurt = [(det.get(r) or {}).get("ce") or r for r in rep]
+    det = (d or {}).get("details") or {}
+    scurt = [(det.get(r) or {}).get("what") or r for r in rep]
     out = ""
     if rep:
-        out = "%d reparate in %d ms: %s" % (len(rep), (d or {}).get("ms", 0),
+        out = "%d repaired in %d ms: %s" % (len(rep), (d or {}).get("ms", 0),
                                             "; ".join(scurt)[:280])
     if bad:
-        out = (out + " | " if out else "") + "NEREZOLVAT: " + ",".join(bad)
+        out = (out + " | " if out else "") + "UNRESOLVED: " + ",".join(bad)
     return out
 
 
 def compact(d):
     """Text COMPACT pentru rezultatul unei unelte (intra in context: max ~300 caractere)."""
-    fase = (d or {}).get("faza", "?")
-    err = [k for k, v in ((d or {}).get("detalii") or {}).items()
-           if isinstance(v, dict) and v.get("eroare")]
+    fase = (d or {}).get("phase", "?")
+    err = [k for k, v in ((d or {}).get("details") or {}).items()
+           if isinstance(v, dict) and v.get("error")]
     body = report(d)
     if not body:
-        body = "nimic de reparat (%d verificari, %d ms)" % (
-            (d or {}).get("verificate", 0), (d or {}).get("ms", 0))
+        body = "nothing to repair (%d checks, %d ms)" % (
+            (d or {}).get("checked", 0), (d or {}).get("ms", 0))
     out = "heal[%s]: %s" % (fase, body)
     if err:
-        out += " | esecuri: " + ",".join(err)
+        out += " | errors: " + ",".join(err)
     return out
 
 
