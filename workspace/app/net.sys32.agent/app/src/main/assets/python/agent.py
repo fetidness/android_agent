@@ -2297,6 +2297,68 @@ def _call_tool_inner(c):
 _HEALRETRY = {"n": 0, "t": 0.0}
 
 
+def _safe_print(s, end="\n"):
+    """Print care NU cade pe caractere non-ASCII (stdout-ul aplicatiei poate fi ASCII-only)."""
+    try:
+        print(s, end=end, flush=True)
+    except UnicodeEncodeError:
+        try:
+            print(s.encode("ascii", "replace").decode("ascii"), end=end, flush=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _selfheal_visible(phase, label="pornire", quiet_ok=False):
+    """★ Ruleaza heal-ul CU feedback pe ECRAN (acelasi mecanism ca spinner-ul), 0 tokeni.
+
+    Doua linii, amandoua pe ecran (nu intra in contextul modelului):
+      1) o linie LIVE, rescrisa in loc ('[self-heal] verific mediul (pornire) 0.2s'),
+         care dispare la final - scrollback-ul rămâne curat;
+      2) o linie de REZULTAT care rămâne, colorata dupa rezultat:
+         VERDE = a reparat ceva, gri discret = nimic de reparat, ROSU = a rămas rupt.
+    ROSU rămâne rezervat ERORILOR: vindecarea nu e o eroare, deci nu scrie rosu cand merge.
+    quiet_ok=True (folosit de hook-ul de eroare): daca nu s-a reparat nimic, nu scrie nimic.
+    ★ Numai ASCII in text (fara sageti/checkmark): stdout-ul aplicatiei poate fi ASCII-only si
+    un singur caracter unicode ar arunca UnicodeEncodeError -> linia disparea silentios.
+    """
+    import selfheal as _sh
+    live = SELFHEAL_UI[0] and (not NOSPIN[0]) and sys.stdout.isatty()
+    stop = threading.Event()
+    t0 = time.time()
+
+    def loop():
+        while not stop.is_set():
+            _safe_print("\r" + SD + "[self-heal] " + U + ">> verific mediul" + SD + " (" + label +
+                        ") %.1fs" % (time.time() - t0) + N + "\33[K", end="")
+            stop.wait(0.1)
+
+    th = threading.Thread(target=loop, daemon=True) if live else None
+    if th:
+        th.start()
+    try:
+        res = _sh.run(phase)
+    finally:
+        stop.set()
+        if th:
+            th.join(timeout=0.4)
+            _safe_print("\r\33[K", end="")            # stergem linia live (ca spinner-ul)
+    # linia de REZULTAT (rămâne pe ecran; 0 tokeni)
+    if res.get("nereparabile"):
+        _safe_print(RED + "[self-heal] " + _sh.report(res) + N)
+    elif res.get("reparate"):
+        _safe_print(G + "[self-heal] OK - " + _sh.report(res) + N)
+    elif SELFHEAL_UI[0] and not quiet_ok:
+        _safe_print(FR + "[self-heal] OK - mediu sanatos" + SD + "  (%d verificari, %d ms)" %
+                    (res.get("verificate", 0), res.get("ms", 0)) + N)
+    return res
+
+
+SELFHEAL_UI = [True]      # arata linia "mediu sanatos"? (/selfheal o stinge; liniile de
+                          # REPARATIE si NEREZOLVAT se afiseaza mereu - sunt informatii reale)
+
+
 def call_tool(c):
     """★ SELF-HEAL la nivel de UNELTA: orice rezultat trece prin aici.
 
@@ -2331,10 +2393,9 @@ def call_tool(c):
             return out
         _HEALRETRY["n"] += 1
         _HEALRETRY["t"] = time.time()
-        r = _sh.run("error")
+        r = _selfheal_visible("error", "dupa eroare", quiet_ok=True)
         if not (r.get("reparate") or []):
             return out
-        print(BAR + "   " + TC + "[selfheal]" + N + " " + TC + _sh.compact(r) + N)
         out2 = _call_tool_inner(c)                 # O singura reincercare, cu mediul reparat
         if isinstance(out2, str) and out2:
             return "[selfheal: %s]\n%s" % (",".join(r["reparate"]), out2)
@@ -3405,15 +3466,14 @@ if __name__ == "__main__":
         # ★ FAZA 4x / SELF-HEAL (nivel aplicatie): o singura poarta catre toate reparatiile
         # dovedite (launcher-e moarte dupa update de APK, copii trunchiate care umbresc
         # pysitepkg.zip, LD_LIBRARY_PATH cu stub-uri NDK, CA bundle, pip.conf, sysconfig cu
-        # cai de laptop, git identity, directoare). Ruleaza in COD -> 0 tokeni; linia apare
-        # DOAR daca a reparat ceva. Vezi selfheal.py (registru de invariantе).
+        # cai de laptop, git identity, directoare). Ruleaza in COD -> 0 tokeni; pe ecran apare
+        # o linie LIVE cat ruleaza + o linie de REZULTAT colorata (verde = a reparat).
         try:
-            import selfheal as _shH
-            _line = _shH.report(_shH.run("startup"))
-            if _line:
-                print(G + "[heal] " + _line + N)
-        except Exception:
-            pass
+            _selfheal_visible("startup", "pornire")
+        except Exception as _heS:
+            # ★ nu inghitim eroarea: o afisam (daca self-heal-ul cade, TREBUIE sa se vada -
+            # un heal mut este mai rau decat unul zgomotos).
+            _safe_print(OF + "[self-heal] EROARE: %r" % (_heS,) + N)
     except Exception as _eS:
         print("[pas2] EROARE: %r" % (_eS,))
     # ★ P3/P10: colectori de stare acumulata (backup-uri + loguri), la fiecare pornire
@@ -3456,6 +3516,7 @@ if __name__ == "__main__":
             print(G+"     /reset              erase the conversation history"+N)
             print(G+"     /heal               repara mediul (0 tokeni): launcher-e, pachete umbrite, pip.conf"+N)
             print(G+"     /audit              ce e rupt acum, fara sa repare (0 tokeni)"+N)
+            print(G+"     /selfheal           arata/ascunde linia \"mediu sanatos\" de la pornire (0 tokeni)"+N)
             print(G+"     /help, /?           this list"+N)
             print(G+"     /exit, /quit        leave (empty line too)"+N)
             continue
@@ -3474,9 +3535,13 @@ if __name__ == "__main__":
                 if q == "/audit":
                     print(G + "   [audit] " + json.dumps(_shU.audit("all"), ensure_ascii=False)[:1500] + N)
                 else:
-                    print(G + "   [heal] " + _shU.compact(_shU.run("full")) + N)
+                    _selfheal_visible("full", "la cerere")
             except Exception as _ex:
                 print(OF + "   [heal] eroare: %r" % (_ex,) + N)
+            continue
+        if q in ("/selfheal", "/self-heal"):
+            SELFHEAL_UI[0] = not SELFHEAL_UI[0]
+            print(G + "   [self-heal] " + ("ON: linia live + rezultatul (verde/reparat, gri/sanatos, rosu/rupt)" if SELFHEAL_UI[0] else "OFF: tacere cand e sanatos (reparatiile si NEREZOLVAT se afiseaza mereu)") + N)
             continue
         if q=="/compact":
             print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, not on request), so the memory inserted at startup stays intact until you give /reset. Nothing was changed."+N); continue

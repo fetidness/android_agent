@@ -9,6 +9,33 @@
 
 ---
 
+### 2026-10-08 (3) (self-heal: feedback pe ecran — linie live + rezultat colorat)
+
+> **Cerut de operator:** „ar fi indicat sa arate pe ecran ca ruleaza procesul de self-healing
+> … ca sa stim ca ruleaza ceva si ca se vindeca singur. sa scrie cu rosu sau cum crezi?"
+
+**Decizie de design:** **rosu NU** — la noi rosu = eroare, iar vindecarea nu e o eroare (daca
+scriem rosu cand merge, culoarea isi pierde sensul exact cand conteaza). Schema aleasa:
+albastru = ruleaza, VERDE = a reparat, gri discret = nimic de reparat, ROSU = a rămas rupt
+(`NEREZOLVAT`, adica o problema reala).
+
+* `_selfheal_visible(phase, label)`: linie LIVE rescrisa in loc (`\r` + `\33[K`, exact mecanismul
+  spinner-ului) cat timp ruleaza, stearsa la final ca scrollback-ul sa nu se umple; apoi o linie
+  de REZULTAT care rămâne, colorata dupa rezultat. Ambele pe ECRAN -> 0 tokeni.
+* Ruleaza la `startup`, la `pip_install` (faza build), in hook-ul de eroare si la `/heal`.
+* `_safe_print`: text ASCII + fallback pe ASCII la `UnicodeEncodeError` — stdout-ul aplicatiei
+  poate fi ASCII-only, iar un singur `\u27f3`/`\u2713` ar fi aruncat si linia ar fi DISPĂRUT
+  silentios (exact capcana pe care am prins-o in test).
+* Daca heal-ul insusi cade, eroarea se afiseaza (`[self-heal] EROARE: ...`) in loc sa fie
+  inghitita: un heal mut e mai rau decat unul zgomotos.
+* Comanda noua **`/selfheal`** (0 tokeni): stinge/aprinde linia „mediu sanatos"; reparatiile si
+  `NEREZOLVAT` se afiseaza mereu.
+
+**Verificat pe device (SM-A366B):** dupa update de APK -> `[self-heal] OK - 1 reparate in
+307 ms: umbrire: pathspec,scikit_build_core,setuptools_scm` (verde); repornire fara update ->
+`[self-heal] OK - mediu sanatos  (7 verificari, 33 ms)` (gri discret). Textul a fost confirmat
+si prin `uiautomator dump` (nu doar din screenshot).
+
 ### 2026-10-08 (2) (self-heal la nivel de aplicatie: registru de invariantе, 0 tokeni)
 
 > **Context:** dupa fix-ul umbririi (`2026-10-08 (1)`) operatorul a cerut extinderea

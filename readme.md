@@ -3295,11 +3295,29 @@ rămâne EXACT cea originala. Bonus: `call_tool` prinde si exceptiile (un tool c
 omoara procesul agentului).
 
 **BURETUL DE TOKENI (regula):** heal-ul ruleaza in COD -> 0 tokeni. Rezultatul se afiseaza pe
-ECRAN (0 tokeni) intr-o SINGURA linie si DOAR daca a reparat ceva (`[heal] 1 reparate in 284 ms:
-umbrire: pathspec,...`); a doua pornire fara update e complet TACUTA (verificat pe device). In
-contextul modelului ajunge doar la cerere (`toolchain action=heal|audit`), intr-o linie
-(`compact()`), niciodata JSON cu liste. Are si comenzi de operator: **`/heal`** si **`/audit`**
-(0 tokeni, nu intra in contextul modelului).
+ECRAN (0 tokeni) si intra in contextul modelului DOAR la cerere (`toolchain action=heal|audit`),
+intr-o singura linie (`compact()`), niciodata JSON cu liste.
+
+**Feedback pe ecran (cerut de operator — „sa stim ca ruleaza ceva si ca se vindeca singur"):**
+liniile sunt pe ECRAN, deci 0 tokeni.
+* o linie **LIVE**, rescrisa in loc (acelasi mecanism ca spinner-ul: `\r` + erase-line), scrie
+  `[self-heal] >> verific mediul (pornire) 0.2s` cat timp ruleaza si dispare la final, ca
+  scrollback-ul sa nu se umple;
+* o linie de **REZULTAT** care rămâne, colorata dupa rezultat:
+  **VERDE** = a reparat ceva (`[self-heal] OK - 1 reparate in 307 ms: umbrire: pathspec,...`),
+  **gri discret** = nimic de reparat (`[self-heal] OK - mediu sanatos (7 verificari, 33 ms)`),
+  **ROSU** = a rămas rupt / `NEREZOLVAT`.
+  Roșu rămâne rezervat ERORILOR: vindecarea nu e o eroare, deci nu scrie rosu cand merge.
+* **`/selfheal`** (comanda de operator) stinge/aprinde linia „mediu sanatos"; liniile de
+  REPARATIE si NEREZOLVAT se afiseaza mereu (sunt informatii reale, nu zgomot).
+* Doar ASCII in textul liniilor: stdout-ul aplicatiei poate fi ASCII-only, iar un singur
+  caracter unicode (sageti, checkmark) ar arunca `UnicodeEncodeError` si linia ar disparea
+  silentios (`_safe_print` face oricum fallback pe ASCII).
+* Daca heal-ul insusi cade, eroarea se AFISEAZA (`[self-heal] EROARE: ...`) — un heal mut ar
+  fi mai rau decat unul zgomotos.
+
+**Comenzi de operator:** `/heal` (ruleaza faza `full` cu feedback live), `/audit` (ce e rupt
+acum, fara sa repare), `/selfheal` (arata/ascunde linia „mediu sanatos"). Toate 3: 0 tokeni.
 
 ### VERIFICARE FINALA (pe instalare CURATA: dezinstalare + reinstalare APK)
 
