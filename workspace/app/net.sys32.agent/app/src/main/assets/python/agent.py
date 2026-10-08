@@ -1124,7 +1124,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
-   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the truncated copies of packages that shadow the COMPLETE ones bundled in the app zip - if a build dies with ModuleNotFoundError in a SUBMODULE such as pathspec._backends, scikit_build_core._compat or setuptools_scm._integration, this is the cure; audit = report only. It also runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) SAU o cale locala/.tar.gz/URL de pe device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) SAU o cale locala/.tar.gz/URL de pe device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"build_apk","description":"COMPILEAZA UN APK ANDROID PE DEVICE, COMPLET OFFLINE (fara PC). Foloseste Gradle+AGP+JDK+aapt2+cmake+NDK toate ambalate in APK. Actions: setup (extrage uneltele din assets in filesDir, o singura data - ruleaza primul, face si selftest java+aapt2); build (compileaza un proiect Android din <dir> -> APK, face preflight si PUBLICA automat APK-ul pe /sdcard/Download/Agent/workspace/; params: dir=path proiect, task=assembleDebug default); verify (verifica un APK existent: params: apk=path); install (instaleaza APK-ul FARA PC: incearca publish -> /data/local/tmp -> pm install ca shell uid=2000; daca adb nu e autorizat, deschide INSTALATORUL DE SISTEM pe telefon (o confirmare cu un tap, fara adb); params: apk=path SAU dir=proiect); selftest (verifica daca java+aapt2 chiar ruleaza, repara singur libX.so.N lipsa). Ex: build_apk action=build dir=/path/to/android_project, apoi build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"calea proiectului Android (pentru build)"},"apk":{"type":"string","description":"calea APK-ului (pentru verify/install; la install poti da si dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"help","description":"Return the FULL guide for an advanced Android topic, on demand - the detailed reflection/objects reference is kept OUT of the fixed prompt to save tokens and delivered here instead. Topics: \"reflection\" (eval ops: services/info/call/new/get/set/objs, targets svc:/class:/obj:/ctx/app, how to pass object refs), \"objects\" (proxy vs subclass for callbacks, await/events, getSystemService, Executor), \"privileged\" (capture/vpn/guard detail), \"all\" (everything). Call it the moment the native shortcuts are not enough.","parameters":{"type":"object","properties":{"topic":{"type":"string","description":"reflection | objects | privileged | all"}},"required":["topic"]}}}]
@@ -2254,7 +2254,7 @@ def run_help_tool(a):
     _show_step("help "+t, o, n)
     return o
 
-def call_tool(c):
+def _call_tool_inner(c):
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
     endpoint (thinking ON). Both increment the SAME step counter and print the SAME column
     layout, so the operator sees every step the same way. Returns what goes to the model."""
@@ -2293,6 +2293,55 @@ def call_tool(c):
     if fn=="help":
         return run_help_tool(a)
     return run_tool(a.get("code",""))
+
+_HEALRETRY = {"n": 0, "t": 0.0}
+
+
+def call_tool(c):
+    """★ SELF-HEAL la nivel de UNELTA: orice rezultat trece prin aici.
+
+    1) NICIO excepție nu are voie sa omoare procesul agentului (un tool care arunca lua cu el
+       tot transcriptul) -> o transformam in rezultat de tool pe care modelul il citeste.
+    2) DACA rezultatul arata ca un mediu rupt (launcher mort dupa update de APK, libc++ lipsa,
+       umbrire de pachete), ruleaza heal-ul o SINGURA data si re-executa unealta O data; daca
+       heal-ul a reparat ceva, modelul primeste rezultatul BUN (nu cel rupt) + o nota scurta.
+       Daca nu s-a reparat nimic, iesirea rămâne EXACT cea originala -> 0 tokeni in plus.
+    """
+    try:
+        out = _call_tool_inner(c)
+    except BaseException as _ex:
+        try:
+            import traceback as _tb
+            _msg = "[tool error] %s: %s\n%s" % (type(_ex).__name__, str(_ex)[:300],
+                                                _tb.format_exc()[-600:])
+        except Exception:
+            _msg = "[tool error] %s" % type(_ex).__name__
+        return _msg
+    if out is None:
+        return "(fara output)"          # un rezultat gol se citeste ca "unealta rupta"
+    if not isinstance(out, str) or not out:
+        return out
+    try:
+        import selfheal as _sh
+        fn = (c.get("function") or {}).get("name") or ""
+        if fn == "toolchain" or not _sh.looks_like_launcher_break(out):
+            return out
+        # rate-limit: max 3 auto-reparatii pe sesiune, la minim 15 s distanta (fara bucle)
+        if _HEALRETRY["n"] >= 3 or (time.time() - _HEALRETRY["t"]) < 15:
+            return out
+        _HEALRETRY["n"] += 1
+        _HEALRETRY["t"] = time.time()
+        r = _sh.run("error")
+        if not (r.get("reparate") or []):
+            return out
+        print(BAR + "   " + TC + "[selfheal]" + N + " " + TC + _sh.compact(r) + N)
+        out2 = _call_tool_inner(c)                 # O singura reincercare, cu mediul reparat
+        if isinstance(out2, str) and out2:
+            return "[selfheal: %s]\n%s" % (",".join(r["reparate"]), out2)
+        return out
+    except Exception:
+        return out
+
 
 def _uses_python_h(path):
     """True daca sursa include Python.h (pentru a adauga automat -lpython3.14)."""
@@ -2432,13 +2481,15 @@ def run_toolchain_tool(a):
 
                         _mod.install()
                     elif _act == "fix":
-                        for _fn in ("_prepare_dirs", "_patch_runpath", "_fix_ninja",
-                                    "_fix_cc_wrappers", "_fix_symlinks", "_fix_wrappers_shebang",
-                                    "_fix_sysconfig", "_fix_ca_bundle", "_fix_libcxx_needed",
-                                    "_write_env_file"):
-                            try: getattr(_mod, _fn)()
-                            except Exception: pass
-                        print(json.dumps(_mod.preflight(), indent=2))
+                        # ★ liste vechi cu nume inexistente (_patch_runpath/_fix_ninja/
+                        # _fix_symlinks/_fix_wrappers_shebang/_fix_sysconfig) -> `action=fix`
+                        # era ~60% no-op. Acum: fix-urile reale + registrul selfheal (faza full).
+                        print(json.dumps(_mod.install(), indent=2))
+                        try:
+                            import selfheal as _shF
+                            print(_shF.compact(_shF.run("full")))
+                        except Exception:
+                            pass
                     else:
                         print("[inline] actiune necunoscuta: %s" % _act)
                 return _buf.getvalue().strip()
@@ -2477,13 +2528,16 @@ def run_toolchain_tool(a):
     if action == "env-file":
         return _run([sys.executable, tc, "env-file"], 120)
     if action in ("heal", "audit"):
-        # ★ FAZA 4x: UMBRIREA site-packages vs pysitepkg.zip. `audit` raporteaza, `heal`
-        # REPARA (reparatie in loc din zip; offline, cateva secunde). Vezi
-        # toolchain.heal_site_packages() pentru cauza radacina (AAPT2 ignora '_' la ambalare).
+        # ★ SELF-HEAL (nivel aplicatie): `audit` raporteaza, `heal` REPARA registrul intreg de
+        # invariantе (launcher-e moarte, copii trunchiate care umbresc pysitepkg.zip, pip.conf,
+        # sysconfig cu cai de laptop, LD_LIBRARY_PATH cu stub-uri NDK, CA bundle, git identity,
+        # piese toolchain, chei adb/tls). Offline, idempotent, cateva secunde. Textul returnat
+        # e o SINGURA linie compacta (intra in context -> nu are voie sa fie verbose).
         try:
-            import toolchain as _tcHe
-            return json.dumps(_tcHe.heal_site_packages(apply=(action == "heal")),
-                              indent=2, ensure_ascii=False)
+            import selfheal as _shH
+            if action == "audit":
+                return json.dumps(_shH.audit("all"), ensure_ascii=False)[:1500]
+            return _shH.compact(_shH.run("full"))
         except Exception as _ex:
             return "heal error: %r" % (_ex,)
 
@@ -2695,15 +2749,21 @@ def run_toolchain_tool(a):
                 return ""
 
             _steps = []
-            # ★ FAZA 4x: CAUZA RADACINA a esecurilor de build (raportarea de scraping): copiile
-            # TRUNCHIATE de pe disc (AAPT2 ignora '_' la ambalare) UMBRESC pachetele COMPLETE
-            # din pysitepkg.zip. Le reparam in loc din zip INAINTE de orice build (offline).
+            # ★ SELF-HEAL (faza build): mediul COMPLET verificat/reparat inainte de build
+            # (launcher-e, copii trunchiate care umbresc pysitepkg.zip, pip.conf, sysconfig cu
+            # cai de laptop, LD_LIBRARY_PATH). Ruleaza in COD -> 0 tokeni; in `pasi:` apare doar
+            # numele invariantеlor reparate.
+            try:
+                import selfheal as _shB
+                _rb = _shB.run("build")
+                if _rb.get("reparate"):
+                    _steps.append("heal:" + ",".join(_rb["reparate"]))
+            except Exception:
+                pass
+            # ★ FAZA 4u: verifica instalari INCOMPLETE de pachete de build (pathspec._backends,
+            # scikit_build_core._compat) - altfel pip cade cu ModuleNotFoundError.
             try:
                 import toolchain as _tcR
-                _hr2 = _tcR.heal_site_packages()
-                _hrep2 = (_hr2.get("reparate") or []) + (_hr2.get("mutate") or [])
-                if _hrep2:
-                    _steps.append("heal:" + ",".join(_hrep2))
                 _rep = _tcR._repair_build_backends()
                 if _rep.get("reparate"):
                     _steps.append("reparat:" + ",".join(_rep["reparate"]))
@@ -3342,23 +3402,16 @@ if __name__ == "__main__":
                     os.environ[_k] = _v
         except Exception:
             pass
-        # ★ FAZA 4x: HEAL la fiecare pornire - copiile TRUNCHIATE de pe disc (AAPT2 nu
-        # ambaleaza in assets folderele/fisierele cu '_': scikit_build_core/_compat/,
-        # pathspec/_backends/, setuptools_scm/_integration/, packaging/_*.py) UMBRESC
-        # pachetele COMPLETE din pysitepkg.zip, pentru ca ordinea din sys.path e fixa in
-        # binarul CPython. Reparatie in loc din zip (offline, idempotent). Se afiseaza
-        # DOAR daca a fost ceva de reparat (si doar atunci cand chiar s-a reparat).
+        # ★ FAZA 4x / SELF-HEAL (nivel aplicatie): o singura poarta catre toate reparatiile
+        # dovedite (launcher-e moarte dupa update de APK, copii trunchiate care umbresc
+        # pysitepkg.zip, LD_LIBRARY_PATH cu stub-uri NDK, CA bundle, pip.conf, sysconfig cu
+        # cai de laptop, git identity, directoare). Ruleaza in COD -> 0 tokeni; linia apare
+        # DOAR daca a reparat ceva. Vezi selfheal.py (registru de invariantе).
         try:
-            import toolchain as _tcH
-            _hr = _tcH.heal_site_packages()
-            _hrep = (_hr.get("reparate") or []) + (_hr.get("mutate") or [])
-            if _hrep:
-                # UNA singura linie, cu numele pachetelor (nu tot raportul) - la pornire ecranul
-                # rămâne curat: linia apare DOAR prima data dupa un update care readuce copii
-                # trunchiate, apoi heal-ul e idempotent si nu mai scrie nimic.
-                _pk = sorted({str(x).split("(")[0] for x in _hrep})
-                print(G + "[heal] %d copii trunchiate reparate din pysitepkg.zip: %s"
-                      % (len(_hrep), ", ".join(_pk)) + N)
+            import selfheal as _shH
+            _line = _shH.report(_shH.run("startup"))
+            if _line:
+                print(G + "[heal] " + _line + N)
         except Exception:
             pass
     except Exception as _eS:
@@ -3401,6 +3454,8 @@ if __name__ == "__main__":
             print(G+"     /verbose            toggle full code/output of each step"+N)
             print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
             print(G+"     /reset              erase the conversation history"+N)
+            print(G+"     /heal               repara mediul (0 tokeni): launcher-e, pachete umbrite, pip.conf"+N)
+            print(G+"     /audit              ce e rupt acum, fara sa repare (0 tokeni)"+N)
             print(G+"     /help, /?           this list"+N)
             print(G+"     /exit, /quit        leave (empty line too)"+N)
             continue
@@ -3412,6 +3467,17 @@ if __name__ == "__main__":
             if SESS["in"]: _hit=("%d%%"%int(100.0*SESS["cache_hit"]/SESS["in"]))
             print(G+"   [cost] requests: "+str(SESS["rounds"])+" | tok in "+_K(SESS["in"])+" / out "+_K(SESS["out"])+" | cache HIT "+_hit+" (higher = cheaper)"+N)
             print(G+"   [ctx] archives: "+str(len(_a))+" in archive/ | tool logs: "+str(len(_l))+" in logs/ | nothing is ever deleted, only moved to disk"+N); continue
+        if q in ("/heal", "/audit"):
+            # ★ SELF-HEAL manual, pentru OPERATOR: 0 tokeni (nu intra in contextul modelului).
+            try:
+                import selfheal as _shU
+                if q == "/audit":
+                    print(G + "   [audit] " + json.dumps(_shU.audit("all"), ensure_ascii=False)[:1500] + N)
+                else:
+                    print(G + "   [heal] " + _shU.compact(_shU.run("full")) + N)
+            except Exception as _ex:
+                print(OF + "   [heal] eroare: %r" % (_ex,) + N)
+            continue
         if q=="/compact":
             print(G+"   [compact] DISABLED by the operator: the context is never compressed (not automatically, not on request), so the memory inserted at startup stays intact until you give /reset. Nothing was changed."+N); continue
         if q in ("/nospin","/spin"):

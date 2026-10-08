@@ -3247,6 +3247,60 @@ Idempotent si offline (cateva secunde). Verificat pe SM-A366B.
 sau un URL, nu doar un nume PyPI — cazul lxml, unde sdist-ul ales de PyPI cerea cerinte de
 build rupte (`toolchain action=pip_install package=/files/tmp/lxml-6.0.2`).
 
+### SELF-HEAL la nivel de aplicatie: registrul de invariantе (`selfheal.py`)
+
+**De ce:** starea sanatoasa a device-ului se strica SINGURA in momente previzibile — mai ales la
+fiecare update de APK (Kotlin re-extrage assets si `nativeLibraryDir` primeste alt hash
+`/data/app/~~x==/pkg-y==/lib/arm64`) — iar simptomele NU arata ca o problema de mediu: arata ca
+„unealta lipseste/defecta". Inainte de acest strat, fiecare astfel de capcana era descoperita de
+model, care consuma 20-40 de pasi (fiecare pas re-trimite TOT contextul, deci si tokenii) ca sa
+gaseasca o reparare care era deja scrisa in `toolchain.py`.
+
+**Ce este:** `assets/python/selfheal.py` — un registru de invariantе. Fiecare invariant are
+`check()` IEFTIN (doar `stat`/`readlink`/listare, fara subprocess, fara retea) si `fix()`
+IDEMPOTENT care REUTILIZEAZA functiile de reparare dovedite din `toolchain.py`. Fix-ul ruleaza
+**doar** daca check-ul a gasit ceva rupt, apoi check-ul e re-rulat (fix-apoi-verifica): daca
+problema nu a disparut, invariantul e raportat O SINGURA DATA ca `NEREZOLVAT` si apoi tace.
+
+| invariant | ce prinde | fix (reutilizat) |
+|---|---|---|
+| `launchers` | linkuri moarte catre ELF-urile din lib-ul APK (dupa update), `nativeLibraryDir` schimbat | `_fix_dead_binaries`, `_ensure_launchers`, `_ensure_python_launcher`, `_ensure_git_launcher`, `_ensure_cc_wrappers` |
+| `umbrire` | copii trunchiate care umbresc `pysitepkg.zip` | `heal_site_packages` |
+| `directoare` | `files/tmp`, `libs`, `home`, `wheels` lipsa | `mkdir` |
+| `ld_path` | `LD_LIBRARY_PATH` cu stub-uri NDK (omoara orice proces copil) | `sanitize_ld_library_path` |
+| `ca` | `SSL_CERT_FILE`/CA bundle spre un fisier inexistent | `_fix_ca_bundle` |
+| `pyexe` | `sys.executable` cu hash de APK (`~~x==`) | `_ensure_python_launcher`, `_patch_sys_executable` |
+| `git_identity` | identitate git lipsa (fara ea: `update-ref`/`fetch` = SIGSEGV) | `_ensure_git_config` |
+| `pip_conf` | pip.conf fara `no-build-isolation` | `_ensure_pipconf` |
+| `sysconfig` | cai de LAPTOP rămase in `_sysconfigdata*` | `_patch_sysconfig_device`, `_write_env_file` |
+| `piese` (faza full) | `pyinc`, `libpython3.14.so`, `libc++_shared.so`, Cython real, NDK minimal | `_ensure_*` |
+| `chei_adb` (faza full) | `adbkey`/`tls.crt` lipsa (uneltele adb ale app-ului) | `adb_setup.py` |
+
+**Unde ruleaza** (faze):
+* `startup` — la fiecare pornire a agentului (doar verificari ieftine, ~300 ms);
+* `build` — inainte de orice `pip_install` (adauga `pip.conf`/`sysconfig`); in `pasi:` apare
+  `heal:<invariante>`;
+* `error` — automat, cand un tool intoarce un simptom de mediu rupt (vezi hook-ul mai jos);
+* `full` — la cerere: `toolchain action=heal`.
+
+**HOOK pe erorile de unealta** (`agent.py: call_tool`): orice rezultat de tool trece prin
+`selfheal.looks_like_launcher_break()`. Semnalele sunt STRICTE (`Permission denied` pe
+`files/tmp|files/toolchain`, `CANNOT LINK EXECUTABLE ... libc++_shared.so`, `<unealta>: not
+found/inaccessible` pentru clang/cmake/ninja/cargo/cython/python3/git..., `failed to run custom
+build command` + `Permission denied`, `ModuleNotFoundError` intr-un SUBMODUL al unui pachet de
+build). Daca semnalul apare: ruleaza `heal(error)`, iar **daca a reparat ceva** re-executa
+unealta O SINGURA data si intorce rezultatul BUN cu o nota scurta (`[selfheal: launchers]`).
+Rate-limit: max 3 auto-reparatii pe sesiune, la minim 15 s. Daca nu a reparat nimic, iesirea
+rămâne EXACT cea originala. Bonus: `call_tool` prinde si exceptiile (un tool care arunca nu mai
+omoara procesul agentului).
+
+**BURETUL DE TOKENI (regula):** heal-ul ruleaza in COD -> 0 tokeni. Rezultatul se afiseaza pe
+ECRAN (0 tokeni) intr-o SINGURA linie si DOAR daca a reparat ceva (`[heal] 1 reparate in 284 ms:
+umbrire: pathspec,...`); a doua pornire fara update e complet TACUTA (verificat pe device). In
+contextul modelului ajunge doar la cerere (`toolchain action=heal|audit`), intr-o linie
+(`compact()`), niciodata JSON cu liste. Are si comenzi de operator: **`/heal`** si **`/audit`**
+(0 tokeni, nu intra in contextul modelului).
+
 ### VERIFICARE FINALA (pe instalare CURATA: dezinstalare + reinstalare APK)
 
 ```

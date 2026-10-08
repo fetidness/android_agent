@@ -24,7 +24,7 @@ ASSETS="$REPO/workspace/app/net.sys32.agent/app/src/main/assets/python"
 WORK=${WORK:-$HOME/.hermes/cache/scratch/apk}
 
 # fisierele care se pot schimba fara build nativ (binarul din APK rămâne al aceluiasi build)
-FILES="agent.py toolchain.py android_build.py adb_client.py adb_setup.py scraper.py
+FILES="agent.py toolchain.py selfheal.py android_build.py adb_client.py adb_setup.py scraper.py
 jsengine.py jsfetch.py newsfeed.py websearch.py devhelper.py build.py setexec.py
 _streams.py sshkeygen.py android_bridge.py"
 

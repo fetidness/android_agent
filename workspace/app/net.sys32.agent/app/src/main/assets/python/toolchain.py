@@ -3493,10 +3493,20 @@ def selftest():
 # NIMIC si returna gol (un apel care eșua parea "fara output", nu "eroare").
 # ---------------------------------------------------------------------------
 def install():
-    """Aplica lantul de fixuri de mediu (exact ce facea inline ramura `install`)."""
-    for _fn in ("_prepare_dirs", "_patch_runpath", "_fix_ninja", "_fix_cc_wrappers",
-                "_fix_symlinks", "_fix_wrappers_shebang", "_fix_sysconfig",
-                "_fix_ca_bundle", "_fix_libcxx_needed", "_write_env_file"):
+    """Aplica lantul de fixuri REALE de mediu.
+
+    ★ Capcana reparata: lista veche continea functii INEXISTENTE in toolchain.py
+    (_patch_runpath, _fix_ninja, _fix_cc_wrappers, _fix_symlinks, _fix_wrappers_shebang,
+    _fix_sysconfig) - `getattr` cu try/except le inghitea, deci `action=fix` era ~60% no-op
+    si raporta totusi un preflight verde (o operatie care "nu face nimic" arata ca succes).
+    Acum folosim numele care EXISTA (verificate cu grep) si, in plus, registrul selfheal.
+    """
+    for _fn in ("_prepare_dirs", "_ensure_launchers", "_fix_dead_binaries",
+                "_ensure_python_launcher", "_ensure_python_pc", "_patch_sysconfig_device",
+                "_write_env_file", "_ensure_py_include", "_ensure_py_lib_link",
+                "_ensure_libcxx", "_ensure_cc_wrappers", "_fix_ca_bundle",
+                "_fix_libcxx_needed", "_ensure_fake_ndk", "_ensure_git_config",
+                "_ensure_pipconf"):
         _f = globals().get(_fn)
         if not callable(_f):
             continue
@@ -3504,6 +3514,11 @@ def install():
             _f()
         except Exception:
             pass
+    try:
+        import selfheal as _sh
+        _sh.run("full")
+    except Exception:
+        pass
     return preflight()
 
 

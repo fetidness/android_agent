@@ -9,6 +9,61 @@
 
 ---
 
+### 2026-10-08 (2) (self-heal la nivel de aplicatie: registru de invariantе, 0 tokeni)
+
+> **Context:** dupa fix-ul umbririi (`2026-10-08 (1)`) operatorul a cerut extinderea
+> auto-heal-ului la TOT nivelul aplicatiei, cu o conditie explicita: **sa nu consume tokeni
+> permanent inutil**.
+
+**De ce era necesar:** in `toolchain.py` existau deja 27 de functii de reparare dovedite
+(`_ensure_launchers`, `_fix_dead_binaries`, `_ensure_pipconf`, `_patch_sysconfig_device`,
+`_fix_ca_bundle`, `_ensure_git_config`, `_ensure_python_launcher`, ...) dar fiecare era chemata
+ad-hoc, din alt loc; unele doar la `action=fix`, deci DOAR daca modelul avea inspiratia sa ceara
+repararea. Nimic nu garanta ca ruleaza dupa un update de APK (care schimba
+`nativeLibraryDir` si re-extrage assets) -> simptomul aparea ca „unealta lipseste/defecta", iar
+modelul ardea 20-40 de pasi (fiecare cu tot contextul re-trimis) ca sa descopere o reparare care
+exista deja in cod.
+
+**Fix: `assets/python/selfheal.py` — registru de invariantе.** Fiecare invariant are `check()`
+ieftin (doar `stat`/`readlink`/listare; fara subprocess, fara retea) si `fix()` idempotent care
+reutilizeaza functiile din `toolchain.py`. Fix-ul ruleaza DOAR daca check-ul gaseste ceva rupt,
+apoi check-ul e re-rulat: daca problema nu a disparut, invariantul e raportat o singura data ca
+`NEREZOLVAT` si apoi tace (nu scriem aceeasi linie la fiecare pornire).
+
+* 11 invariantе: `launchers` (linkuri moarte/nativeLibraryDir schimbat), `umbrire` (copii
+  trunchiate care umbresc `pysitepkg.zip`), `directoare`, `ld_path` (stub-uri NDK in
+  `LD_LIBRARY_PATH` = SIGSEGV in orice copil), `ca`, `pyexe` (`sys.executable` cu hash de APK),
+  `git_identity` (fara ea `update-ref`/`fetch` = SIGSEGV), `pip_conf`, `sysconfig` (cai de
+  laptop), `piese` si `chei_adb` (faza full).
+* 4 faze: `startup` (la fiecare pornire, ~300 ms), `build` (inainte de `pip_install`, raportat
+  in `pasi:` ca `heal:<invariante>`), `error` (automat, vezi hook-ul), `full`
+  (`toolchain action=heal`).
+* **HOOK in `call_tool`** (`agent.py`): orice rezultat de tool trece prin
+  `looks_like_launcher_break()` (semnale STRICTE: `Permission denied` pe `files/tmp|files/toolchain`,
+  `CANNOT LINK EXECUTABLE ... libc++_shared.so`, `<unealta>: not found/inaccessible` pentru
+  clang/cmake/ninja/cargo/cython/python3/git..., `failed to run custom build command` +
+  `Permission denied`, `ModuleNotFoundError` intr-un SUBMODUL de pachet de build). Daca semnalul
+  apare: heal(`error`) si, DOAR daca a reparat ceva, O singura re-executare a uneltei +
+  rezultatul bun cu nota `[selfheal: ...]`. Rate-limit: max 3/sesiune, minim 15 s intre ele.
+* `call_tool` prinde acum si exceptiile uneltelor (`[tool error] Type: msg`) - un tool care
+  arunca nu mai omoara procesul agentului (pierdea tot transcriptul), plus `None` -> `(fara output)`.
+* **BURETUL DE TOKENI:** heal in COD = 0 tokeni; raportul e O linie pe ECRAN si DOAR cand a
+  reparat ceva (a doua pornire fara update = ecran gol, verificat pe device); in contextul
+  modelului ajunge doar la cerere, prin `compact()` (o linie, fara JSON cu liste). Comenzi de
+  operator (0 tokeni, nu intra in context): **`/heal`** si **`/audit`**; in plus
+  `toolchain action=audit` raporteaza ce e rupt fara sa repare.
+* `toolchain action=fix` era ~60% NO-OP: lista apela functii inexistente (`_patch_runpath`,
+  `_fix_ninja`, `_fix_cc_wrappers`, `_fix_symlinks`, `_fix_wrappers_shebang`, `_fix_sysconfig`),
+  inghitite de `getattr` + `try/except`, urmate de un preflight verde. Acum foloseste numele
+  reale + registrul selfheal.
+
+**Testat:** (1) test local — 7 invariantе la startup, mediu strictat reparat (launcher mort +
+nativeLibraryDir nou + LD cu stub-uri), a doua rulare idempotenta, invariant nerezolvabil
+raportat o data si apoi tacere, 11/11 semnale de eroare evaluate corect (fara fals-pozitive pe
+„ModuleNotFoundError: numpy" sau pe output normal); (2) E2E pe SM-A366B: dupa update de APK
+`[heal] 1 reparate in 284 ms: umbrire: pathspec,scikit_build_core,setuptools_scm`, iar la a doua
+pornire (fara update) terminalul e COMPLET GOL.
+
 ### 2026-10-08 (1) (fix: copiile trunchiate care UMBRESC pysitepkg.zip — heal automat)
 
 > **Context:** raport scris de agentul de pe device (`site-packages_probleme.md` +
