@@ -385,11 +385,17 @@ La o reinstalare nu se recompileaza:
    `pysitepkg.zip`, iar subprocesul de build izolat nu pune zip-ul pe `sys.path`).
    Fix: **intotdeauna `--no-build-isolation`** cand instalezi pachete noi (sau foloseste
    `toolchain action=pip_install`, care merge pe calea standard).
-2. **AAPT2 elimina folderele care incep cu `_`**, deci in `site-packages` lipseau
-   19 fisiere din `pathspec/_backends`, `scikit_build_core/_compat`, `scikit_build_core/_vendor`,
-   `setuptools_scm/_integration` — ceea ce rupea build-ul lxml
+2. **AAPT2 elimina folderele/fisierele care incep cu `_`** atunci cand ambaleaza APK-ul, deci
+   in `site-packages` ajung copii TRUNCHIATE: lipseau 19+ fisiere din `pathspec/_backends`,
+   `scikit_build_core/_compat`, `scikit_build_core/_vendor`, `setuptools_scm/_integration`,
+   plus modulele `packaging/_*.py` — ceea ce rupea build-ul lxml
    (``ModuleNotFoundError: No module named 'scikit_build_core._compat'``).
-   Fix: extras folderele `_*` din `pysitepkg.zip` in site-packages (bypass pe capcana AAPT2).
+   Fix (3 oct 2026): extras manual folderele `_*` din `pysitepkg.zip` in site-packages.
+   **Fix DEFINITIV (8 oct 2026): `toolchain.heal_site_packages()`** — repara automat copiile
+   trunchiate, pe loc, din `pysitepkg.zip` (vezi „Heal site-packages" mai jos). Ruleaza la
+   fiecare pornire a agentului si inainte de orice `pip_install`, deci problema nu mai poate
+   reaparea nici dupa un update de APK (care restaureaza `site_packages_keep` peste
+   `site-packages`).
 3. **`json.dumps` cadea la `article`** in trafilatura 2.x: `extract_metadata().as_dict()`
    intoarce la cheile `body`/`commentsbody` elemente lxml (`_Element`), nu string
    (``TypeError: Object of type _Element is not JSON serializable``).
@@ -644,6 +650,30 @@ unzip -l $APK | grep 'lib/arm64-v8a/'
 > ⚠️ AAPT2 **IGNORA** directoarele din assets care incep cu `_` → de asta
 > `_path.py` / `_streams.py` sunt livrate ca FISIERE, nu ca foldere. Daca un import
 > da `ModuleNotFoundError` pentru un subpachet cu `_`, asta e cauza.
+> ★ Aceeasi capcana TRUNCHIAZA si pachetele din `assets/python/Lib/site-packages`
+> (`pathspec/_backends/`, `scikit_build_core/_compat/`, `setuptools_scm/_integration/`,
+> `packaging/_*.py` nu ajung in APK — verificat: `unzip -l apk | grep -c '<pkg>/_'` = 0).
+> Numai ca aici efectul e PERVERS: copia trunchiata de pe disc UMBREȘTE copia completa din
+> `pysitepkg.zip`. Reparat automat la runtime de `toolchain.heal_site_packages()` (vezi
+> „Heal site-packages"); NU mai e nevoie de copiere manuala.
+
+#### Repack RAPID cand se schimba doar `assets/python/*.py` (fara gradle)
+
+Un build gradle complet re-ambaleaza ~1.9 GB (toolchain + jniLibs). Daca **binarul nu s-a
+schimbat** (doar cod Python din assets), e suficient sa inlocuim acele intrari in APK-ul de
+baza si sa re-semnăm:
+
+```bash
+tools/repack_assets.sh                 # ia APK-ul instalat de pe device ca baza
+tools/repack_assets.sh /cale/base.apk  # sau un APK de baza dat explicit
+/home/gab/android/platform-tools/adb install -r ~/.hermes/cache/scratch/apk/final.apk
+```
+
+Scriptul: copiaza APK-ul de baza → inlocuieste `assets/python/*.py` cu cele din repo
+(`zip -X`, fara recompresie) → `zipalign -p 4 -P 16` → `apksigner sign` cu
+`~/.config/.android/debug.keystore` (OBLIGATORIU acesta, altfel `adb install -r` da
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE` si uninstall-ul sterge `key.txt`/`workspace`/contextul)
+→ `final.apk`. NU se foloseste pentru schimbari de binar (toolchain/jniLibs) sau de cod Kotlin.
 
 ---
 
@@ -3173,6 +3203,49 @@ Inainte: fiecare update de APK stergea `pyhome` -> dispareau numpy/scipy/lxml/PI
 (5 ore de build pierdute). Acum: depozit `files/site_packages_keep` care
 supravietuieste reinstalarii; restaurare DUPA reconstructia pyhome (ordinea conteaza —
 altfel `Lib/` nu se copia si apare *"Failed to import encodings"*).
+
+### Heal site-packages: copiile trunchiate care UMBRESC `pysitepkg.zip` (8 oct 2026)
+
+**Simptom:** orice build cu `pip` cade cu `ModuleNotFoundError` intr-un SUBMODUL al unui
+pachet de build instalat (``No module named 'pathspec._backends'``,
+``scikit_build_core._compat``, ``setuptools_scm._integration``, ``packaging._elffile``).
+Arata ca un pachet lipsa, dar pachetul EXISTA, complet, in `pysitepkg.zip`.
+
+**Cauza radacina (dovadita):** Python-ul din app are doua locatii de pachete si ordinea
+din `sys.path` e FIXA, hardcodata in binarul CPython (NU se schimba din `PYTHONPATH`):
+
+```
+1. <filesDir>/pyhome/lib/python3.14/site-packages   (disc)
+2. <filesDir>/pyhome/lib/pysitepkg.zip              (pachetele din APK)
+```
+
+Cand un pachet exista in ambele, copia de pe DISC are prioritate. Iar pe disc ajunge
+TRUNCHIATA, pentru ca **AAPT2 nu ambaleaza in assets folderele/fisierele care incep cu `_`**
+(deja cunoscut pentru `pip/_internal`): `scikit_build_core/_compat/`, `pathspec/_backends/`,
+`setuptools_scm/_integration/`, `packaging/_*.py` lipsesc. Copia rupta UMBREȘTE copia
+completa din zip, iar setuptools incarca plugin-urile tuturor pachetelor la fiecare
+`setup()` -> build-ul moare INAINTE de compilare (a costat ~20 de pasi intr-o sesiune E2E).
+
+**Fix: `toolchain.heal_site_packages()`** (`toolchain.py`) — REPARATIE IN LOC: daca pachetul
+de pe disc este un subset exact al celui din zip (aceeasi versiune declarata in dist-info,
+zero fisiere in plus), copiaza fisierele lipsa DIN ZIP peste copia de pe disc. De ce nu doar
+"mut copia rupta si las zip-ul sa castige": caile din zip sunt virtuale (zipimport) si NU pot
+fi citite de clang/Cython (headere `.h`, `.pxd`), deci reparatia in loc pastreaza caile REELE
+valide. Pachetele cu fisiere in plus (alta versiune, ex. `mesonpy` instalat cu pip) NU sunt
+atinse. Daca scrierea esueaza, copia trunchiata e mutata in `files/backup_shadowed/`.
+
+Se executa:
+* automat la **fiecare pornire** a agentului (linia `[heal] ...` apare DOAR daca a reparat ceva);
+* automat **inainte de orice `pip_install`** (in `_steps` apare `heal:...`);
+* la cerere: `toolchain action=heal` (repara) sau `action=audit` (doar raport);
+* acopera toate cele 3 locatii: `pyhome/.../site-packages`, `site_packages_keep` (de unde se
+  RESTAUREAZA la fiecare update de APK — sursa recurentei) si `python/Lib/site-packages`.
+
+Idempotent si offline (cateva secunde). Verificat pe SM-A366B.
+
+`pip_install` accepta acum si o **CALE LOCALA** (director de surse sau `.tar.gz` de pe device)
+sau un URL, nu doar un nume PyPI — cazul lxml, unde sdist-ul ales de PyPI cerea cerinte de
+build rupte (`toolchain action=pip_install package=/files/tmp/lxml-6.0.2`).
 
 ### VERIFICARE FINALA (pe instalare CURATA: dezinstalare + reinstalare APK)
 

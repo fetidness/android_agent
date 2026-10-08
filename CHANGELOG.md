@@ -9,6 +9,52 @@
 
 ---
 
+### 2026-10-08 (1) (fix: copiile trunchiate care UMBRESC pysitepkg.zip — heal automat)
+
+> **Context:** raport scris de agentul de pe device (`site-packages_probleme.md` +
+> `SCRAPING_NOTES.md`, in `/sdcard/Download/Agent/workspace/`): build-ul lxml a costat
+> ~20 de pasi pentru ca `pip` cadea cu `ModuleNotFoundError` in SUBMODULE ale unor
+> pachete de build instalate (`scikit_build_core._compat`, `setuptools_scm._integration`,
+> `pathspec._backends`). Agentul le-a mutat manual in `files/backup_sbc/` si a raportat
+> explicit ca problema REAPARE daca pachetul e reinstalat — si ca un script de verificare
+> automata a umbririi ar fi util. Acest commit il implementeaza in COD.
+
+**Cauza radacina (dovadita pe device):** `sys.path` are ordinea FIXA, hardcodata in binarul
+CPython — `<filesDir>/pyhome/lib/python3.14/site-packages` INAINTE de
+`<filesDir>/pyhome/lib/pysitepkg.zip`. Deci o copie TRUNCHIATA de pe disc UMBREȘTE pachetul
+COMPLET din zip. Iar pe disc ajunge trunchiata pentru ca **AAPT2 nu ambaleaza in assets
+folderele/fisierele care incep cu `_`** (`_compat/`, `_backends/`, `_integration/`,
+`packaging/_*.py`). Recurenta: la fiecare update de APK, `site_packages_keep` (care contine
+si el copiile trunchiate) este restaurat PESTE `site-packages`.
+
+**Fix (in cod, nu manual):**
+* `toolchain.heal_site_packages()` — REPARATIE IN LOC din `pysitepkg.zip`: daca pachetul de
+  pe disc e un subset exact (aceeasi versiune in dist-info, zero fisiere in plus), copiaza
+  fisierele lipsa din zip peste copia de pe disc. Nu doar muta copia rupta: caile din zip
+  sunt virtuale si clang/Cython nu le pot citi (headere `.h`, `.pxd`). Pachetele cu fisiere in
+  plus (alta versiune, ex. `mesonpy` din pip) NU sunt atinse. Fallback: mutare in
+  `files/backup_shadowed/`. Acopera `site-packages`, `site_packages_keep` si
+  `python/Lib/site-packages`; curata si `sys.modules`/cache-urile de import.
+* `shadow_audit()` — doar raport (ce copii trunchiate exista si ce fisiere lipsesc).
+* Ruleaza automat la **fiecare pornire** (o singura linie `[heal] ...`, doar daca a reparat
+  ceva) si **inainte de orice `pip_install`**; si la cerere: `toolchain action=heal|audit`.
+* `_repair_build_backends()` face heal INTÂI si abia apoi (daca mai e nevoie) reinstaleaza cu
+  pip — inainte sarea direct la `pip install --force-reinstall`, care recreeaza umbrirea.
+* `_classify_build_fail`: `ModuleNotFoundError` intr-un submodul de pachet de build nu mai e
+  raportat ca "pachet lipsa", ci ca `umbrire_site_packages` cu pasul corect (`action=heal`).
+* `pip_install` accepta acum si **CALE LOCALA / URL** (dir de surse sau `.tar.gz`), nu doar
+  un nume PyPI — solutia dovedita pentru lxml, unde sdist-ul ales de PyPI cerea cerinte de
+  build rupte. Calea relativa e rezolvata fata de cwd/workspace/files-tmp.
+* `toolchain.py` are acum `__main__` (CLI): inainte `python toolchain.py <actiune>` rula NIMIC
+  si returna gol — un esec parea "fara output", nu eroare. Actiunile: check/doctor/selftest/
+  preflight/profile/env/env-file/fix/install/heal/audit.
+* Promptul agentului (in cod, `agent.py`): reguli noi (4a) umbrire + heal, (4b) pip din sursa
+  locala si `sh ./configure` (scripturile nu ruleaza direct din filesDir: noexec pe shebang).
+
+**Verificat:** unit-test pe laptop cu arbore simulat (copii trunchiate din zip real) — cele 3
+pachete + `packaging` detectate si reparate, pachetul cu alta versiune NEatins, a doua rulare
+idempotenta. Test pe device dupa instalare.
+
 ### 2026-10-07 (2) (fix UI: „nu pot scrie în input" — fullScroll fura focusul)
 
 > **Context:** după fix-ul de auto-scroll, userul a raportat că NU mai poate scrie în

@@ -1751,6 +1751,247 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
 
 
 
+# ---------------------------------------------------------------------------
+# ★ FAZA 4x: UMBRIREA site-packages vs pysitepkg.zip (cauza RADACINA, dovedita)
+# ---------------------------------------------------------------------------
+# Python-ul din app are doua locatii de pachete si ordinea din sys.path e FIXA,
+# hardcodata in binarul CPython (NU se poate schimba din PYTHONPATH):
+#     site-packages  INAINTEA  pysitepkg.zip
+# Deci singurul control real = ce fisiere EXISTA FIZIC in site-packages.
+#
+# Cauza radacina a copiilor trunchiate: AAPT2 NU ambaleaza in assets folderele si
+# fisierele care incep cu '_' (deja cunoscut pentru pip/_internal) -> pachetele
+# livrate si pe disc ajung FARA subpachetele cu '_' (scikit_build_core/_compat/,
+# pathspec/_backends/, setuptools_scm/_integration/, packaging/_elffile.py,
+# _manylinux.py, _parser/...). Copia trunchiata UMBREȘTE copia COMPLETA din zip si
+# orice build care atinge submodulul lipsa cade cu ModuleNotFoundError
+# (a rupt build-ul lxml si a costat ~20 de pasi intr-o sesiune E2E).
+#
+# Fix: REPARATIE IN LOC - copiem fisierele lipsa DIN ZIP in copia de pe disc.
+# De ce nu doar "mutam copia rupta si lasam zip-ul sa castige": caile din zip sunt
+# VIRTUALE (zipimport) si nu pot fi citite de clang/Cython (headere .h, .pxd) - vezi
+# _ensure_real_cython/_pybind11_dir. Cu reparatia in loc, importul merge de pe disc
+# si caile REELE ramân valide. NU atingem pachetele cu fisiere in PLUS fata de zip
+# (alta versiune -> un merge ar fi gresit).
+
+_HEAL_ZIP_FALLBACK = "/python/pysitepkg.zip"
+_HEAL_BACKUP = "backup_shadowed"
+
+
+def _heal_dirs():
+    """Directoarele cu pachete de pe disc care pot umbri pysitepkg.zip."""
+    return (F + "/pyhome/lib/python3.14/site-packages",   # cel care conteaza la import
+            F + "/site_packages_keep",                    # sursa: se restaureaza la update
+            F + "/python/Lib/site-packages")              # copia extrasa din assets
+
+
+def _zip_pkg_files(zip_path):
+    """{pachet: {fisiere relative}} pentru pachetele (foldere cu __init__.py) din zip."""
+    import zipfile
+    out = {}
+    if not zip_path or not os.path.exists(zip_path):
+        return out
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            for n in z.namelist():
+                if n.endswith("/") or "/" not in n:
+                    continue
+                if n.endswith((".pyc", ".pyo")) or "__pycache__" in n:
+                    continue          # cache-ul compilat NU conteaza (nu se compara)
+                pkg, rest = n.split("/", 1)
+                if pkg.endswith(".dist-info") or pkg.endswith(".data") or pkg.startswith("."):
+                    continue
+                out.setdefault(pkg, set()).add(rest)
+    except Exception:
+        return {}
+    return {p: f for p, f in out.items() if "__init__.py" in f}
+
+
+def _disk_pkg_files(d):
+    """Fisierele reale dintr-un director de pachet (fara __pycache__/.pyc)."""
+    out = set()
+    for root, dirs, files in os.walk(d):
+        dirs[:] = [x for x in dirs if x != "__pycache__"]
+        for f in files:
+            if f.endswith((".pyc", ".pyo")):
+                continue
+            out.add(os.path.relpath(os.path.join(root, f), d))
+    return out
+
+
+def _norm_name(s):
+    return str(s or "").strip().lower().replace("_", "-").replace(".", "-")
+
+
+def _ver_tuple(v):
+    out = []
+    for part in str(v or "").split("."):
+        num = ""
+        for ch in part:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        out.append(int(num) if num else 0)
+    return tuple(out[:4])
+
+
+def _zip_pkg_version(zip_path, pkg):
+    """Versiunea pachetului asa cum apare in dist-info-ul DIN ZIP (sau None)."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            for n in z.namelist():
+                if not n.endswith(".dist-info/METADATA"):
+                    continue
+                top = n.split("/")[0]
+                if _norm_name(top[:-len(".dist-info")]) != _norm_name(pkg):
+                    continue
+                with z.open(n) as fh:
+                    for line in fh.read().decode("utf-8", "ignore").splitlines():
+                        if line.startswith("Version:"):
+                            return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+
+def _disk_pkg_version(pkg_dir):
+    """Versiunea copiei de pe disc (din <pkg>-*.dist-info/METADATA de langa ea)."""
+    d = os.path.dirname(os.path.abspath(pkg_dir))
+    pkg = os.path.basename(os.path.abspath(pkg_dir))
+    want = _norm_name(pkg) + "-"
+    try:
+        for e in os.listdir(d):
+            if not e.endswith(".dist-info") or not _norm_name(e).startswith(want):
+                continue
+            md = os.path.join(d, e, "METADATA")
+            if not os.path.exists(md):
+                continue
+            with open(md, encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    if line.startswith("Version:"):
+                        return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+
+def shadow_audit(dirs=None, zip_path=None):
+    """★ Raport (fara modificari): copiile TRUNCHIATE de pe disc care umbresc zip-ul.
+
+    Un pachet e considerat trunchiat daca: (a) NU are fisiere in plus fata de zip
+    (deci nu e o alta versiune instalata normal, ci exact copia din zip trunchiata),
+    (b) ii lipsesc fisiere pe care zip-ul le are SI (c) versiunea declarata de
+    dist-info coincide cu cea din zip (daca versiunile difera NU amestecam fisiere).
+    """
+    zp = zip_path or (F + "/pyhome/lib/pysitepkg.zip")
+    if not os.path.exists(zp):
+        zp = F + _HEAL_ZIP_FALLBACK
+    zf = _zip_pkg_files(zp)
+    rupt = []
+    for d in (dirs if dirs is not None else _heal_dirs()):
+        if not os.path.isdir(d):
+            continue
+        for pkg, zfiles in sorted(zf.items()):
+            pd = os.path.join(d, pkg)
+            if not os.path.isdir(pd):
+                continue
+            dfiles = _disk_pkg_files(pd)
+            if dfiles - zfiles:
+                continue                       # fisiere in plus -> alta versiune, NU atingem
+            missing = zfiles - dfiles
+            if not missing:
+                continue
+            vz = _zip_pkg_version(zp, pkg)
+            vd = _disk_pkg_version(pd)
+            if vz and vd and _ver_tuple(vz) != _ver_tuple(vd):
+                continue                       # versiuni diferite -> NU amestecam
+            sub = sorted(m for m in missing if m.endswith("__init__.py") and "/" in m)
+            rupt.append({"pachet": pkg, "dir": d, "versiune": vd or vz,
+                         "subpachete_lipsa": sub[:5], "subpachete_total": len(sub),
+                         "fisiere_lipsa": len(missing)})
+    return {"zip": zp, "verificate": len(zf), "rupte": rupt}
+
+
+def _fill_from_zip(zip_path, pkg, dst, missing):
+    """Copiaza in `dst` fisierele `missing` ale pachetului `pkg` din zip. Returneaza nr."""
+    import zipfile, shutil as _sh
+    n = 0
+    with zipfile.ZipFile(zip_path) as z:
+        for rel in sorted(missing):
+            try:
+                info = z.getinfo(pkg + "/" + rel)
+            except KeyError:
+                continue
+            out = os.path.join(dst, rel)
+            try:
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                with z.open(info) as src, open(out, "wb") as fh:
+                    _sh.copyfileobj(src, fh)
+                n += 1
+            except Exception:
+                pass
+    return n
+
+
+def heal_site_packages(dirs=None, apply=True):
+    """★ Repara copiile trunchiate de pe disc din pysitepkg.zip (idempotent, offline).
+
+    Se cheama: la pornirea agentului, inainte de orice pip_install si din
+    `toolchain action=heal`. Vezi comentariul de mai sus pentru cauza radacina.
+    """
+    rep = shadow_audit(dirs=dirs)
+    zp = rep["zip"]
+    if not rep["rupte"]:
+        return {"ok": True, "zip": zp, "verificate": rep["verificate"],
+                "reparate": [], "rupte": []}
+    if not apply:
+        return {"ok": False, "zip": zp, "verificate": rep["verificate"],
+                "reparate": [], "rupte": rep["rupte"]}
+    reparate, mutate = [], []
+    for r in rep["rupte"]:
+        pkg, d = r["pachet"], r["dir"]
+        _lbl = d.replace(F + "/", "")
+        pd = os.path.join(d, pkg)
+        dfiles = _disk_pkg_files(pd)
+        zf = _zip_pkg_files(zp).get(pkg, set())
+        missing = zf - dfiles
+        n = _fill_from_zip(zp, pkg, pd, missing)
+        if n and not (zf - _disk_pkg_files(pd)):
+            reparate.append("%s(%s: +%d)" % (pkg, _lbl, n))
+            continue
+        # nu am putut repara in loc -> mutam copia trunchiata: lasam zip-ul (complet) sa castige
+        try:
+            import shutil as _sh
+            bk = os.path.join(F, _HEAL_BACKUP, os.path.basename(d))
+            os.makedirs(bk, exist_ok=True)
+            for item in [pkg] + [x for x in os.listdir(d)
+                                 if x.startswith(pkg + "-") and x.endswith(".dist-info")]:
+                src = os.path.join(d, item)
+                if not os.path.exists(src):
+                    continue
+                dst = os.path.join(bk, item)
+                if os.path.exists(dst):
+                    _sh.rmtree(dst, ignore_errors=True) if os.path.isdir(dst) else os.remove(dst)
+                _sh.move(src, dst)
+                mutate.append("%s(%s)" % (item, os.path.basename(d)))
+        except Exception:
+            pass
+    # modulele deja importate ramân in cache (sys.modules) -> le scoatem, altfel
+    # verificarea urmatoare vede tot versiunea veche (dovedit: _repair_build_backends)
+    try:
+        import importlib as _il
+        _il.invalidate_caches()
+        for name in list(sys.modules):
+            if name.split(".")[0] in [r["pachet"] for r in rep["rupte"]]:
+                sys.modules.pop(name, None)
+    except Exception:
+        pass
+    return {"ok": not mutate, "zip": zp, "verificate": rep["verificate"],
+            "reparate": reparate, "mutate": mutate}
+
+
 def _repair_build_backends(verbose=False):
     """★ FAZA 4u: verifica pachetele de BUILD si repara instalari incomplete.
 
@@ -1760,6 +2001,16 @@ def _repair_build_backends(verbose=False):
     Aici le verificam prin import si, daca o instalare e rupta, o stergem si o reinstalam curat
     (fara dependinte, cu pip-ul nostru care merge).
     """
+    # ★ FAZA 4x: INAINTE de orice verificare, repara copiile TRUNCHIATE de pe disc din
+    # pysitepkg.zip (AAPT2 ignora folderele '_' la ambalare -> site-packages ajunge fara
+    # _backends/, _compat/, _integration/ si UMBREȘTE zip-ul complet). Rezolva cauza la
+    # sursa, offline, fara pip - vezi heal_site_packages().
+    _heal = {}
+    try:
+        _heal = heal_site_packages()
+    except Exception:
+        _heal = {}
+    _healed = list(_heal.get("reparate") or []) + list(_heal.get("mutate") or [])
     # (nume pip, functie de verificare "adanca" - import SI functionalitate reala)
     def _ok_mod(mod):
         def _f():
@@ -1800,7 +2051,7 @@ def _repair_build_backends(verbose=False):
         except Exception:
             broken.append((pkg, getattr(fn, "__name__", "check")))
     if not broken:
-        return {"ok": True, "reparate": [], "rupte": []}
+        return {"ok": True, "reparate": _healed, "rupte": [], "umbrire": _healed}
     try:
         _env2 = dict(env_vars())
     except Exception:
@@ -1837,7 +2088,7 @@ def _repair_build_backends(verbose=False):
         except Exception:
             pass
     return {"ok": not [b for b in broken if b[0] not in fixed],
-            "reparate": fixed, "rupte": [p for p, m in broken]}
+            "reparate": _healed + fixed, "rupte": [p for p, m in broken], "umbrire": _healed}
 
 
 def _force_symlink_launcher(dst, target):
@@ -3235,3 +3486,53 @@ def selftest():
         r["verdict"] = "RUPT: nici macar C nu compileaza - vezi c_error"
     return r
 
+
+# ---------------------------------------------------------------------------
+# CLI (fallback: se foloseste cand apelul inline din agent nu e posibil).
+# Inainte fisierul NU avea __main__ -> `python toolchain.py <actiune>` rula
+# NIMIC si returna gol (un apel care eșua parea "fara output", nu "eroare").
+# ---------------------------------------------------------------------------
+def install():
+    """Aplica lantul de fixuri de mediu (exact ce facea inline ramura `install`)."""
+    for _fn in ("_prepare_dirs", "_patch_runpath", "_fix_ninja", "_fix_cc_wrappers",
+                "_fix_symlinks", "_fix_wrappers_shebang", "_fix_sysconfig",
+                "_fix_ca_bundle", "_fix_libcxx_needed", "_write_env_file"):
+        _f = globals().get(_fn)
+        if not callable(_f):
+            continue
+        try:
+            _f()
+        except Exception:
+            pass
+    return preflight()
+
+
+if __name__ == "__main__":
+    _a = sys.argv[1] if len(sys.argv) > 1 else "check"
+    _x = sys.argv[2] if len(sys.argv) > 2 else None
+    if _a == "check":
+        print(json.dumps(check(), indent=2, ensure_ascii=False))
+    elif _a == "doctor":
+        print(json.dumps(doctor(), indent=2, ensure_ascii=False))
+    elif _a == "selftest":
+        print(json.dumps(selftest(), indent=2, ensure_ascii=False))
+    elif _a == "preflight":
+        print(json.dumps(preflight(), indent=2, ensure_ascii=False))
+    elif _a == "profile":
+        print(profile(_x or "cmake"))
+    elif _a == "env":
+        _write_env_file()
+        print(json.dumps({k: v for k, v in env_vars().items() if v}, indent=2, ensure_ascii=False))
+    elif _a == "env-file":
+        _write_env_file()
+        print("fisier: " + ROOT + "/env.sh")
+    elif _a == "heal":
+        print(json.dumps(heal_site_packages(), indent=2, ensure_ascii=False))
+    elif _a == "audit":
+        print(json.dumps(shadow_audit(), indent=2, ensure_ascii=False))
+    elif _a == "install":
+        print(json.dumps(install(), indent=2, ensure_ascii=False))
+    elif _a == "fix":
+        print(json.dumps(install(), indent=2, ensure_ascii=False))
+    else:
+        print("actiune necunoscuta: " + str(_a))
