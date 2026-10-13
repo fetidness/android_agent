@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Xiaomi/MIUI Stuck at 60Hz on a 120Hz Screen - The Hidden Setting (2026 Fix)</title>
+<meta name="description" content="Your Xiaomi or Redmi keeps reverting to 60Hz even though you set 120Hz? The real cause is a hidden MIUI setting rewritten by com.miui.powerkeeper every 10 seconds. Permanent ADB fix, no root.">
+<meta name="keywords" content="xiaomi stuck 60hz, miui refresh rate, miui_refresh_rate, com.miui.powerkeeper, redmi 120hz fix, hyperos refresh rate, android 120hz keeps reverting, miui 60hz fix adb">
+<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+<link rel="canonical" href="https://YOUR-DOMAIN.com/xiaomi-60hz-fix/">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Xiaomi/MIUI Stuck at 60Hz on a 120Hz Screen - The Hidden Setting">
+<meta property="og:description" content="You set 120Hz, it reverts to 60Hz after 10 seconds. The real cause is a hidden MIUI setting rewritten by com.miui.powerkeeper. Permanent fix inside, no root.">
+<meta property="og:url" content="https://YOUR-DOMAIN.com/xiaomi-60hz-fix/">
+<meta property="og:site_name" content="120Hz Fix Guide">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Xiaomi/MIUI Stuck at 60Hz - The Hidden Setting">
+<meta name="twitter:description" content="The 120Hz setting that MIUI silently reverts every 10 seconds, and how to fix it permanently with ADB. No root.">
+
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--text:#e6e8eb;--muted:#9aa4b2;--accent:#4da3ff;--accent2:#22c55e;--warn:#f59e0b;--danger:#ef4444;--code-bg:#0b0d11;--border:#262b36}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:820px;margin:0 auto;padding:32px 20px 80px}
+header.hero{padding:48px 0 8px;border-bottom:1px solid var(--border);margin-bottom:32px}
+h1{font-size:2rem;line-height:1.25;margin:0 0 14px;letter-spacing:-.02em}
+h2{font-size:1.45rem;margin:44px 0 14px;letter-spacing:-.01em}
+h3{font-size:1.1rem;margin:26px 0 10px;color:var(--accent)}
+p{margin:0 0 16px}
+.lead{font-size:1.1rem;color:var(--muted);margin-bottom:0}
+.meta{color:var(--muted);font-size:.9rem;margin-top:16px}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:2px 6px;font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#e8d9a0;word-break:break-word}
+pre{background:var(--code-bg);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:16px;overflow-x:auto;margin:0 0 18px}
+pre code{background:none;border:none;padding:0;color:#d8e0ea;font-size:13.5px}
+.callout{border-radius:10px;padding:16px 18px;margin:0 0 20px;border:1px solid var(--border);background:var(--panel)}
+.callout.warn{border-left:4px solid var(--warn)}
+.callout.danger{border-left:4px solid var(--danger)}
+.callout.ok{border-left:4px solid var(--accent2)}
+.callout.why{border-left:4px solid var(--accent)}
+.callout p:last-child{margin-bottom:0}
+.callout strong{color:#fff}
+.toc{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin:0 0 36px}
+.toc h2{margin:0 0 10px;font-size:1rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.toc ol{margin:0;padding-left:22px}
+.toc li{margin:4px 0}
+.steps{counter-reset:step}
+.step{counter-increment:step;position:relative;padding-left:44px;margin:0 0 26px}
+.step::before{content:counter(step);position:absolute;left:0;top:0;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#04121f;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+table{border-collapse:collapse;width:100%;margin:0 0 20px;font-size:.93rem}
+th,td{border:1px solid var(--border);padding:9px 12px;text-align:left}
+th{background:var(--panel);color:var(--muted);font-weight:600}
+footer{border-top:1px solid var(--border);margin-top:56px;padding-top:24px;color:var(--muted);font-size:.9rem}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+ul,ol{margin:0 0 16px;padding-left:24px}
+li{margin:5px 0}
+@media(max-width:600px){h1{font-size:1.55rem}h2{font-size:1.25rem}.wrap{padding:20px 16px 60px}pre{padding:13px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Xiaomi / MIUI stuck at 60Hz on a 120Hz screen &mdash; the hidden setting nobody tells you about</h1>
+  <p class="lead">You set 120Hz in Settings. Ten seconds later it is back to 60Hz. It is not your screen, not a bug, and not something you did. There is a second, hidden refresh-rate setting that MIUI silently rewrites in the background &mdash; and here is how to stop it for good, with no root.</p>
+  <p class="meta">Tested on a Redmi (2409FPCC4G), Android 16 / HyperOS, MediaTek. Works via ADB from a PC <em>or</em> directly on the phone.</p>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#symptom">The symptom</a></li>
+    <li><a href="#cause">The real cause (with proof)</a></li>
+    <li><a href="#diagnose">Diagnose your device in 30 seconds</a></li>
+    <li><a href="#quick">Quick fix (try this first)</a></li>
+    <li><a href="#permanent">Permanent fix (the one that works)</a></li>
+    <li><a href="#setup">Setting up ADB</a></li>
+    <li><a href="#nopc">Fix without a PC</a></li>
+    <li><a href="#verify">How to verify it worked</a></li>
+    <li><a href="#revert">How to revert</a></li>
+    <li><a href="#warnings">Warnings</a></li>
+    <li><a href="#compat">Compatibility &amp; disclaimer</a></li>
+  </ol>
+</nav>
+
+<article>
+
+<h2 id="symptom">1. The symptom</h2>
+<p>Everything looks like it should work. You go to <strong>Settings &rarr; Display &rarr; Refresh rate</strong>, pick <strong>120Hz</strong>, and the phone feels smooth &mdash; for a moment. Then it drops back to 60Hz. You check the setting again, it still says 120. You reboot. It happens again. Every guide online says &ldquo;just enable 120Hz in Settings&rdquo;, which is exactly what you already did.</p>
+
+<h2 id="cause">2. The real cause (with proof)</h2>
+<p>On stock Android, the refresh rate is controlled by a single setting, <code>peak_refresh_rate</code>. On MIUI and HyperOS there is a <strong>second</strong> setting that takes priority:</p>
+<pre><code>miui_refresh_rate</code></pre>
+<p>When the two disagree, MIUI follows <code>miui_refresh_rate</code> and ignores the standard one. So you set 120 everywhere you can see, while the hidden value &mdash; and something in the background &mdash; keeps it at 60.</p>
+<p>That &ldquo;something&rdquo; is <code>com.miui.powerkeeper</code>, Xiaomi&rsquo;s battery-optimisation service. Its job is to switch between 60Hz and 120Hz automatically to save battery, and it rewrites the setting on its own schedule. You can prove it by watching the settings history:</p>
+<pre><code>adb shell dumpsys settings | findstr miui_refresh_rate</code></pre>
+<p>On the tested device it looked like this &mdash; the same package flipping the value back and forth every few seconds:</p>
+<pre><code>16:08:27  value:120  packageName:com.miui.powerkeeper
+16:08:37  value:60   packageName:com.miui.powerkeeper   &lt;-- reverts
+16:08:43  value:120  packageName:com.miui.powerkeeper
+16:08:44  value:60   packageName:com.miui.powerkeeper   &lt;-- reverts again</code></pre>
+<div class="callout why">
+  <p><strong>Why this is hard to find:</strong> the visible setting says 120 the whole time. The value that actually matters lives in <code>secure settings</code>, is exposed in no menu, and is reverted within seconds. That is why &ldquo;just set 120Hz&rdquo; advice fails, and why this problem appears to have no documented fix.</p>
+</div>
+
+<h2 id="diagnose">3. Diagnose your device in 30 seconds</h2>
+<p>These commands need ADB (see <a href="#setup">section 6</a>). Run them one by one.</p>
+<div class="steps">
+  <div class="step">
+    <h3>What mode is active right now</h3>
+    <pre><code>adb shell dumpsys SurfaceFlinger | findstr peak-refresh</code></pre>
+    <p>Look for <code>60.00 Hz</code> (stuck) or <code>120.00 Hz</code> (fine).</p>
+  </div>
+  <div class="step">
+    <h3>What your screen actually supports</h3>
+    <pre><code>adb shell dumpsys display | findstr supportedRefreshRates
+adb shell dumpsys display | findstr mActiveModeId</code></pre>
+    <p>A 120Hz panel lists something like <code>[60.0, 120.0, 90.0]</code>. If <code>120.0</code> is absent, the hardware does not support it &mdash; stop here.</p>
+  </div>
+  <div class="step">
+    <h3>Read both refresh settings</h3>
+    <pre><code>adb shell settings get system peak_refresh_rate
+adb shell settings get secure miui_refresh_rate
+adb shell settings get system miui_refresh_rate</code></pre>
+    <p>If the <code>miui_refresh_rate</code> values are <code>60</code> or <code>null</code> while <code>peak_refresh_rate</code> is <code>120</code>, you have found the mismatch.</p>
+  </div>
+  <div class="step">
+    <h3>Catch the culprit</h3>
+    <pre><code>adb shell dumpsys settings | findstr miui_refresh_rate</code></pre>
+    <p>If you see <code>packageName:com.miui.powerkeeper</code> writing <code>value:60</code>, that is your saboteur. Continue to the permanent fix.</p>
+  </div>
+</div>
+
+<h2 id="quick">4. Quick fix (try this first)</h2>
+<p>Force the hidden setting to 120 in every namespace and see whether it holds:</p>
+<pre><code>adb shell settings put system peak_refresh_rate 120
+adb shell settings put system min_refresh_rate 120
+adb shell settings put secure miui_refresh_rate 120
+adb shell settings put system miui_refresh_rate 120</code></pre>
+<p>Wait one minute, then check again with <code>dumpsys SurfaceFlinger | findstr peak-refresh</code>.</p>
+<div class="callout warn">
+  <p><strong>If it stays at 120Hz</strong> &mdash; great, you are done. Some devices only needed the hidden setting corrected.</p>
+  <p><strong>If it reverts to 60Hz</strong> &mdash; PowerKeeper is reverting it. Do not repeat these commands; go to the permanent fix.</p>
+</div>
+
+<h2 id="permanent">5. Permanent fix (the one that works)</h2>
+<p>The usual tricks <strong>do not work</strong> on modern MIUI, and it is worth knowing why:</p>
+<ul>
+  <li><code>am force-stop com.miui.powerkeeper</code> &mdash; the service is restarted by the system within seconds.</li>
+  <li><code>pm disable-user com.miui.powerkeeper</code> &mdash; fails with <code>SecurityException: Cannot disable system packages</code> on Android 14/15/16.</li>
+  <li><code>appops set ... WRITE_SETTINGS deny</code> &mdash; not respected; the service is restarted.</li>
+</ul>
+<p>The method that sticks is to <strong>uninstall the package for the current user</strong>. This does not touch the system partition, needs no root, and is reversible at any time.</p>
+<div class="steps">
+  <div class="step">
+    <h3>Uninstall PowerKeeper for user 0</h3>
+    <pre><code>adb shell pm uninstall --user 0 com.miui.powerkeeper</code></pre>
+    <p>You want the single word: <code>Success</code>.</p>
+  </div>
+  <div class="step">
+    <h3>Confirm it is gone</h3>
+    <pre><code>adb shell pm path com.miui.powerkeeper
+adb shell ps -A | findstr powerkeeper</code></pre>
+    <p>Both should return nothing. If <code>pm path</code> still prints a path, it was not removed.</p>
+  </div>
+  <div class="step">
+    <h3>Set 120Hz again</h3>
+    <pre><code>adb shell settings put system peak_refresh_rate 120
+adb shell settings put system min_refresh_rate 120
+adb shell settings put secure miui_refresh_rate 120
+adb shell settings put system miui_refresh_rate 120</code></pre>
+  </div>
+  <div class="step">
+    <h3>Wait and re-check</h3>
+    <pre><code>adb shell dumpsys SurfaceFlinger | findstr peak-refresh</code></pre>
+    <p>Give it a full minute. It should read <code>120.00 Hz</code> and stay there.</p>
+  </div>
+  <div class="step">
+    <h3>Survive a reboot</h3>
+    <pre><code>adb reboot</code></pre>
+    <p>After it boots, connect again and re-run the check. If it is still 120Hz, the fix is permanent.</p>
+  </div>
+</div>
+<div class="callout ok">
+  <p><strong>Result on the tested device:</strong> after removing PowerKeeper and setting the hidden value to 120, the display held 120Hz indefinitely and stayed there through a full reboot.</p>
+</div>
+
+<h2 id="setup">6. Setting up ADB (one time)</h2>
+<ol>
+  <li>On the phone: <strong>Settings &rarr; About phone</strong>, tap <strong>MIUI/HyperOS version</strong> seven times to unlock <em>Developer options</em>.</li>
+  <li>In <strong>Developer options</strong>, enable <strong>USB debugging</strong>.</li>
+  <li>On the PC, download <strong>Platform Tools</strong> from Google&rsquo;s Android developer site and open a terminal in that folder.</li>
+  <li>Connect the phone with a <strong>data</strong> cable (not charge-only) and run <code>adb devices</code>.</li>
+  <li>Approve the dialog on the phone, ticking <strong>Always allow from this computer</strong>.</li>
+</ol>
+<div class="callout warn">
+  <p><strong>Windows note:</strong> replace <code>findstr</code> with its macOS/Linux equivalent, <code>grep</code>. Everything else is identical on all platforms.</p>
+</div>
+
+<h2 id="nopc">7. Fix without a PC</h2>
+<p>You do not need a computer. Any on-device shell able to talk to the local ADB daemon works the same way &mdash; for example <strong>Termux</strong> with a wireless ADB connection, or a root shell. The three commands that matter are unchanged:</p>
+<pre><code>pm uninstall --user 0 com.miui.powerkeeper
+settings put secure miui_refresh_rate 120
+settings put system miui_refresh_rate 120</code></pre>
+<p>This is the part almost never mentioned in existing guides, and it matters for anyone without a PC nearby.</p>
+
+<h2 id="verify">8. How to verify it worked</h2>
+<pre><code>adb shell dumpsys SurfaceFlinger | findstr peak-refresh
+adb shell settings get secure miui_refresh_rate</code></pre>
+<ul>
+  <li><code>peak-refresh-rate : 120.00 Hz</code> &mdash; and it does not drop.</li>
+  <li><code>miui_refresh_rate</code> returns <code>120</code> and stays there.</li>
+</ul>
+<p>If both hold after a reboot, you are done. If not, re-check that <code>pm path com.miui.powerkeeper</code> returns nothing.</p>
+
+<h2 id="revert">9. How to revert (back to adaptive)</h2>
+<p>Nothing here is permanent at the system level. To restore Xiaomi&rsquo;s adaptive behaviour:</p>
+<pre><code>adb shell pm install-existing com.miui.powerkeeper
+adb shell settings put secure miui_refresh_rate 60</code></pre>
+<p>Remember that 120Hz constant uses more battery than adaptive switching. If battery life matters more on a given day, this is your way back.</p>
+
+<h2 id="warnings">10. Warnings</h2>
+<div class="callout danger">
+  <p><strong>Never remove core system packages.</strong> This guide targets exactly one battery service. Do not uninstall things like <code>com.android.phone</code>, <code>com.android.systemui</code>, <code>com.android.vending</code> (Play Store), <code>com.google.android.gms</code>, or any <code>com.android.providers.*</code> package &mdash; doing so can leave the phone unable to boot, recoverable only by reflashing firmware.</p>
+  <p><code>pm uninstall --user 0</code> is reversible with <code>pm install-existing &lt;package&gt;</code>, but only if you remember the package name. Note down anything you remove.</p>
+</div>
+
+<h2 id="compat">11. Compatibility &amp; disclaimer</h2>
+<p>Verified on a <strong>Redmi (model 2409FPCC4G), Android 16 / HyperOS, MediaTek</strong> display. The mechanism &mdash; a hidden <code>miui_refresh_rate</code> setting reverted by <code>com.miui.powerkeeper</code> &mdash; is present across recent MIUI and HyperOS builds, but exact package names and setting names can differ between regions and versions.</p>
+<p>Always run the <a href="#diagnose">diagnostic steps</a> first, so you react to what is actually happening on <em>your</em> device rather than assuming.</p>
+
+<hr>
+<p class="meta">If this saved you an evening of frustration, pass it on &mdash; this problem is far more common than the lack of documentation suggests.</p>
+
+</article>
+
+<footer>
+  <p>Guide written from a real, reproducible device diagnosis. Commands are non-destructive by design and reversible.</p>
+</footer>
+
+</div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Fix Xiaomi/MIUI stuck at 60Hz on a 120Hz screen",
+  "description": "Permanently fix a Xiaomi or Redmi phone that reverts to 60Hz despite being set to 120Hz, by correcting the hidden miui_refresh_rate setting and removing the com.miui.powerkeeper service that reverts it. No root required.",
+  "totalTime": "PT15M",
+  "tool": [
+    {"@type": "HowToTool", "name": "Android Platform Tools (ADB)"},
+    {"@type": "HowToTool", "name": "USB data cable"}
+  ],
+  "step": [
+    {"@type": "HowToStep", "name": "Diagnose the active display mode", "text": "Run 'adb shell dumpsys SurfaceFlinger | findstr peak-refresh' to see whether the display is stuck at 60Hz, and 'adb shell dumpsys display | findstr supportedRefreshRates' to confirm the panel supports 120Hz."},
+    {"@type": "HowToStep", "name": "Read the hidden refresh setting", "text": "Run 'adb shell settings get secure miui_refresh_rate' and 'adb shell settings get system miui_refresh_rate'. On MIUI and HyperOS these override the standard peak_refresh_rate setting."},
+    {"@type": "HowToStep", "name": "Identify what reverts the setting", "text": "Run 'adb shell dumpsys settings | findstr miui_refresh_rate' and look for com.miui.powerkeeper writing value:60. That package is reverting the refresh rate."},
+    {"@type": "HowToStep", "name": "Remove PowerKeeper for the current user", "text": "Run 'adb shell pm uninstall --user 0 com.miui.powerkeeper'. This does not require root and is reversible with pm install-existing."},
+    {"@type": "HowToStep", "name": "Force 120Hz in all namespaces", "text": "Run settings put system peak_refresh_rate 120, settings put system min_refresh_rate 120, settings put secure miui_refresh_rate 120 and settings put system miui_refresh_rate 120."},
+    {"@type": "HowToStep", "name": "Verify and reboot", "text": "Wait one minute, confirm peak-refresh is 120.00 Hz, then run adb reboot and re-check to confirm the fix persists."}
+  ]
+}
+</script>
+
+</body>
+</html>
