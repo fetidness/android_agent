@@ -1,0 +1,269 @@
+# TUTORIAL: Remediere 60Hz / 120Hz + Debloat pe Xiaomi (Android 16)
+# Dispozitiv: 2409FPCC4G (Redmi/Xiaomi, MIUI/HyperOS, MediaTek)
+# Scop: reparat refresh rate blocat la 60Hz + curatat bloatware, FOLOSIND UN PC
+
+=====================================================================
+PARTEA 0 - CE ITI TREBUIE (o singura data)
+=====================================================================
+
+1. Un PC (Windows/Mac/Linux)
+2. Cablu USB de date (nu doar de incarcare!)
+3. Pe telefon: Setari -> Despre telefon -> apasa de 7x pe "Versiune MIUI"
+   -> se activeaza "Optiuni dezvoltator"
+4. Setari -> Optiuni dezvoltator -> porneste "Depanare USB" (USB Debugging)
+5. Pe PC instalezi "Platform Tools" (adb):
+   - Windows: descarci de la developer.android.com/tools/releases/platform-tools
+   - debifezi arhiva, iti da un folder cu adb.exe
+   - Mac/Linux: sudo apt install android-tools-adb  (sau brew install android-platform-tools)
+
+VERIFICARE - conectezi telefonul, deschizi terminal (cmd/PowerShell/Terminal) in
+folderul cu adb si scrii:
+
+    adb devices
+
+Prima data iti apare pe TELEFON un dialog "Permite depanarea USB?" -> bifezi
+"Permite intotdeauna de la acest computer" -> Permite.
+
+Daca adb devices arata:
+    1234abcd    device
+...totul e OK. Daca scrie "unauthorized", repeta pasul cu dialogul.
+Daca lista e goala: cablu prost / alt port USB / schimba "Mod USB" pe telefon.
+
+=====================================================================
+PARTEA 1 - DIAGNOSTIC: de ce e blocat pe 60Hz?
+=====================================================================
+
+Ruleaza, pe rand, in terminalul PC-ului:
+
+--- 1a. Ce mod de ecran e activ ACUM ---
+adb shell dumpsys SurfaceFlinger | findstr peak-refresh
+   (pe Mac/Linux inlocuiesti findstr cu grep)
+
+Ce cauti: "peak-refresh-rate : 60.00 Hz"  -> blocat pe 60
+         "peak-refresh-rate : 120.00 Hz" -> OK
+
+--- 1b. Ce moduri suporta ecranul ---
+adb shell dumpsys display | findstr mActiveModeId
+adb shell dumpsys display | findstr supportedRefreshRates
+
+Vei vedea ceva de genul:
+   supportedRefreshRates [60.0, 120.00001, 90.0]
+   mActiveModeId=1     -> 1 = 60Hz, 2 = 120Hz
+
+Daca ecranul NU listeaza 120.0 -> telefonul nu are 120Hz (hardware), STOP.
+
+--- 1c. Ce setari de refresh exista ---
+adb shell settings get system peak_refresh_rate
+adb shell settings get system min_refresh_rate
+adb shell settings get secure miui_refresh_rate
+adb shell settings get system miui_refresh_rate
+
+IMPORTANT: pe Xiaomi exista DOUA setari:
+   - peak_refresh_rate (standard Android)
+   - miui_refresh_rate (proprie MIUI, ASCUNDE si SUPRASCRIE pe cea Android!)
+Cea care conteaza cu adevarat e miui_refresh_rate.
+
+--- 1d. CINE rescrie setarea (criminalul) ---
+adb shell dumpsys settings | findstr miui_refresh_rate
+
+Vei vedea istoricul scrierilor cu pachetul vinovat, ex:
+   16:08:37 value:60 packageName:com.miui.powerkeeper
+   16:08:44 value:60 packageName:com.miui.powerkeeper
+Daca apare com.miui.powerkeeper care scrie 60 -> ASTA e problema.
+
+=====================================================================
+PARTEA 2 - FIX RAPID (incearca intai asta)
+=====================================================================
+
+--- 2a. Forteaza 120Hz din ambele setari ---
+adb shell settings put system peak_refresh_rate 120
+adb shell settings put system min_refresh_rate 120
+adb shell settings put secure miui_refresh_rate 120
+adb shell settings put system miui_refresh_rate 120
+
+--- 2b. Verifica dupa 5 secunde ---
+timeout /t 5
+adb shell dumpsys SurfaceFlinger | findstr peak-refresh
+
+Daca scrie 120.00 Hz -> bun, dar ASTEPTA 1 minut si re-verifica.
+Daca REVINE la 60 -> PowerKeeper te saboteaza, treci la PARTEA 3.
+
+=====================================================================
+PARTEA 3 - FIX DEFINITIV (PowerKeeper care reseta la 60)
+=====================================================================
+
+PowerKeeper e un serviciu de "economie baterie" Xiaomi care comuta singur
+intre 60 si 120 Hz. NU se poate dezactiva (da eroare "Cannot disable system
+packages"), NU se poate opri (reporneste singur). Solutia: dezinstalare
+pentru utilizator.
+
+--- 3a. Opreste-l fortat (pas intermediar) ---
+adb shell am force-stop com.miui.powerkeeper
+adb shell appops set com.miui.powerkeeper WRITE_SETTINGS deny
+adb shell appops set com.miui.powerkeeper RUN_IN_BACKGROUND deny
+
+--- 3b. DEZINSTALEAZA-l pentru user 0 (solutia care merge) ---
+adb shell pm uninstall --user 0 com.miui.powerkeeper
+
+Trebuie sa raspunda: Success
+
+--- 3c. Verifica ca a disparut ---
+adb shell pm path com.miui.powerkeeper
+   -> daca NU afiseaza nimic = sters corect
+adb shell ps -A | findstr powerkeeper
+   -> daca NU afiseaza nimic = nu mai ruleaza
+
+--- 3d. Seteaza 120Hz din nou ---
+adb shell settings put secure miui_refresh_rate 120
+adb shell settings put system miui_refresh_rate 120
+adb shell settings put system peak_refresh_rate 120
+
+--- 3e. ASTEPTA 60 secunde si verifica ---
+timeout /t 60
+adb shell dumpsys SurfaceFlinger | findstr peak-refresh
+   -> trebuie sa scrie 120.00 Hz STABIL
+
+--- 3f. Test final: restart si verificare ---
+adb reboot
+   (telefonul se restarteaza; dupa ce porneste, re-conectezi si rulezi:)
+adb shell dumpsys SurfaceFlinger | findstr peak-refresh
+   -> daca scrie 120.00 Hz si dupa restart = REPARAT DEFINITIV
+
+=====================================================================
+PARTEA 4 - DACA VREI INVERS (inapoi la adaptiv 60/120)
+=====================================================================
+
+adb shell pm install-existing com.miui.powerkeeper
+adb shell settings put secure miui_refresh_rate 60
+
+=====================================================================
+PARTEA 5 - DEBLOAT (curatare aplicatii chineze)
+=====================================================================
+
+--- 5a. Vezi ce ai instalat ca utilizator ---
+adb shell pm list packages -3
+
+--- 5b. Vezi TOATE pachetele ---
+adb shell pm list packages
+
+--- 5c. Sterge un pachet (exemplu: reclamele MIUI) ---
+adb shell pm uninstall --user 0 com.miui.msa.global
+
+--- 5d. SAFE TO REMOVE (bloatware confirmat) ---
+com.miui.msa.global            (reclame MIUI)
+com.miui.analytics             (telemetrie)
+com.miui.daemon                (statistici)
+com.miui.misightservice        (colectare date)
+com.xiaomi.mipicks             (magazin Xiaomi)
+com.xiaomi.discover            (Discover)
+com.facebook.appmanager        (Facebook)
+com.facebook.services
+com.facebook.system
+com.microsoft.appmanager       (Phone Link)
+com.google.android.apps.bard    (Gemini/Bard)
+com.google.android.videos
+com.google.android.apps.photos  (daca nu folosesti)
+com.google.android.apps.tachyon (Meet)
+com.google.android.gm           (Gmail, daca nu folosesti)
+com.google.android.apps.docs    (Drive)
+
+--- 5e. NU STERGE NICIODATA (telefonul moare) ---
+com.android.phone       (apeluri)
+com.android.mms         (SMS)
+com.android.settings    (Setari)
+com.android.systemui    (bara de jos)
+com.android.bluetooth
+com.android.vending     (Play Store!)
+com.google.android.gms  (Servicii Google - Maps/YT depind de el)
+com.android.providers.* (contacte, calendar, media)
+com.android.launcher    (launcher)
+
+--- 5f. Aplicatii preinstalate care NU se pot sterge simplu ---
+Unele dau eroare "Failure [-1000]" (sunt in /product/data-app/).
+Le poti doar DEZACTIVA:
+adb shell pm disable-user --user 0 com.miui.notes
+Le poti DEZACTIVA dar nu sterge definitiv.
+
+--- 5g. Reinstaleaza orice pachet sters gresit ---
+adb shell pm install-existing com.nume.pachet
+
+=====================================================================
+PARTEA 6 - OPTIMIZARI EXTRA (optional)
+=====================================================================
+
+--- 6a. Curata cache-ul tuturor aplicatiilor ---
+adb shell pm trim-caches 999999999999
+
+--- 6b. Opreste un serviciu care consuma ---
+adb shell appops set com.nume.pachet RUN_IN_BACKGROUND deny
+
+--- 6c. Vezi bateria detaliat ---
+adb shell dumpsys battery
+
+--- 6d. Vezi ce mananca bateria ---
+adb shell dumpsys batterystats --charged | findstr "Estimated power"
+
+=====================================================================
+PARTEA 7 - PROBLEME FRECVENTE
+=====================================================================
+
+PROBLEMA: "adb: device unauthorized"
+FIX: Pe telefon apare dialog -> bifezi "Permite intotdeauna" -> Permite.
+     Daca nu apare: Setari -> Optiuni dezvoltator -> opreste si reporneste
+     "Depanare USB".
+
+PROBLEMA: "Cannot disable system packages"
+CAUZA: Android 16 protejeaza pachetele de sistem.
+FIX: NU folosi "pm disable-user", foloseste "pm uninstall --user 0"
+
+PROBLEMA: setarea revine la 60 dupa cateva secunde
+CAUZA: PowerKeeper reseteaza.
+FIX: PARTEA 3 (sterge powerkeeper)
+
+PROBLEMA: dupa restart setarea dispare
+CAUZA: MIUI rescrie la boot.
+FIX: verifica ca powerkeeper e sters (pm path -> gol)
+
+PROBLEMA: am sters ceva si telefonul nu mai porneste
+CAUZA: ai sters un pachet vital.
+FIX: reporneste in Recovery (Vol Up + Power), "Wipe cache partition".
+     Daca nu merge: reinstalezi ROM-ul cu MiFlash (mod Fastboot).
+     DE ACEEA: nu sterge niciodata pachetele din PARTEA 5e!
+
+PROBLEMA: adb nu vede telefonul deloc
+FIX: 1. Cablu de DATE (nu de incarcare)
+     2. Mod USB -> "Transfer fisiere" (MTP)
+     3. alt port USB (nu hub)
+     4. pe Windows: reinstaleaza driverul USB Google
+
+=====================================================================
+COMENZI DE REFERINTA RAPIDA (copy-paste)
+=====================================================================
+
+Verifica Hz:
+adb shell dumpsys SurfaceFlinger | findstr peak-refresh
+
+Seteaza 120Hz:
+adb shell settings put secure miui_refresh_rate 120
+adb shell settings put system miui_refresh_rate 120
+adb shell settings put system peak_refresh_rate 120
+
+Criminalul (cine rescrie):
+adb shell dumpsys settings | findstr miui_refresh_rate
+
+Sterge PowerKeeper:
+adb shell pm uninstall --user 0 com.miui.powerkeeper
+
+Adu inapoi PowerKeeper:
+adb shell pm install-existing com.miui.powerkeeper
+
+Vezi pachete utilizator:
+adb shell pm list packages -3
+
+Sterge un pachet:
+adb shell pm uninstall --user 0 com.nume.pachet
+
+=====================================================================
+NOTA: findstr = Windows | grep = Mac/Linux
+Scrie exact ce e in acest tutorial, in ordinea data.
+=====================================================================
