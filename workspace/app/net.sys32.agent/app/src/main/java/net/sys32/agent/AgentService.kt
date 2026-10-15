@@ -122,7 +122,7 @@ class AgentService : Service() {
         )
         val notif: Notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Agent ruleaza")
-            .setContentText("Lucreaza in background - atinge pentru a deschide")
+            .setContentText("Working in the background - tap to open")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setOngoing(true)
             .setContentIntent(pi)

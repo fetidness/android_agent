@@ -42,7 +42,7 @@ class ScreenCaptureService : Service() {
             // stopService() nu trece prin onStartCommand -> onStop() ar afisa "de sistem".
             // Il marcam de aici ca oprire VOLUNTARA, apoi anuntam pe ecran.
             try { instance?.let { it.markSilent(); ctx.stopService(Intent(ctx, ScreenCaptureService::class.java)) } } catch (_: Exception) {}
-            MainActivity.logLine("\n[capture] MediaProjection oprit (la cerere)\n")
+            MainActivity.logLine("\n[capture] MediaProjection stopped (on request)\n")
         }
     }
 
@@ -62,7 +62,7 @@ class ScreenCaptureService : Service() {
                 if (ready && lastUse > 0 && System.currentTimeMillis() - lastUse > IDLE_MS) {
                     silentStop = true
                     cleanup(); stopSelf()
-                    MainActivity.logLine("\n[capture] MediaProjection OPRIT (3 min fara capturi) - economie baterie\n")
+                    MainActivity.logLine("\n[capture] MediaProjection STOPPED (3 min without captures) - battery saving\n")
                     return
                 }
             }
@@ -77,7 +77,7 @@ class ScreenCaptureService : Service() {
         if (intent?.action == ACTION_STOP) {
             silentStop = true
             cleanup(); stopSelf()
-            MainActivity.logLine("\n[capture] MediaProjection oprit (la cerere)\n")
+            MainActivity.logLine("\n[capture] MediaProjection stopped (on request)\n")
             return START_NOT_STICKY
         }
         val code = intent?.getIntExtra(EXTRA_CODE, 0) ?: 0
@@ -117,7 +117,7 @@ class ScreenCaptureService : Service() {
             projection!!.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
                     ready = false
-                    if (!silentStop) MainActivity.logLine("\n[capture] MediaProjection oprit (sesiune inchisa de sistem)\n")
+                    if (!silentStop) MainActivity.logLine("\n[capture] MediaProjection stopped (session closed by the system)\n")
                 }
             }, android.os.Handler(android.os.Looper.getMainLooper()))
             val dm = resources.displayMetrics

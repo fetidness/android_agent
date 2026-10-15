@@ -3,11 +3,57 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `1151799`.
+> Ultimul commit inclus: `4bf697f`. Sesiunea 2026-10-15 = optimizari Hermes (necomise inca).
 
 **Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
 
 ---
+
+### 2026-10-15 - OPTIMIZARI DIN HERMES: cost -6x, 12 capabilitati noi, UI engleza, rebuild de la zero
+
+> **Cerut de operator:** (a) „sa te imbunatatesti iar ca inspiratie sa ai agentul hermes de la nous
+> research ... vreau sa fii la fel de inteligent precum hermes"; (b) „avem o problema grava: la
+> fiecare task se fac pasi foarte marunti si de fiecare data contextul este trimis si retrimis si
+> avem un cost ENORM de tokens"; (c) „nu sunt multumit cand apare `+-- step 09 [python] runs python
+> agent.py` ... eu nu stiu exact ce ai facut alea 3 minute"; (d) „toate mesajele UI din aplicatia
+> android sa fie in engleza"; (e) „sterge complet aplicatia de pe android ... apoi fa rebuild".
+
+**Research Hermes.** Clonat `NousResearch/Hermes-Agent` (~9.400 fisiere .py = 262 MB), extras
+**toate** cele 41.321 de simboluri (functii/clase), filtrat inteligenta portabila vs infrastructura
+(gateway, MCP, plugin-uri, SQLite `hermes_state_*` 54 module, TUI, ~20 adaptoare de provideri -
+declarate explicit in afara scopului). Invariant pastrat: **un fisier, zero dependinte**.
+
+**A. Cost de tokeni: 29 runde -> 5 runde (masurat pe device).**
+- ghidare noua `FEWER, BIGGER STEPS` (portata din `PARALLEL_TOOL_CALL_GUIDANCE`): planifica inainte,
+  batch in acelasi turn, `run_code` pentru lanturi, `delegate` pentru investigatii laterale;
+- `run_tool_calls`: executie PARALELA pentru tool-uri read-only (4 citiri in 1.01s, nu 4s),
+  serializata pentru cele cu efecte; ordinea rezultatelor pastrata;
+- footer corectat: `N tool calls / M rounds` (rounds = cereri la model = multiplicatorul de cost).
+
+**B. 12 capabilitati noi, pe ambii agenti:** `tool_guardrails` (bucla de tool), `file_safety` +
+`spill_safety`, `approval_detection` (hardline/dangerous), `todo`, recovery hints, `run_code` (PTC),
+`delegate` (subagenti, batch paralel), `@`-references, `curator`, `moa`, `insights`, overflow
+recovery. Pastrate din sesiunea anterioara: disciplina de executie, skills + `skill(name)`,
+auto-learn, autoskill, redactare secrete, sanitizare mesaje, truncare.
+
+**C. UI pasi concreti.** `describe_step()` extrage din codul propriu al pasului: comanda shell
+exacta, procesul rulat, `read/wrote <fisier>`, host-ul URL, tool-urile chemate de un script PTC;
+fallback = codul insusi. O singura linie per pas (fara randuri `↳`), nota de timp inline peste 5s.
+
+**D. UI in engleza.** 19 mesaje Python + 12 Kotlin + 1 `strings.xml` traduse. Verificat 0 româna in
+UI (4 straturi). Raman in româna doar comentariile/docstring-urile.
+
+**E. Test end-to-end:** `pm uninstall` -> `gradle clean` + `assembleDebug` (40s, 35/35) -> APK 716 MB
+-> `pm install -r` pe telefon gol -> `AGENT FULLY CONFIGURED AND OPERATIONAL` -> 3 taskuri reale
+reușite (inclusiv **`delegate` cu 2 subagenti paraleli**, 7 tool calls / 2 rounds).
+
+**Capcane reale reparate:** (1) `agent.py` sters accidental la curatenie cu glob -> recuperat din
+`agent-linux.py`; **regula noua: backup explicit inainte de modificari, curatenie doar pe nume
+exacte**; (2) `hashlib` neimportat -> guard-ul detecta fals bucle; (3) `/skill` spart la ambele cand
+s-a scos `/pin` (cod orfan dupa `continue`); (4) regex redirect fara `/`; (5) 4 erori de acolade ->
+rezolvate cu `json.dumps`; (6) `INSIGHTS_FILE` mutat in `HOME_DIR`; (7) `SKILLDIR` folosit inainte de
+definire. **Plus:** la prima instalare, cheia API veche (`****9592`) din backup a dat Authentication
+Fails - rescrisa cheia corecta in `key.txt`.
 
 ### 2026-10-08 (4) (mesaje in ENGLEZA + self-heal vizibil IMEDIAT la deschidere, in fundal)
 

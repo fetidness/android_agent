@@ -1,5 +1,7 @@
 # Agent Android (net.sys32.agent)
 
+> **Stare 2026-10-15:** agentul imbogatit cu 12 optimizari portate din Hermes (`tool_guardrails`, `run_code`/PTC, `delegate`, `todo`, `curator`, `moa`, `insights`, `file_safety`, `approval_detection`, `@`-references, `overflow`, executie paralela). **Cost: 29 runde -> 5 runde (-6x)** la un task de audit. Toate mesajele UI in engleza. Testat end-to-end dupa stergere completa + rebuild. Detalii: `CHANGELOG.md` 2026-10-15 si Etapa 93 mai jos.
+
 ## 🟢 O SINGURA APLICATIE PE DEVICE (actualizat 6 oct 2026)
 
 Pe telefon exista **o singura aplicatie**: **`net.sys32.agent`** (afisat „Agent").
@@ -4662,3 +4664,100 @@ patcharea binarului.
    agent: prefix = locul durabil (fara patch de binar), `configure --host`, `sh ifndef_wrapper.sh`,
    CFLAGS cu toate `-I` + `-DLOCALOPTIONS_H_EXISTS`, dropbearkey. Reteta (12 puncte) actualizata.
 
+## Etapa 93 - OPTIMIZARI DIN HERMES (agentul devine ~6x mai ieftin) (`agent.py` 3036/5154 linii)
+
+> **Cerut de operator:** „sa te imbunatatesti iar ca inspiratie sa ai agentul hermes de la nous
+> research... vreau sa fii la fel de inteligent precum hermes" + „avem o problema grava: la fiecare
+> task se fac pasi foarte marunti si de fiecare data contextul este trimis si retrimis si avem un
+> cost ENORM de tokens".
+
+Am clonat `NousResearch/Hermes-Agent` (~9.400 fisiere .py), am extras **toate** cele 41.321 de
+simboluri si am filtrat inteligenta portabila (fara infrastructura: gateway, MCP, plugin-uri,
+SQLite, TUI, adaptoare de provideri). Rezultat: 12 optimizari implementate pe AMBII agenti
+(`agent.py` android si `agent-linux.py`), cu invariantul pastrat: **un singur fisier, zero
+dependinte**.
+
+### A. COSTUL DE TOKENI - 29 runde -> 5 runde (masurat pe device)
+Cauza reala: ghidarea veche spunea doar „foloseste `multi`" (limitat la ops mici), deci modelul
+emitea 1-2 tool-uri per runda, iar fiecare runda re-trimitea TOT contextul (29 runde = 29x).
+1. **Ghidare „FEWER, BIGGER STEPS"** (portata din `PARALLEL_TOOL_CALL_GUIDANCE`): gandeste inainte
+   de primul tool call; pune apelurile independente in ACELASI turn; pentru lanturi dependente
+   foloseste `run_code`; pentru investigatii laterale `delegate`; „o bucla de pasi marunti e un MOD
+   DE EȘEC, nu sarguinta - arde banii operatorului".
+2. **Executie paralela reala** (`run_tool_calls`): tool-urile read-only din acelasi turn ruleaza
+   concurent (ThreadPool); cele care scriu/ruleaza comenzi rămân serializate; ordinea rezultatelor
+   e pastrata (cerinta API). Masurat: 4 citiri in 1.01s, nu 4s.
+3. **Contor corect in footer**: inainte afisa doar `TASK["steps"]` (= tool calls). Acum
+   `2 tool calls / 2 rounds` - `rounds` = cereri la model = multiplicatorul real de cost.
+
+### B. 12 CAPABILITATI NOI (toate pe ambii agenti)
+| # | Ce | Rol |
+|---|---|---|
+| 1 | `tool_guardrails` | detecteaza bucla de tool (identice sau cicluri A,B,A,B) -> warn -> halt |
+| 2 | `file_safety` + `spill_safety` | refuza scrierea in `.ssh`/`.bashrc`/credențiale; creare symlink-safe |
+| 3 | `approval_detection` | `rm -rf /` = HARDLINE (refuzat), `chmod 777` = DANGEROUS (avertisment) |
+| 4 | `todo` | lista de task-uri revizuita, supravietuieste compresiei |
+| 5 | recovery hints | dupa 2 esecuri, indrumare specifica tool-ului |
+| 6 | `run_code` (PTC) | script care cheama tool-urile agentului -> 8 pasi intr-unul |
+| 7 | `delegate` | subagenti izolati, single + **batch paralel** |
+| 8 | `@`-references | `@file:` / `@folder:` / `@git:diff` / `@url:` expandate inline |
+| 9 | `curator` | arhiveaza skill-urile nefolosite (in `skills_archive/`, niciodata stergere) |
+| 10 | `moa` | N raspunsuri independente + sinteza, pentru decizii grele |
+| 11 | `insights` | tokeni, cache, cost estimat, top tools (`/insights`) |
+| 12 | `overflow` recovery | la 413/context-length: reduce tool-output-urile vechi si reincearca |
+
+Plus, din sesiunea anterioara si pastrate: disciplina de executie (`<tool_persistence>`,
+`<verification>`, `<external_state_verification>`), sistem de skills + `skill(name)`, auto-learn al
+memoriei, autoskill, **redactare de secrete** (`sk-`, `KEY=`, JWT, PEM - cheia reala mascata),
+sanitizare mesaje (surrogates + reparare tool_call-uri orfane), truncare `finish_reason`.
+
+### C. UI: pasii spun EXACT ce se executa
+**Cerut de operator:** „nu sunt multumit cand apare `+-- step 09 [python] runs python agent.py`...
+eu nu stiu exact ce ai facut alea 3 minute". Inainte: eticheta generica + un rand `↳` in plus.
+Acum, **o singura linie** cu descrierea concreta extrasa din codul propriu al pasului:
+```
++-- step 01 [bash]   cd /home/gab/Agent/temp && find . -name '*.py' | wc -l | tee count.txt   ⏱ 0.1s
++-- step 03 [python] ran python3 /home/gab/Agent/temp/sleep8.py   ⏱ 8.1s  (waited on a process/network)
++-- step 21 [python] calls adbsh×1, android×1   ⏱ 0.1s
+```
+Reguli: comanda shell exacta; `subprocess` -> procesul rulat; `open()` -> `read/wrote <fisier>`;
+URL -> `fetched <host>`; script PTC -> tool-urile chemate; fallback = **codul insusi** (`data.append(1)`),
+niciodata „ran python". Nota de timp (`waited on a process/network`, `large output`, `long loop`)
+doar peste 5s, inline.
+
+### D. MESAJE UI IN ENGLEZA (toate straturile)
+**Cerut de operator:** „toate mesajele UI din aplicatia android sa fie in engleza".
+Traduse: 19 mesaje Python (redact, elision, skill, auto-learn, guard, verify, curator, overflow,
+approval, watch) + 12 texte Kotlin (`MainActivity`, `AndroidBridge`, `AgentService`,
+`ScreenCaptureService`, `AgentAccessibilityService`) + 1 in `strings.xml`. Verificat 0 mesaje
+românesti in cele 4 straturi. Rămân in româna DOAR comentariile si docstring-urile (nu ajung in UI).
+
+### E. TEST COMPLET: stergere totala -> rebuild -> functional
+Procedura dovedita de la zero (backup inainte: `backup_device/`):
+1. `pm uninstall net.sys32.agent` -> Success (pachet + date + procese disparute);
+2. `gradle clean` (12s) + `gradle assembleDebug` (40s, 35/35 task-uri) -> APK 716 MB, agent.py din
+   el cu sha identic cu sursa;
+3. `pm install -r` -> prima rulare: extractie assets + ADB setup + certificat + self-heal ->
+   `AGENT FULLY CONFIGURED AND OPERATIONAL`;
+4. 3 taskuri reale: model+procese (6 tool calls/5 rounds), audit+raport (**20 tool calls/6 rounds**,
+   si-a invatat singur skill-ul `device-audit`), **delegate cu 2 subagenti paraleli** (7 tool
+   calls/2 rounds).
+
+**Capcana intalnita:** prima incercare a dat `Authentication Fails: api key ****9592 is invalid` -
+aplicatia preluase o **cheie veche** din backup-ul de pe sdcard. Fix: rescrierea cheii corecte in
+`files/home/key.txt` + `files/python/key.txt`, kill proces python, repornire.
+
+### Capcane reale reparate pe drum
+1. **`agent.py` sters accidental** la o curatenie cu glob pe `*.py` in `temp/` (folderul se goleste
+   la startup) - recuperat integral din `agent-linux.py`. **Regula: backup explicit inainte de orice
+   modificare; curatenie doar pe nume exacte.**
+2. **`hashlib` neimportat** -> guard-ul de bucla detecta fals bucle cand rezultatele erau DIFERITE.
+3. **`/skill` spart** la ambele agenti cand s-a scos `/pin` - rămăsese cod orfan dupa `continue`.
+4. **Regex shell redirect** nu prindea caile absolute (lipsea `/` din clasa de caractere).
+5. **4 erori de acolade** la inserarea in lista de tool-uri - rezolvate definitiv trecand la
+   `json.dumps` pentru schemele complexe (`delegate`, `moa`).
+6. **`INSIGHTS_FILE`** era in `files/python/` pe device (langa script) - mutat in `HOME_DIR`
+   (langa `memory.md`), consistent si vizibil.
+7. **`DISCIPLINE`/`CURATOR_STATE` foloseau `SKILLDIR` inainte sa fie definit** -> `NameError` la import.
+
+---

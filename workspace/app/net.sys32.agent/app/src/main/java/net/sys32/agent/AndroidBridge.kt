@@ -175,7 +175,7 @@ class AndroidBridge(
     private fun notif(action: String, p: JSONObject): JSONObject {
         val svc = AgentNotificationListener.instance
             ?: return JSONObject().put("ok", false).put("error",
-                "notification listener NOT enabled. Activeaza cu: cmd notification allow_listener net.sys32.agent/.AgentNotificationListener")
+                "notification listener NOT enabled. Enable it with: cmd notification allow_listener net.sys32.agent/.AgentNotificationListener")
         return when (action) {
             "list", "read", "dump" -> svc.dump(p.optInt("limit", 100)).put("ok", true)
             "cancel" -> {
@@ -222,7 +222,7 @@ class AndroidBridge(
         }
         val svc = AgentVpn.instance
             ?: return JSONObject().put("ok", false).put("error",
-                "vpn service pornit dar instance null (asteapta o secunda si reincearca)")
+                "vpn service started but instance is null (wait a second and retry)")
         return when (action) {
             "status" -> JSONObject().put("ok", true).put("status", svc.status())
             "establish", "up" -> JSONObject().put("ok", true).put("result", svc.establish(p.optString("name", "agent0")))
@@ -314,7 +314,7 @@ class AndroidBridge(
         if (action == "wake" || action == "screenon") {
             AgentService.wakeScreen(ctx)
             return JSONObject().put("ok", true).put("screen", "on")
-                .put("hint", "ecranul se aprinde; tine minte sa apelezi ui sleep la finalul taskului")
+                .put("hint", "the screen turns on; remember to call ui sleep at the end of the task")
         }
         if (action == "sleep" || action == "screenoff") {
             AgentService.sleepScreen(ctx)
@@ -329,7 +329,7 @@ class AndroidBridge(
         }
         val svc = AgentAccessibilityService.instance
             ?: return err("accessibility service NOT enabled. Activeaza: Settings > Accessibility > Agent (control ecran). "
-                    + "Fara el, Android interzice scrierea/taparea in alte aplicatii (INJECT_EVENTS e permisiune de sistem).")
+                    + "Without it, Android forbids typing/tapping in other apps (INJECT_EVENTS is a system permission).")
         return try {
             when (action) {
                 "shot", "screenshot", "capture" -> svc.captureScreen(
@@ -552,7 +552,7 @@ class AndroidBridge(
                 val lens = p.optString("lens", "back")
                 CameraCapture.request(ctx, path, lens)
                 ok(JSONObject().put("requested", true).put("path", path)
-                    .put("note", "foto se face in fundal; apare in cateva secunde la calea data"))
+                    .put("note", "the photo is taken in the background; it appears in a few seconds at the given path"))
             }
             else -> err("camera: action must be list|photo")
         }

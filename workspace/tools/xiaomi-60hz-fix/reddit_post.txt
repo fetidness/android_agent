@@ -1,0 +1,44 @@
+TITLE
+MIUI/HyperOS keeps reverting my 120Hz to 60Hz - the hidden setting that causes it (no root)
+
+BODY
+
+Set 120Hz in Settings, and it drops back to 60 within seconds while the menu still shows 120. Reboot doesn't help.
+
+Cause: MIUI/HyperOS has a hidden setting, miui_refresh_rate, that overrides the standard peak_refresh_rate - and com.miui.powerkeeper (Xiaomi's battery service) keeps rewriting it to 60 on a timer.
+
+Prove it (filter = grep on Linux/macOS, findstr on Windows cmd, Select-String on PowerShell):
+
+    adb shell dumpsys settings | grep miui_refresh_rate
+
+Mine flipped 120 -> 60 -> 120 -> 60 every few seconds, all from com.miui.powerkeeper.
+
+CHECK
+
+    adb shell dumpsys SurfaceFlinger | grep peak-refresh    -> 60.00 Hz = stuck, 120.00 Hz = fine
+    adb shell settings get secure miui_refresh_rate         -> 60 or null while peak_refresh_rate is 120 = the mismatch
+
+WHAT DOESN'T WORK
+
+    am force-stop com.miui.powerkeeper    - restarts in seconds
+    pm disable-user com.miui.powerkeeper  - SecurityException on Android 14/15/16
+    appops set ... WRITE_SETTINGS deny    - ignored
+
+FIX (no root, doesn't touch the system partition, reversible)
+
+    adb shell pm uninstall --user 0 com.miui.powerkeeper
+    adb shell settings put system peak_refresh_rate 120
+    adb shell settings put system min_refresh_rate 120
+    adb shell settings put secure miui_refresh_rate 120
+    adb shell settings put system miui_refresh_rate 120
+
+Wait a minute, check peak-refresh reads 120.00 Hz, then reboot and re-check. If it holds, you're done.
+
+REVERT
+
+    adb shell pm install-existing com.miui.powerkeeper
+    adb shell settings put secure miui_refresh_rate 60
+
+Only remove this one package - never com.android.systemui, Play Store, gms or com.android.providers.* (unbootable phone). Constant 120Hz uses a bit more battery than adaptive.
+
+Tested on Redmi 2409FPCC4G, Android 16 / HyperOS, MediaTek. Names can differ by region/version - run the checks first.

@@ -143,7 +143,7 @@ class AgentAccessibilityService : AccessibilityService() {
      */
     private fun readCompact(maxDepth: Int, maxNodes: Int, textOnly: Boolean, packageFilter: String): JSONObject {
         val root = activeRoot() ?: return JSONObject().put("ok", false)
-                .put("error", "no active window (ecranul nu e disponibil)")
+                .put("error", "no active window (screen not available)")
         val lines = ArrayList<String>()
         var count = 0
         fun walk(n: AccessibilityNodeInfo, depth: Int) {
@@ -266,7 +266,7 @@ class AgentAccessibilityService : AccessibilityService() {
             .put("action", "setText")
             .put("field", node.viewIdResourceName ?: node.className?.toString() ?: "")
             .put("value", if (replace) text else ((node.text?.toString() ?: "") + text))
-            .let { if (okc) it else it.put("error", "ACTION_SET_TEXT rejected (camp read-only? sau nu e editabil)") }
+            .let { if (okc) it else it.put("error", "ACTION_SET_TEXT rejected (read-only field? or not editable)") }
     }
 
     /** Apasa un nod gasit dupa text/id/descriere, SAU un punct (x,y) prin gest. */

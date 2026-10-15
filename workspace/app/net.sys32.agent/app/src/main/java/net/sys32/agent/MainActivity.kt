@@ -411,7 +411,7 @@ class MainActivity : AppCompatActivity() {
             ).setData(android.net.Uri.parse("package:" + packageName))
             startActivity(i)
         } catch (e: Exception) {
-            appendAnsi("\n[battery-opt] nu am putut cere excluderea: " + e.message + "\n")
+            appendAnsi("\n[battery-opt] could not request the exemption: " + e.message + "\n")
         }
     }
 
@@ -886,7 +886,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
             startActivityForResult(mpm.createScreenCaptureIntent(), CAPTURE_REQ)
-        } catch (e: Exception) { appendAnsi("\n[capture] eroare: $e\n") }
+        } catch (e: Exception) { appendAnsi("\n[capture] error: $e\n") }
     }
 
     @Deprecated("Deprecated in Java")
@@ -897,8 +897,8 @@ class MainActivity : AppCompatActivity() {
                 ScreenCaptureService.start(this, resultCode, data)
                 // corect: consimtamantul e acordat si sesiunea PORNESTE ACUM.
                 // (nu scriem "activ permanent" - se inchide singura dupa 3 min inactivitate)
-                appendAnsi("\n[capture] MediaProjection pornit (se opreste singur dupa 3 min fara capturi)\n")
-            } catch (e: Exception) { appendAnsi("\n[capture] start eroare: $e\n") }
+                appendAnsi("\n[capture] MediaProjection started (auto-stops after 3 min without captures)\n")
+            } catch (e: Exception) { appendAnsi("\n[capture] start error: $e\n") }
         }
         if (requestCode == VPN_REQ && resultCode == RESULT_OK) {
             try { startService(Intent(this, AgentVpn::class.java)); appendAnsi("\n[vpn] consimtamant acordat\n") } catch (_: Exception) {}
@@ -1081,9 +1081,9 @@ class MainActivity : AppCompatActivity() {
         if (k.isNullOrBlank()) {
             awaitingKey = true
             runOnUiThread {
-                appendAnsi("\n" + OF + "\u26a0  LIPSA CHEIA DeepSeek API." + NRM + "\n")
-                appendAnsi(OF + "Lipeste cheia (sk-...) in campul de jos si apasa trimitere." + NRM + "\n")
-                appendAnsi(OF + "O scriu automat in files/python/key.txt si pornesc agentul." + NRM + "\n\n")
+                appendAnsi("\n" + OF + "\u26a0  DeepSeek API KEY MISSING." + NRM + "\n")
+                appendAnsi(OF + "Paste the key (sk-...) in the field below and press send." + NRM + "\n")
+                appendAnsi(OF + "I write it automatically to files/python/key.txt and start the agent." + NRM + "\n\n")
                 input.hint = "paste DeepSeek key (sk-...) and send"
                 input.requestFocus()
             }
@@ -1250,10 +1250,10 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                runOnUiThread { agentStarted = false; appendAnsi("\n[proces terminat]\n") }
+                runOnUiThread { agentStarted = false; appendAnsi("\n[process finished]\n") }
             } catch (e: Exception) {
                 val msg = e.toString()
-                runOnUiThread { appendAnsi("\n[EROARE] $msg\n") }
+                runOnUiThread { appendAnsi("\n[ERROR] $msg\n") }
             }
         }.start()
     }
@@ -1302,7 +1302,7 @@ class MainActivity : AppCompatActivity() {
             input.hint = "message the agent..."
             startPythonProcess(key.trim())
         } catch (e: Exception) {
-            appendAnsi(RED + "[key] EROARE la salvare: " + e.message + NRM + "\n")
+            appendAnsi(RED + "[key] ERROR while saving: " + e.message + NRM + "\n")
             input.hint = "paste DeepSeek key (sk-...) and send"
         }
     }
