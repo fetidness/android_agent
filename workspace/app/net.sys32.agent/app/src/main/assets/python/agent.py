@@ -2503,6 +2503,63 @@ def _safe_print(s, end="\n"):
         pass
 
 
+def a11y_selfheal(verbose=True):
+    """★ AUTO-VINDECAREA ACCESIBILITATII prin adb LOCAL (cerut de operator).
+
+    DE CE: la fiecare reinstalare de APK, Android reseteaza permisiunile speciale ->
+    accesibilitatea moare (screenshot + control UI pierdute) SI `WRITE_SECURE_SETTINGS`
+    se pierde. Kotlin (ensureAccessibility) rezolva DOAR partea a doua (scrie setarea),
+    iar daca permisiunea a fost pierduta, NU o poate recupera (o aplicatie nu si-o poate
+    acorda singura).
+
+    CE FACE AICI: daca avem o conexiune adb LOCALA (adbd pe 127.0.0.1, autorizata cu
+    cheia operatorului din files/op_adbkey), shell-ul uid=2000 POATE da `pm grant`.
+    Deci: (1) acordam permisiunea daca lipseste, (2) activam serviciul in setari.
+    Zero interventie din partea operatorului, zero dialog 'Allow' (semnatura e acceptata).
+
+    FARA adb (port inchis / cheie neautorizata): nu facem nimic si NU blocam pornirea -
+    intinderea nu e o eroare, e doar o limitare; Kotlin scrie deja instructiunea pe ecran.
+    """
+    out = []
+    try:
+        import adb_client
+    except Exception:
+        return out
+    try:
+        a = adb_client.shared()
+        if a is None or a.s is None:
+            return out
+    except Exception:
+        return out                      # adb indisponibil: tacut, fara blocaj
+    pkg = "net.sys32.agent"
+    svc = pkg + "/" + pkg + ".AgentAccessibilityService"
+    try:
+        # 1. permisiunea speciala (o singura data; nu se pierde la `pm install -r`)
+        can = a.shell("dumpsys package " + pkg + " | grep 'WRITE_SECURE_SETTINGS: granted=true'",
+                      20)
+        if "granted=true" not in can:
+            a.shell("pm grant " + pkg + " android.permission.WRITE_SECURE_SETTINGS", 20)
+            out.append("granted WRITE_SECURE_SETTINGS")
+        # 2. serviciul de accesibilitate (lista + flag)
+        cur = a.shell("settings get secure enabled_accessibility_services", 20).strip()
+        if pkg not in cur:
+            if cur in ("", "null"):
+                new = svc
+            else:
+                parts = [x for x in cur.split(":") if x.strip()]
+                if svc not in parts:
+                    parts.append(svc)
+                new = ":".join(parts)
+            a.shell("settings put secure enabled_accessibility_services " + new, 20)
+            out.append("service enabled")
+        a.shell("settings put secure accessibility_enabled 1", 20)
+    except Exception:
+        return out
+    if verbose and out:
+        _safe_print(SD + "[a11y] " + U + "repaired via adb: " + ", ".join(out) + N)
+    return out
+
+
 def _selfheal_visible(phase, label="startup", quiet_ok=False, show_progress=True):
     """★ Ruleaza heal-ul CU feedback pe ECRAN (0 tokeni) - cerut explicit de operator.
 
@@ -4790,6 +4847,12 @@ if __name__ == "__main__":
                 _selfheal_visible("startup", "startup", show_progress=False)
             except Exception as _heS:
                 _safe_print(OF + "[self-heal] ERROR: %r" % (_heS,) + N)
+            # ★ dupa heal: repara accesibilitatea prin adb local (poate da `pm grant`).
+            # Ruleaza in ACELASI thread de fundal, dupa heal, ca sa nu se incurce intre ele.
+            try:
+                a11y_selfheal()
+            except Exception:
+                pass
             finally:
                 try:
                     _SELFHEAL_DONE.set()

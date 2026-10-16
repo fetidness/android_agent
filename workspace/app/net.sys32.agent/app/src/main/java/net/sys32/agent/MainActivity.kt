@@ -789,10 +789,17 @@ class MainActivity : AppCompatActivity() {
         val canWrite = checkSelfPermission(
             "android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED
         if (!canWrite) {
+            // ★ Daca avem cheia autorizata a operatorului (op_adbkey), Python-ul poate da
+            // `pm grant` SINGUR prin adb local (uid 2000) -> NU mai alarmam operatorul cu un
+            // mesaj de eroare care oricum dispare 20s mai tarziu. Asteptam in liniste si
+            // lasam a11y_selfheal() din agent.py sa repare (ruleaza la pornirea python-ului).
+            val hasOpKey = java.io.File(filesDir, "op_adbkey").exists()
+            if (hasOpKey) return false
             return try {
                 appendAnsi("\u001b[38;5;214m[a11y] accessibility is OFF and WRITE_SECURE_SETTINGS is not granted.\u001b[0m\n" +
                     "\u001b[38;5;243m      grant it once via adb:  pm grant " + packageName +
-                    " android.permission.WRITE_SECURE_SETTINGS\u001b[0m\n")
+                    " android.permission.WRITE_SECURE_SETTINGS\u001b[0m\n" +
+                    "\u001b[38;5;243m      (or copy the authorised key to files/op_adbkey for automatic repair)\u001b[0m\n")
                 false
             } catch (_: Exception) { false }
         }
