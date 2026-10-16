@@ -556,6 +556,8 @@ LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted betwe
 ARCH=os.path.join(WORK,"archive")     # COMPLETE snapshots of the history, before every compression
 VERBOSE=[os.environ.get("AGENT_VERBOSE")=="1"]   # /verbose: re-prints code + output in the terminal
 NOSPIN=[os.environ.get("AGENT_NOSPIN")=="1"]     # /nospin: NO live/redrawn line at all (clean scrollback on a phone)
+SAFEMODE=[True]
+SAFE_WARN=""
 THINKMIN=float(os.environ.get("AGENT_THINKMIN","0"))   # MINIMUM time "Thinking..." stays on screen (0 = the printed time is exactly the measured one). It never delays a tool step.
 def _budget():
     """How much of a tool output fits IN THE WINDOW for this call. CHUNK raises it above TOOLMAX so a
@@ -653,38 +655,6 @@ def compact_history(force=False):
     Nu arhiveaza, nu inlocuieste nimic, nu afiseaza nimic. Ramane doar ca sa nu
     fie nevoie sa schimbam cele ~4 locuri care o cheama (no-op instant)."""
     return 0
-def _compact_history_DISABLED(force=False):
-    """The old lossless compression, kept for reference only - never called."""
-    """LOSSLESS COMPRESSION. When the live window goes over CTXBUDGET tokens:
-    1) the COMPLETE history is archived (untouched) in archive/ctx_<date>.json;
-    2) the window keeps stubs with a POINTER to the archive (message index, size, start/end),
-       so the original text can be read at any time with a tool call.
-    No message is removed from the list (the API requires every tool_call to have its answer)."""
-    lim=len(M)-CTXKEEP
-    if lim<=0: return 0
-    if not force and (CTXBUDGET<=0 or ctx_tokens()<=CTXBUDGET): return 0   # threshold 0 = automatic compression disabled; /compact works at any time
-    before=ctx_tokens()
-    os.makedirs(ARCH,exist_ok=True)
-    p=os.path.join(ARCH,"ctx_"+datetime.datetime.now().strftime("%Y%m%d-%H%M%S")+".json")
-    try:
-        json.dump(M[1:],open(p,"w",encoding="utf-8"),ensure_ascii=False,indent=1)
-        ref=os.path.relpath(p,WORK)
-    except Exception as e:
-        print(R+"   [ctx] could not archive the history ("+str(e)+") - I do NOT compress, so I do not lose context."+N); return 0
-    n=0
-    for i,m in enumerate(M[:lim],1):
-        c=str(m.get("content") or "")
-        if m.get("role")=="tool" and len(c)>TOOLMAX//8:
-            L=[x for x in c.strip().split("\n") if x.strip()] or [""]
-            m["content"]=("[complete output, untouched: "+ref+" #"+str(i-1)+" ("+str(len(c))+" chars)]\n"+L[0][:70]+"\n...\n"+L[-1][-60:])
-            n+=1
-        for tc in (m.get("tool_calls") or []):
-            f=tc.get("function") or {}; arg=str(f.get("arguments") or "")
-            if len(arg)>300:
-                f["arguments"]=json.dumps({"code":"[complete code, untouched: "+ref+" #"+str(i-1)+" ("+str(len(arg))+" chars)]"}); n+=1
-    after=ctx_tokens()
-    print(G+"   [ctx] window "+_K(before)+"tok -> "+_K(after)+"tok | "+str(n)+" references | complete original: "+ref+N)
-    return after<before
 SPIN=("⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏")
 # ---------------- task UI: one timer for the WHOLE task + labelled steps ----------------
 TASK={"t0":None,"n":0,"steps":0,"rounds":0,"think":0.0,"tool":0.0,"chars":0,"tok_in":0,"tok_out":0,"cache":0,"err":False}   # one "task" = one operator request
@@ -1177,6 +1147,8 @@ V=E+"[38;5;245m";R=E+"[38;5;179m";N=E+"[0m";C=E+"[38;5;109m";OF=E+"[38;5;180m"
 SB=E+"[38;5;180m";ST=E+"[38;5;114m";SD=E+"[38;5;243m";BAR=E+"[38;5;240m"
 RY=E+"[38;5;139m";GY=E+"[38;5;109m";MOV=E+"[38;5;139m"
 RED=E+"[38;5;203m"
+SAFEC=E+"[38;5;220m"   # SAFE = galben (acelasi ca promptul)
+UNSAFEC=RED            # UNSAFE = rosu (acelasi ca promptul)
 TC=E+"[38;5;216m";TCB=E+"[38;5;180;48;5;236m"   # TC=calling a tool (warm amber), TCB=its banner on a dark strip: differs from the step line (grey/teal)   # SOFT: RY=sageata thinking, GY=tool (teal), MOV=cutia THINKING (violet moale), toate fara bold
 T=[{"type":"function","function":{"name":"python","description":"Run Python 3 here (stdlib + requests, urllib3, certifi, beautifulsoup4, pyyaml, toml, dateutil). NO pip, NOTHING installable: numpy/pandas/cryptography do NOT exist. BEST for parsing (JSON/INI), logic, aggregation, HTTP (requests). Slow on multi-million-line streams -> use bash.","parameters":{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}}},
    {"type":"function","function":{"name":"bash","description":"Run a shell command (bash -lc), returns stdout+stderr. For TEXT STREAMS: grep/awk/sed/sort/uniq/wc/find/du/cut, line-by-line filtering, xargs -P. ~1.3-1.6x faster than python on big streams, far less memory. NOT for parsing/logic.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
@@ -2699,23 +2671,31 @@ def call_tool(c):
     sees it: redact secrets, warn on upstream elision, wrap external content as DATA (not orders)."""
     _fn=(c.get("function") or {}).get("name","")
     _a=(c.get("function") or {}).get("arguments","")
+    _SAFE=SAFEMODE[0]
     if _fn in ("python","bash","smart","toolchain"):
         _bad=scan_code_writes(_a)
         if _bad:
-            try: print(R+"   [safety] write REFUSED to "+_bad[0]+" ("+_bad[1]+")"+N)
+            if _SAFE:
+                try: print(SAFEC+"   [SAFE] write REFUSED to "+_bad[0]+" ("+_bad[1]+")  - type /unsafe to override"+N)
+                except Exception: pass
+                return ("[safety] write to '"+_bad[0]+"' was REFUSED: that path is a "+_bad[1]+
+                        " and overwriting it can break the device. Write somewhere else (your workspace); "
+                        "the operator can type /unsafe to allow it.")
+            try: print(UNSAFEC+"   [UNSAFE] write ALLOWED to "+_bad[0]+" ("+_bad[1]+")"+N)
             except Exception: pass
-            return ("[safety] write to '"+_bad[0]+"' was REFUSED: that path is a "+_bad[1]+
-                    " and overwriting it can break the device. Write somewhere else (your workspace).")
         if _fn in ("bash","smart"):
             try: _cmd=json.loads(_a or "{}").get("cmd","")
             except Exception: _cmd=""
             if _cmd:
                 _lvl,_why=classify_cmd(_cmd)
                 if _lvl=="hardline":
-                    try: print(R+"   [approval] REFUSED: "+_why+" -> `"+_cmd[:60]+"`"+N)
+                    if _SAFE:
+                        try: print(SAFEC+"   [SAFE] REFUSED: "+_why+" -> `"+_cmd[:60]+"`  - type /unsafe to override"+N)
+                        except Exception: pass
+                        return ("[approval] REFUSED: this command is "+_why+" and has NO recovery path (on this device it could "
+                                "brick or wipe data). It was not run. The operator can type /unsafe to allow this class of command.")
+                    try: print(UNSAFEC+"   [UNSAFE] HARDLINE ALLOWED: "+_why+" -> `"+_cmd[:60]+"`"+N)
                     except Exception: pass
-                    return ("[approval] REFUSED: this command is "+_why+" and has NO recovery path (on this device it could "
-                            "brick or wipe data). It was not run.")
                 if _lvl=="dangerous":
                     try: print(OF+"   [approval] WARNING: "+_why+" -> `"+_cmd[:60]+"`"+N)
                     except Exception: pass
@@ -2855,8 +2835,7 @@ VERIFY_NUDGE_MSG=("[verification] You edited code in this task but never actuall
 # thing. Thresholds are deliberately tolerant: one double-check is legitimate.
 GUARD={"identical":3,"cycle_laps":2,"max_cycle":4,"history":48,"warn_only":False}
 GUARD_HIST=[]
-GUARD_ACTION=[None,""]
-GUARD_ACTION=[None,""]      # deque of (signature, result_hash)
+GUARD_ACTION=[None,""]      # (action, message) from the last guard_observe
 _repeatable=("skill",)   # tools legitimately re-invoked with identical args (listing/polling)
 def _g_sig(name,args):
     try: return name+"|"+json.dumps(args,sort_keys=True,separators=(",",":"),default=str)[:400]
@@ -2913,6 +2892,8 @@ WRITE_DENY_EXACT={os.path.join(_HOMEDIR,f) for f in
     (".bashrc",".bash_profile",".profile",".zshrc",".netrc",".gitconfig",".git-credentials",".npmrc")}
 WRITE_DENY_NAMES=("id_rsa","id_ed25519","id_ecdsa","authorized_keys","known_hosts",".env",
                   "credentials","credentials.json","key.txt",".deepseek_agent_key",".netrc")
+WRITE_DENY_SYSTEM=("/system","/vendor","/etc","/proc","/sys","/dev/block","/data/system",
+                   "/data/misc","/data/adb","/apex","/product","/odm","/boot")
 def _real(p):
     try: return os.path.realpath(os.path.expanduser(p))
     except Exception: return os.path.abspath(p)
@@ -2920,6 +2901,8 @@ def write_denied(path):
     """Returns a denial reason string, or None when the write may proceed."""
     try:
         rp=_real(path)
+        for pre in WRITE_DENY_SYSTEM:
+            if rp==pre or rp.startswith(pre+os.sep): return "system partition ("+pre+") - writing here can brick the device"
         for pre in WRITE_DENY_PREFIXES:
             if rp==pre or rp.startswith(pre+os.sep): return "credential/config directory ("+pre+")"
         if rp in WRITE_DENY_EXACT: return "shell/profile config file"
@@ -2935,8 +2918,14 @@ def write_denied(path):
 _WRITE_RX=re.compile(r"""(?:open|io\.open)\s*\(\s*(['\"])(?P<p1>[^'\"]+)\1\s*,\s*(['\"])[wa]""", re.X)
 _WRITE_RX2=re.compile(r"""(?:shutil\.(?:copy|copy2|copyfile|move)|os\.rename)\s*\([^,]+,\s*(['\"])(?P<p1>[^'\"]+)\1""", re.X)
 _SHELL_REDIR=re.compile(r">>?\s*(?P<p1>(?:[~/]|\.\.?/|[A-Za-z]:\\)[^\s;&|'\"]{1,})")
+_WRITE_VAR_RX=re.compile(r"""(?:open|io\.open)\s*\(\s*[A-Za-z_][\w\.\[\]'\"]*\s*,\s*['\"][wa]""", re.X)
+_SENSITIVE_HINT=re.compile(r"\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.netrc|\.gitconfig"
+                           r"|\.git-credentials|\.npmrc|\.bashrc|\.profile|\.env\b"
+                           r"|id_rsa|id_ed25519|id_ecdsa|authorized_keys|known_hosts|credentials|\.config/(?:gh|gcloud|pip)")
 def scan_code_writes(code):
-    """Return the FIRST denied write target found in *code*, or None. Best-effort static scan."""
+    """Return the FIRST denied write target found in *code*, or None. Best-effort static scan.
+    Zavorul e CONSERVATOR: prinde (a) literale spre cai refuzate, (b) redirectari shell,
+    (c) scrieri cu cale CONSTRUITA care mentioneaza si un nume sensibil (anti-evaziune)."""
     try: t=str(code or "")
     except Exception: return None
     for rx in (_WRITE_RX,_WRITE_RX2,_SHELL_REDIR):
@@ -2946,6 +2935,10 @@ def scan_code_writes(code):
             if p and not p.startswith(("http","data:")):
                 why=write_denied(p)
                 if why: return (p,why)
+    try:
+        if _WRITE_VAR_RX.search(t) and _SENSITIVE_HINT.search(t):
+            return ("(dynamic path touching '"+_SENSITIVE_HINT.search(t).group(0)+"')","dynamic write to a sensitive path (built from a variable)")
+    except Exception: pass
     return None
 def safe_create(path, data=""):
     """Create/overwrite a file with symlink-safe semantics (O_CREAT|O_EXCL, unlink a link first)."""
@@ -2967,19 +2960,28 @@ def safe_create(path, data=""):
 # or DANGEROUS (recoverable but costly: recursive rm, chmod 777, chown root, dd, disk ops).
 # HARDLINE is REFUSED outright; DANGEROUS warns loudly and keeps an audit line. Anchored at command
 # position so quoted prose ("git commit -m 'rm -rf /'") is NOT flagged.
-_CMDPOS=(r'(?:^|[\n`]|\$\()' r'\s*' r'(?:sudo\s+(?:-[^\s]+\s+)*)?' r'(?:env\s+(?:\w+=\S*\s+)*)?'
+# ★ FIX: ancora accepta si separatorii de comanda (; && || | &) - altfel `echo x; rm -rf /` scapa
+# de detectie pentru ca `rm` nu era la inceputul sirului. Confirmat in test: 6 evaziuni reparate.
+_CMDPOS=(r'(?:^|[\n;|&`]|\$\(|\|\||&&)' r'\s*' r'(?:sudo\s+(?:-[^\s]+\s+)*)?' r'(?:env\s+(?:\w+=\S*\s+)*)?'
          r'(?:(?:exec|nohup|setsid|time)\s+)*' r'\s*')
 _RM=_CMDPOS+r'rm\s+(-[^\s]*\s+)*'
 _HARDLINE=[
  (_RM+r'(?:["\'](?:/(?:(?:\.\.?)?/)*(?:\.\.?)?\**|/ \*)["\']|(?:/(?:(?:\.\.?)?/)*(?:\.\.?)?\**)(?:\s|$|[)`;|&]))',"recursive delete of root filesystem"),
- (_RM+r'(?:["\'](?:/etc|/usr|/var|/bin|/sbin|/boot|/lib|/root|/home|/system|/vendor|/data)(?:/\*)?["\']|(?:/etc|/usr|/var|/bin|/sbin|/boot|/lib|/root|/home|/system|/vendor|/data)(?:/\*)?(?:\s|$|[)`;|&]))',"recursive delete of system directory"),
+ (_RM+r'(?:["\'](?:/etc|/usr|/var|/bin|/sbin|/boot|/lib|/root|/home|/system|/vendor|/data|/proc|/sys|/dev)(?:/\*)?["\']|(?:/etc|/usr|/var|/bin|/sbin|/boot|/lib|/root|/home|/system|/vendor|/data|/proc|/sys|/dev)(?:/\*)?(?:\s|$|[)`;|&]))',"recursive delete of system directory"),
  (_RM+r'(?:["\'](?:~|\$\{?HOME\}?)(?:/?|/\*)["\']|(?:~|\$\{?HOME\}?)(?:/?|/\*)?(?:\s|$|[)`;|&]))',"recursive delete of home directory"),
+ (r'\bfind\s+(?:/[^\n]*?|/(?:etc|usr|var|bin|sbin|boot|lib|root|home|system|vendor|data))\s[^\n]*?-delete\b',"find -delete on a system path"),
+ (r'shutil\.rmtree\s*\(\s*["\'](?:/|/etc|/usr|/var|/bin|/sbin|/boot|/lib|/root|/home|/system|/vendor|/data)',"shutil.rmtree on a system path"),
+ (r'os\.(?:rmdir|remove|unlink)\s*\(\s*["\'](?:/etc|/usr|/var|/bin|/sbin|/boot|/lib|/root|/home|/system|/vendor|/data)',"python delete on a system path"),
  (_CMDPOS+r'mkfs(\.[a-z0-9]+)?\b',"format filesystem (mkfs)"),
- (_CMDPOS+r'dd\b[^\n]*\bof=/dev/(sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*',"dd to raw block device"),
- (r'>\s*/dev/(sd|nvme|hd|mmcblk|vd|xvd)[a-z0-9]*\b',"redirect to raw block device"),
+ (_CMDPOS+r'dd\b[^\n]*\bof=/dev/(sd|nvme|hd|mmcblk|vd|xvd|block|disk)[a-z0-9/]*',"dd to raw block device"),
+ (r'>\s*/dev/(sd|nvme|hd|mmcblk|vd|xvd|block)[a-z0-9/]*\b',"redirect to raw block device"),
+ (_CMDPOS+r'(?:cp|mv|cat|tee)\b[^\n]*\s/dev/(sd|nvme|hd|mmcblk|vd|xvd|block)[a-z0-9/]*\b',"write to raw block device"),
+ (r'(?:^|[\n`;|&(])\s*(?:sudo\s+[^\s]+\s+|env\s+\S+\s+)*mv\s+(?:-\S+\s+)*/(?:etc|usr|var|bin|sbin|boot|lib|root|home|system|vendor|data)\b(?:/\S*)?\s',"move a system directory"),
  (r':\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:',"fork bomb"),
  (_CMDPOS+r'kill\s+(-[^\s]+\s+)*-1\b',"kill all processes"),
  (_CMDPOS+r'(shutdown|reboot|halt|poweroff)\b',"system shutdown/reboot"),
+ (r'(?:^|[\n`]|\$\()\s*(?:/system/bin/|/sbin/|/bin/)?(?:svc\s+power\s+reboot|busybox\s+reboot)\b',"system shutdown/reboot"),
+ (r'(?:^|[\n`]|\$\()\s*/system/bin/(reboot|shutdown|halt|poweroff)\b',"system shutdown/reboot (absolute path)"),
  (_CMDPOS+r'init\s+[06]\b',"init 0/6 (shutdown/reboot)"),
  (_CMDPOS+r'systemctl\s+(poweroff|reboot|halt|kexec)\b',"systemctl poweroff/reboot"),
 ]
@@ -3096,6 +3098,7 @@ def reset_failures():
 # chain into a SINGLE inference turn: only the script's stdout returns to the model, not every
 # intermediate result. Must be off by default in spirit, but here it is a tool the model may pick.
 PTC_MAX_CALLS=50
+PTC_MAX_TOTAL=float(os.environ.get("AGENT_PTC_MAX_TOTAL","1800"))   # 30 min: limita absoluta a unui run_code
 def ptc_run(code, max_tool_calls=None, timeout=300):
     """Executes *code* in a sandbox where the agent's tools are callable as functions.
     Returns a str: the script's stdout/stderr + a per-call trace summary. Guards:
@@ -3104,16 +3107,44 @@ def ptc_run(code, max_tool_calls=None, timeout=300):
       - stdout/stderr are truncated, full output kept in the tool log."""
     limit=int(max_tool_calls or PTC_MAX_CALLS)
     calls={"n":0,"log":[]}
+    # ★ deadline progresiv: start 60s; fiecare apel cu progres il extinde cu 60s, pana la PTC_MAX_TOTAL
+    _t_start=time.time()
+    _PTC={"deadline":time.time()+60.0,"step":60.0,"ext":60.0,"t0":_t_start}
     def _wrap(name,fn):
         def call(*a,**k):
             if calls["n"]>=limit: raise RuntimeError("PTC limit: more than "+str(limit)+" tool calls in one script")
             calls["n"]+=1
             arg=a[0] if a else k
+            # ★ FEEDBACK LIVE: fiecare apel intern se afiseaza IMEDIAT (operatorul vede progresul,
+            # nu o linie care clipeste minute intregi). Mergem pe stdout-ul real, nu in buful prins.
+            _t0=time.time(); _n=calls["n"]
+            # ★ DEADLINE PROGRESIV: daca am depasit deadline-ul curent fara progres nou, oprim.
+            if time.time() > _PTC["deadline"]:
+                print(R+"   [deadline] "+str(int(_PTC["ext"]))+"s atins fara progres nou - opresc scriptul (pasul "+str(_n)+")"+N, flush=True)
+                raise RuntimeError("PTC deadline: no progress after "+str(int(_PTC["ext"]))+"s - script stopped at call #"+str(_n))
+            _what=str(arg if not isinstance(arg,(dict,list)) else (arg.get("cmd") or arg.get("path") or arg.get("code") or str(arg)[:60]))
+            _what=" ".join(_what.split())[:70]
+            try: sys.stdout.write(SD+"   \u21b3 ptc "+str(_n)+"/"+str(limit)+" "+name+N+" "+GY+_what+N+"\n"); sys.stdout.flush()
+            except Exception: pass
             try:
                 r=fn(arg) if not k or a else fn(**k)
             except Exception as e:
                 r="[tool error] "+type(e).__name__+": "+str(e)
-            calls["log"].append(name+" #"+str(calls["n"])+" -> "+str(r)[:120].replace("\n"," "))
+            _dt=time.time()-_t0
+            _sz=len(r) if isinstance(r,str) else 0
+            try:
+                sys.stdout.write(SD+"   \u21b3 ptc "+str(_n)+"/"+str(limit)+" "+name+N+" "+SD+"done "+_dur(_dt)+" ("+str(_sz)+"c)"+N+"\n"); sys.stdout.flush()
+            except Exception: pass
+            calls["log"].append(name+" #"+str(_n)+" -> "+str(r)[:120].replace("\n"," "))
+            # ★ PROGRES CONSTATAT: extind deadline-ul cu un pas (max 30 min) si anunt EXTINDEREA.
+            _PTC["ext"]+=_PTC["step"]
+            if _PTC["ext"]>=PTC_MAX_TOTAL:
+                print(R+"   [deadline] limita maxima de "+str(int(PTC_MAX_TOTAL))+"s atinsa - opresc scriptul"+N, flush=True)
+                raise RuntimeError("PTC hard limit: "+str(int(PTC_MAX_TOTAL))+"s total exceeded")
+            _PTC["deadline"]=time.time()+_PTC["step"]
+            if _PTC["ext"]>60:
+                try: sys.stdout.write(OF+"   \u21b3 deadline extins: +60s (total "+str(int(_PTC["ext"]))+"s, progres la pasul "+str(_n)+")"+N+"\n"); sys.stdout.flush()
+                except Exception: pass
             return r
         return call
     sandbox={
@@ -4782,7 +4813,8 @@ if __name__ == "__main__":
     # --- bannerul (\u26a1 AGENT DeepSeek / Type /help) a fost MUTAT in bara de sus din
     #     MainActivity.kt (UI nativ) - nu se mai printeaza in terminal (cerut de operator).
     while 1:
-        try: q=input(U+UPROMPT+IN).strip()
+        _st = ((E+"[38;5;220m" if SAFEMODE[0] else RED)+(" SAFE " if SAFEMODE[0] else " UNSAFE ")) + SD+"\u2502"+N+U
+        try: q=input(_st+IN).strip()
         except (EOFError,KeyboardInterrupt): print(N);break
         if q=="": continue          # blank line (extra newline from the UI) = no-op, do NOT quit the agent
         if not K:
@@ -4807,6 +4839,8 @@ if __name__ == "__main__":
             print(G+"     /run_su <script>   run a script with SHELL rights (uid=2000): /data/local/tmp,"+N)
             print(G+"                        toolchain nativ, llama.cpp, modele GGUF, binare compilate"+N)
             print(G+"     /compact            compress the context now"+N)
+            print(G+"     /safe               guardrails ON (default): refuse hardline commands and system/credential writes"+N)
+            print(G+"     /unsafe             guardrails OFF: run anything. NOT saved on disk: a restart returns to SAFE"+N)
             print(G+"     /verbose            toggle full code/output of each step"+N)
             print(G+"     /nospin             NO live line at all: clean scrollback (best on a phone)"+N)
             print(G+"     /reset              erase the conversation history"+N)
@@ -4853,6 +4887,15 @@ if __name__ == "__main__":
                 print(G+"   [watch] cost: 0 tokens (it writes on SCREEN, it does not enter the model context)."+N)
             else:
                 print(G+"   [watch] OFF."+N)
+            continue
+        if q in ("/safe","/unsafe"):
+            SAFEMODE[0]=(q=="/safe")
+            if SAFEMODE[0]:
+                print(SAFEC+"   [SAFE] guardrails are ON: hardline commands and writes to system/credential paths are refused."+N)
+            else:
+                print(UNSAFEC+"   [UNSAFE] the guardrails are OFF. Commands and writes are executed without refusal."+N)
+                print(SD+"   this mode is NOT saved: a restart returns to SAFE. Redaction of secrets in tool output stays ON."+N)
+            print()   # rand gol: spatiu pana la urmatorul prompt (cerut de operator)
             continue
         if q=="/verbose":
             VERBOSE[0]=not VERBOSE[0]; print(G+"   [ui] "+("VERBOSE: printing the code and the output of every step" if VERBOSE[0] else "COMPACT: live line with what it does now + timer over the WHOLE task (thinking vs. tool) and one line \u25cf <nr> \u00b7 <what the step does> \u00b7 time \u00b7 chars for every finished step")+N); continue
