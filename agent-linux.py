@@ -700,16 +700,17 @@ def _task_head(q=""):
          BAR+"╰"+"─"*w+"╯"+N]
     return "\n"+"\n".join(box)+"\n\n"+N   # box, then exactly 2 blank lines before the first step
 def _task_foot(stare="done"):
-    """Closes the task: steps/rounds + the tokens of THIS task and of the session,
-    all on ONE line (variant 1)."""
+    """Closes the task: steps/rounds + the tokens of THIS task and of the CURRENT session
+    (SESS: from /reset to the next /reset). COMPACT, wrap-safe layout (same as agent.py)."""
     LIVE.update(phase="idle",desc="",col=None,n=0)
-    st=str(TASK["steps"])+(" tool call" if TASK["steps"]==1 else " tool calls")+", "+str(TASK["rounds"])+(" round" if TASK["rounds"]==1 else " rounds")
+    st=str(TASK["steps"])+(" tool" if TASK["steps"]==1 else " tools")+", "+str(TASK["rounds"])+(" rnd" if TASK["rounds"]==1 else " rnds")
     hit=("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"])) if TASK["tok_in"] else "0%"
-    b=G+"    \u25aa tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" \u00b7 hit "+hit
-    d=_ins_load(); ti=int(d.get("tok_in",0)); to=int(d.get("tok_out",0)); ca=int(d.get("cache_hit",0))
+    ti=SESS["in"]; to=SESS["out"]; ca=SESS["cache_hit"]   # CURRENT session only (resets on /reset)
     sh=("%d%%"%int(100.0*ca/ti)) if ti else "0%"
-    b+=G+"    \u25aa session tok \u2191"+_K(ti)+" \u2193"+_K(to)+" = "+_K(ti+to)+" \u00b7 hit "+sh+N
-    return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+" \u00b7 "+st+b
+    b=G+"  tok  \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" \u00b7 hit "+hit
+    b+="\n"+G+"  sess \u2191"+_K(ti)+" \u2193"+_K(to)+" = "+_K(ti+to)+" \u00b7 hit "+sh+N
+    b="  #"+str(TASK["n"])+" "+stare+" \u00b7 "+st+"\n"+b        # header on its OWN line
+    return BAR+"  +-"+N+ST+b+"\n"   # blank line between the footer and the next "TU >"
 
 # ==================== MONITOR DE STATUS (0 tokeni, fara API) ====================
 # DE CE: verificarea periodica PRIN API ar retrimite tot contextul la fiecare check
@@ -1570,6 +1571,17 @@ def _ins_save(d):
     try:
         tmp=INSIGHTS_FILE+".tmp"; open(tmp,"w",encoding="utf-8").write(json.dumps(d,sort_keys=True)); os.replace(tmp,INSIGHTS_FILE)
     except Exception: pass
+def _sess_save():
+    """Persists the CURRENT session counters (SESS) so they survive a restart; /reset zeroes them."""
+    try:
+        d=_ins_load(); d["session"]=dict(SESS); _ins_save(d)
+    except Exception: pass
+def _sess_load():
+    """Restores the current session counters from insights.json at startup. Returns the dict."""
+    try:
+        d=_ins_load(); v=d.get("session") or {}
+        return {"in":int(v.get("in",0)),"out":int(v.get("out",0)),"cache_hit":int(v.get("cache_hit",0)),"rounds":int(v.get("rounds",0))}
+    except Exception: return {"in":0,"out":0,"cache_hit":0,"rounds":0}
 def insight_tool(name):
     """Counts one tool call."""
     try:
@@ -1967,6 +1979,7 @@ def load_ctx():
     M.extend(hist); return len(hist)
 load_ctx()          # the history is loaded at startup (the return value was never used)
 SESS={"in":0,"out":0,"cache_hit":0,"rounds":0}
+SESS.update(_sess_load())   # the session survives a restart: it is restored from insights.json
 TN=[0]   # the tool number in the current task (grows on every run, resets on a new task)
 def _K(n):
     """Collapse a token count to a short human string (1.2k / 3.4M)."""
@@ -1987,6 +2000,7 @@ def print_usage_compact(usage):
     SESS["in"]+=pt; SESS["out"]+=ct; SESS["rounds"]+=1
     TASK["tok_in"]+=pt; TASK["tok_out"]+=ct; TASK["cache"]+=h   # same server numbers, accumulated for THIS task
     if h: SESS["cache_hit"]+=h
+    _sess_save()   # the session counter is persisted on every round
     line="\u25aa tok \u2191%s \u2193%s"%(_K(pt),_K(ct))
     if pt and h: line+=" \u00b7 hit %d%%"%int(100.0*h/pt)
     if rz: line+=" \u00b7 rz %s"%_K(rz)
@@ -2916,7 +2930,8 @@ if __name__ == "__main__":
             print(G+"   [clean] scratch emptied ("+str(_nf)+" files, "+str(_nd)+" dirs in "+SCRATCH+") - everything else in the working folder kept."+N); continue
         if q=="/reset":
             M[:]=M[:1]; save_ctx(); todo_reset()
-            print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+")"+N); continue
+            SESS.update(**{"in":0,"out":0,"cache_hit":0,"rounds":0}); _sess_save()   # new session: zero in memory AND on disk
+            print(G+"   [reset] the conversation history was erased ("+os.path.basename(CTX)+") and the session token counter was zeroed"+N); continue
         if q.startswith("/auto-learn") or q.startswith("/autolearn"):
             _a=q.split()
             if len(_a)>1 and _a[1].isdigit(): AUTOLEARN["every"]=max(1,int(_a[1])); _turns_since_learn[0]=0

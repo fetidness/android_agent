@@ -793,13 +793,15 @@ def _task_foot(stare="done"):
     """Closes the task: steps/rounds + the tokens of THIS task and of the session,
     all on ONE line (variant 1)."""
     LIVE.update(phase="idle",desc="",col=None,n=0)
-    st=str(TASK["steps"])+(" tool call" if TASK["steps"]==1 else " tool calls")+", "+str(TASK["rounds"])+(" round" if TASK["rounds"]==1 else " rounds")
+    # COMPACT footer (phone screen ~38 monospace chars at 15sp): one field per line, short labels.
+    st=str(TASK["steps"])+(" tool" if TASK["steps"]==1 else " tools")+", "+str(TASK["rounds"])+(" rnd" if TASK["rounds"]==1 else " rnds")
     hit=("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"])) if TASK["tok_in"] else "0%"
-    b=G+"    \u25aa tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" \u00b7 hit "+hit
     si,so=SESS["in"],SESS["out"]
     sh=("%d%%"%int(100.0*SESS["cache_hit"]/si)) if si else "0%"
-    b+=G+"    \u25aa session tok \u2191"+_K(si)+" \u2193"+_K(so)+" = "+_K(si+so)+" \u00b7 hit "+sh+N
-    return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+" \u00b7 "+st+b
+    b=G+"  tok  \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" \u00b7 hit "+hit
+    b+="\n"+G+"  sess \u2191"+_K(si)+" \u2193"+_K(so)+" = "+_K(si+so)+" \u00b7 hit "+sh+N
+    b="  #"+str(TASK["n"])+" "+stare+" \u00b7 "+st+"\n"+b        # header on its OWN line so nothing wraps on a phone
+    return BAR+"  +-"+N+ST+b+"\n"   # compact, wrap-safe; blank line after
 
 # ==================== MONITOR DE STATUS (0 tokeni, fara API) ====================
 # DE CE EXISTA: operatorul a intrebat daca putem verifica statusul la fiecare minut.
@@ -1399,6 +1401,7 @@ def print_usage_compact(usage):
     SESS["in"]+=pt; SESS["out"]+=ct; SESS["rounds"]+=1
     TASK["tok_in"]+=pt; TASK["tok_out"]+=ct; TASK["cache"]+=h   # same server numbers, accumulated for THIS task
     if h: SESS["cache_hit"]+=h
+    _sess_save()   # the session counter is persisted on every round
     line="\u25aa tok \u2191%s \u2193%s"%(_K(pt),_K(ct))
     if pt and h: line+=" \u00b7 hit %d%%"%int(100.0*h/pt)
     if rz: line+=" \u00b7 rz %s"%_K(rz)
@@ -3431,6 +3434,17 @@ def _ins_save(d):
     try:
         tmp=INSIGHTS_FILE+".tmp"; open(tmp,"w",encoding="utf-8").write(json.dumps(d,sort_keys=True)); os.replace(tmp,INSIGHTS_FILE)
     except Exception: pass
+def _sess_save():
+    """Persists the CURRENT session counters (SESS) so they survive a restart; /reset zeroes them."""
+    try:
+        d=_ins_load(); d["session"]=dict(SESS); _ins_save(d)
+    except Exception: pass
+def _sess_load():
+    """Restores the current session counters from insights.json at startup. Returns the dict."""
+    try:
+        d=_ins_load(); v=d.get("session") or {}
+        return {"in":int(v.get("in",0)),"out":int(v.get("out",0)),"cache_hit":int(v.get("cache_hit",0)),"rounds":int(v.get("rounds",0))}
+    except Exception: return {"in":0,"out":0,"cache_hit":0,"rounds":0}
 def insight_tool(name):
     """Counts one tool call."""
     try:
@@ -3448,6 +3462,7 @@ def insight_usage(usage):
         dd["in"]+=i; dd["out"]+=o; dd["rounds"]+=1
         _ins_save(d)
     except Exception: pass
+SESS.update(_sess_load())   # the session survives a restart: restored from insights.json (runs once, after the helpers above)
 def insight_task():
     """Records the end of one task."""
     try:
@@ -4967,6 +4982,7 @@ if __name__ == "__main__":
             _c,_t,_nb,_den=mstats(mem()); _dens="density OK (tight)" if (_nb and _den<=180) else ("DENSITY WARNING ("+str(_den)+" chars/bullet > 220)" if (_nb and _den>220) else "n/a"); print(G+"   memory: "+MEM+" | "+str(_c)+" chars ~ "+str(_t)+" tok | "+str(_nb)+" bullets | "+str(_den)+" chars/bullet | unlimited size | "+_dens+N); continue
         if q=="/reset":
             M[:]=M[:1]; save_ctx(); todo_reset()
+            SESS.update(**{"in":0,"out":0,"cache_hit":0,"rounds":0}); _sess_save()   # new session: zero in memory AND on disk
             # FIX: /reset goleste si checkpointurile /learn (altfel fisierul acumula indici
             # stale din sesiuni vechi; logica ii ignora, dar fisierul crestea inutil).
             try:
