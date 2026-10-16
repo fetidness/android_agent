@@ -3,9 +3,42 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `4bf697f`. Sesiunea 2026-10-15 = optimizari Hermes (necomise inca).
+> Ultimul commit inclus: `f4f72b4`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
 
 **Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
+
+---
+
+### 2026-10-15 (b) - `agent.py` OPTIMIZAT: mod SAFE, zavor pe partitii de sistem, anti-evaziune
+
+> **Cerut de operator:** „am inlocuit acel fisier cu altul optimizat ... fa git push", apoi
+> „pe baza acestora, modifica readme.md si changelogs.md apoi faci din nou push".
+
+**Commit `f4f72b4`** - `agent.py` inlocuit cu versiunea optimizata (91 linii adaugate, 48 sterse,
+5197 linii total), plus `insights.json` rescris de runtime.
+
+**Siguranta scrierilor (principalul)**
+- `WRITE_DENY_SYSTEM` (NOU): refuza scrierea in `/system`, `/vendor`, `/etc`, `/proc`, `/sys`,
+  `/dev/block`, `/data/system`, `/data/misc`, `/data/adb`, `/apex`, `/product`, `/odm`, `/boot` -
+  verificare pe `realpath`, deci symlink-urile nu ocolesc zavorul.
+- Anti-evaziune (NOU): `_WRITE_VAR_RX` + `_SENSITIVE_HINT` prind scrierile pe cale CONSTRUITA
+  din variabila care ating nume sensibile (`.ssh`, `.aws`, `.gnupg`, `.kube`, `.docker`, `.azure`,
+  `.netrc`, `.gitconfig`, `.git-credentials`, `.npmrc`, `.bashrc`, `.profile`, `id_rsa`,
+  `id_ed25519`, `id_ecdsa`, `authorized_keys`, `known_hosts`, `credentials`, `.config/gh|gcloud|pip`).
+- Mod SAFE (NOU): `SAFEMODE`/`SAFEC`/`UNSAFEC`. Implicit SAFE = scrierea refuzata si HARDLINE
+  neexecutat, mesaj `[SAFE] write REFUSED to ... - type /unsafe to override` (galben 220). Dupa
+  `/unsafe`, comanda HARDLINE ruleaza cu linie de audit rosie `[UNSAFE] HARDLINE ALLOWED` (rosu 203).
+  DANGEROUS ramane pe avertisment + audit, fara refuz.
+
+**Curatenie**
+- Sters codul mort `_compact_history_DISABLED()` (32 linii, pastrat "for reference only" si
+  niciodata apelat) si duplicatul `GUARD_ACTION=[None,""]`; comentariul reflecta acum realitatea.
+- `agent.py`: mod 644 -> **755** (executabil).
+
+**Verificare**
+- `059453b..f4f72b4  master -> master`; local HEAD = remote HEAD = `f4f72b4`.
+- Clone proaspat: `sha256 88c7e56e...a8e34` identic cu fisierul local - versiunea de pe server
+  este exact cea optimizata.
 
 ---
 

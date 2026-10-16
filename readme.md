@@ -1,6 +1,6 @@
 # Agent Android (net.sys32.agent)
 
-> **Stare 2026-10-15:** agentul imbogatit cu 12 optimizari portate din Hermes (`tool_guardrails`, `run_code`/PTC, `delegate`, `todo`, `curator`, `moa`, `insights`, `file_safety`, `approval_detection`, `@`-references, `overflow`, executie paralela). **Cost: 29 runde -> 5 runde (-6x)** la un task de audit. Toate mesajele UI in engleza. Testat end-to-end dupa stergere completa + rebuild. Detalii: `CHANGELOG.md` 2026-10-15 si Etapa 93 mai jos.
+> **Stare 2026-10-15 (b):** peste optimizarile Hermes s-a adaugat **modul SAFE** - zavor nou de scriere in `agent.py` pentru partitiile de sistem (`/system`,`/vendor`,`/etc`,`/proc`,`/sys`,`/dev/block`,`/data/system`,`/data/misc`,`/data/adb`,`/apex`,`/product`,`/odm`,`/boot`) si anti-evaziune pe cai CONSTRUITE din variabile (`_WRITE_VAR_RX` + `_SENSITIVE_HINT`). Comportament nou: **SAFE = REFUZ (galben)**, operatorul poate debloca cu `/unsafe`; in `/unsafe` comanda hardline e executata cu linie de audit rosie `[UNSAFE]`. Cod mort sters (`_compact_history_DISABLED`, 32 linii) + `agent.py` marcat executabil (755). Detalii: `CHANGELOG.md` 2026-10-15 (b) si Etapa 94 mai jos.
 
 ## 🟢 O SINGURA APLICATIE PE DEVICE (actualizat 6 oct 2026)
 
@@ -4761,3 +4761,47 @@ aplicatia preluase o **cheie veche** din backup-ul de pe sdcard. Fix: rescrierea
 7. **`DISCIPLINE`/`CURATOR_STATE` foloseau `SKILLDIR` inainte sa fie definit** -> `NameError` la import.
 
 ---
+
+## Etapa 94 - MODUL SAFE in `agent.py`: zavor de scriere + anti-evaziune (commit `f4f72b4`)
+
+**Context.** Versiunea optimizata a lui `agent.py` a fost pusa direct in sursa canonica
+(`workspace/app/net.sys32.agent/app/src/main/assets/python/agent.py`, 5197 linii) si comisa.
+Diff fata de `fa3a537`: **91 linii adaugate, 48 sterse**.
+
+**A. Zavor de scriere pe partitiile de sistem (NOU).** Lista noua `WRITE_DENY_SYSTEM`:
+`/system`, `/vendor`, `/etc`, `/proc`, `/sys`, `/dev/block`, `/data/system`, `/data/misc`,
+`/data/adb`, `/apex`, `/product`, `/odm`, `/boot`. Verificarea se face in `write_denied()`
+pe calea REZOLVATA (`os.path.realpath`, deci un symlink nu ocoleste zavorul) si returneaza
+motivul "system partition (X) - writing here can brick the device".
+
+**B. Anti-evaziune pe cai construite dinamic (NOU).** Pana acum `scan_code_writes()` prindea
+doar (a) `open(...,'w')` cu literal, (b) `shutil.copy/move` cu literal, (c) redirectari shell
+`> cale`. Acum, daca regexul `_WRITE_VAR_RX` vede o scriere pe cale NON-literala **si**
+`_SENSITIVE_HINT` gaseste in acelasi cod un nume sensibil (`.ssh`, `.aws`, `.gnupg`, `.kube`,
+`.docker`, `.azure`, `.netrc`, `.gitconfig`, `.git-credentials`, `.npmrc`, `.bashrc`, `.profile`,
+`id_rsa`, `id_ed25519`, `id_ecdsa`, `authorized_keys`, `known_hosts`, `credentials`,
+`.config/gh|gcloud|pip`), scrierea e refuzata cu "dynamic write to a sensitive path
+(built from a variable)". Zavorul e declarat explicit CONSERVATOR in docstring.
+
+**C. Modul SAFE vizibil (`SAFEMODE`, `SAFE_WARN`, `SAFEC`/`UNSAFEC`).** Doua comportamente, cu
+culori distincte in terminal:
+- **SAFE (implicit, `SAFEMODE=[True]`)** - scrierea refuzata si comenzile HARDLINE NU se executa:
+  linia devine `   [SAFE] write REFUSED to ... - type /unsafe to override` (galben `38;5;220`),
+  iar tool-ul primeste mesaj care spune explicit ca operatorul poate debloca cu `/unsafe`.
+- **UNSAFE (dupa `/unsafe`)** - comanda HARDLINE e LASATA sa ruleze, dar se afiseaza linia de
+  audit rosie `   [UNSAFE] HARDLINE ALLOWED: <motiv> -> \`<cmd>\`` (rosu `38;5;203`).
+Comenzile doar DANGEROUS (recuperabile: `rm -r`, `chmod 777`, `chown root`, `dd`, operatii de disc)
+raman pe ramura lor: avertisment puternic + linie de audit, fara refuz.
+
+**D. Curatenie de cod mort.** Sters `_compact_history_DISABLED()` (ramasita pastrata "for
+reference only", 32 linii, niciodata apelata) si duplicatul `GUARD_ACTION=[None,""]` scris de
+doua ori; comentariul lui `GUARD_ACTION` acum descrie corect continutul - `(action, message)`
+din ultimul `guard_observe`.
+
+**E. Mod de fisier.** `agent.py` era 644, acum **755** (executabil) - consistent cu shebang-ul
+`#!/usr/bin/env python3` si cu rularea lui pe device.
+
+**Verificare.** Local HEAD = remote HEAD = `f4f72b4`; clone proaspat in `temp/tmp/verify2` are
+`sha256 88c7e56eae025d171c8de53310943e47a4af041b5311ec16b6470beaab5a8e34` - identic cu fisierul
+local. **Regula neschimbata:** copia canonica e in `src/main/assets/python/`; cea din
+`app/build/intermediates/.../mergeDebugAssets/` e artefact Gradle si se suprascrie la build.
