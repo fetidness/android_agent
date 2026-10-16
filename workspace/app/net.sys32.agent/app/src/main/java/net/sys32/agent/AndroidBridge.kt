@@ -837,7 +837,25 @@ class AndroidBridge(
                 ctx.startActivity(Intent(act).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 ok(JSONObject().put("opened", label))
             }
-            else -> err("settings: action must be get|open")
+            "set" -> {
+                // ★ scriere in Secure/Global/System. Necesita WRITE_SECURE_SETTINGS pentru
+                // namespace-urile secure/global (permisiune speciala, acordata cu `pm grant`).
+                val ns = p.optString("ns", "system")
+                val key = p.optString("key", "")
+                val val_ = p.optString("value", "")
+                if (key.isEmpty()) return err("settings set: key required")
+                if (ns == "secure" && key == Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) return err(
+                    "accessibility services: use the dedicated a11y_selfheal (Android protects this key)")
+                val okw = try {
+                    when (ns) {
+                        "global" -> Settings.Global.putString(ctx.contentResolver, key, val_)
+                        "secure" -> Settings.Secure.putString(ctx.contentResolver, key, val_)
+                        else -> Settings.System.putString(ctx.contentResolver, key, val_)
+                    }
+                } catch (e: Exception) { false }
+                ok(JSONObject().put("key", key).put("set", okw).put("value", val_))
+            }
+            else -> err("settings: action must be get|set|open")
         }
     }
 

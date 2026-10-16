@@ -3,9 +3,39 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `b49dbf3`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
+> Ultimul commit inclus: `57727af`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
 
 **Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
+
+---
+
+### 2026-10-16 (d) - AUTO-REACTIVARE ACCESIBILITATE la pornire (Kotlin)
+
+> **Cerut de operator:** „de IME nu ma intereseaza. dar putem pune auto-activare accesibilitate?"
+
+**Problema (frecție reala, raportata de agent):** la FIECARE reinstalare de APK, Android reseteaza
+permisiunile speciale -> `enabled_accessibility_services` devine null, iar `AgentAccessibilityService`
+nu se mai leaga. Efect: agentul pierde screenshot-ul si controlul UI. Agentul l-a reactivat MANUAL
+de 3 ori intr-o singura sesiune.
+
+**Fix (MainActivity.kt):** functia NOUA `ensureAccessibility()`, apelata in `startCore()`:
+- idempotenta: daca `instance != null`, nu atinge nimic;
+- daca lipseste `WRITE_SECURE_SETTINGS` (permisiune speciala, acordata o data cu `pm grant`),
+  NU incearca si scrie pe ecran instructiunea exacta cu `pm grant` -> operatorul stie ce sa faca;
+- altfel: citeste lista `ENABLED_ACCESSIBILITY_SERVICES`, adauga `pkg/cls` daca lipseste
+  (lista e separata prin ':'), scrie `ACCESSIBILITY_ENABLED=1`, apoi raporteaza pe ecran.
+
+**Fix (AndroidBridge.kt):** `settings()` suporta acum si actiunea `set` (Secure/Global/System),
+cu refuz explicit pentru cheia de accesibilitate (Android o protejeaza; se foloseste doar
+`ensureAccessibility()`), pentru ca bridge-ul avea doar `get|open`.
+
+**Verificare (pe device, test dur)**
+- Dezactivat a11y (`enabled=0`, `services=null`) -> pornit app -> **auto-reactivare**: `enabled=1`,
+  lista repopulata, `dumpsys accessibility` arata serviciul **BOUND**.
+- Ecran: `[a11y] accessibility re-enabled automatically (added to list)`.
+- Fallback testat: permisiune revocata -> a11y rămâne OFF (NU crapa), se afiseaza instructiunea.
+- APK construit LOCAL cu Gradle 8.11.1 + SDK din `/home/gab/Work/Android` (nu doar repack):
+  `compileDebugKotlin` + `assembleDebug` = BUILD SUCCESSFUL; instalat cu aceeasi cheie.
 
 ---
 

@@ -765,6 +765,62 @@ class MainActivity : AppCompatActivity() {
         h.postDelayed(tick, 45000)
     }
 
+    /** ★ AUTO-REACTIVARE ACCESIBILITATE (cerut de operator).
+     *
+     * De ce: la FIECARE reinstalare de APK, Android reseteaza permisiunile speciale ->
+     * `enabled_accessibility_services` devine null, iar serviciul AgentAccessibilityService
+     * nu se mai leaga. Efect: agentul pierde screenshot-ul si controlul UI. Pana acum se
+     * reactiva MANUAL (de 3 ori intr-o sesiune).
+     *
+     * Cum: avem WRITE_SECURE_SETTINGS in manifest; cand e acordata (`pm grant` o singura data),
+     * putem scrie cheile Secure direct. Scriem lista serviciilor + flagul enabled, apoi lasam
+     * sistemul ~600 ms sa faca bind-ul.
+     *
+     * Fara permisiune: nu incercam (nu aruncam), scriem o linie cu instructiunea `pm grant`.
+     * @return true daca serviciul e activ (bound) la sfarsit.
+     */
+    private fun ensureAccessibility(): Boolean {
+        // deja activ? atunci nu atingem nimic (idempotent)
+        if (net.sys32.agent.AgentAccessibilityService.instance != null) return true
+        val me = net.sys32.agent.AgentAccessibilityService::class.java
+        val want = packageName + "/" + me.name
+        val cr = contentResolver
+        // permisiunea speciala acordata?
+        val canWrite = checkSelfPermission(
+            "android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED
+        if (!canWrite) {
+            return try {
+                appendAnsi("\u001b[38;5;214m[a11y] accessibility is OFF and WRITE_SECURE_SETTINGS is not granted.\u001b[0m\n" +
+                    "\u001b[38;5;243m      grant it once via adb:  pm grant " + packageName +
+                    " android.permission.WRITE_SECURE_SETTINGS\u001b[0m\n")
+                false
+            } catch (_: Exception) { false }
+        }
+        return try {
+            val cur = android.provider.Settings.Secure.getString(
+                cr, android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+            // lista e separata prin ':' - adaugam al nostru doar daca lipseste
+            val set = cur.split(":").filter { it.isNotBlank() }.toMutableSet()
+            val changed = set.add(want)
+            if (changed) {
+                android.provider.Settings.Secure.putString(cr,
+                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    set.joinToString(":"))
+            }
+            android.provider.Settings.Secure.putInt(cr,
+                android.provider.Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            try {
+                appendAnsi("\u001b[38;5;110m[a11y] accessibility re-enabled automatically (" +
+                    (if (changed) "added to list" else "already listed") + ")\u001b[0m\n")
+            } catch (_: Exception) {}
+            true
+        } catch (e: Exception) {
+            try { appendAnsi("\u001b[38;5;203m[a11y] could not enable: " + e.message + "\u001b[0m\n") }
+            catch (_: Exception) {}
+            false
+        }
+    }
+
     private fun allEssentialPermsGranted(): Boolean {
         val ess = arrayOf(
             Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,
@@ -779,6 +835,7 @@ class MainActivity : AppCompatActivity() {
         if (coreStarted) return
         coreStarted = true
         startWatchdog()
+        ensureAccessibility()   // ★ reactivarea automata a serviciului (reinstalarea il reseta)
 
         // ★ cerut de operator: mesaj VIZIBIL IMEDIAT la deschiderea aplicatiei, INAINTE de orice
         // munca grea (extragerea assets + pornirea procesului python pot dura zeci de secunde -
