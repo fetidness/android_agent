@@ -432,13 +432,19 @@ class Adb:
             pass
         print("[adb] TCP conectat", flush=True)
         self._send(A_CNXN, A_VERSION, 256*1024, b"host::features=shell_v2,cmd,stat_v2\0")
-        _auth_left = 3          # ★ anti-bucla: adbd retrimite AUTH_TOKEN daca semnatura e rea
+        _auth_left = 1          # ★ FAZA 4y: UNA singura. Cu 3, fiecare retry pe acelasi socket
+                                # agrava dialogul (adbd retrimite token; noi raspundeam din nou).
         while True:
             # ★ FIX (testul din UI: "adbsh nu merge, uid 2000"): cand cheia aplicatiei nu e
             # autorizata, adbd AFISEAZA DIALOGUL si nu raspunde -> _recv iesea in timeout si
             # agentul primea doar "TimeoutError" sec. Acum = aprobare in asteptare, cu instructiuni.
             try:
-                cmd,a0,a1,d = self._recv(10)
+                # ★ FAZA 4y: TIMEOUT LUNG pentru aprobare. Vechiul _recv(10) expira in 10 s,
+                # iar shared() reconecta la fiecare esec -> FIECARE reconnect deschidea un dialog
+                # "Allow USB debugging" NOU (simptomul raportat: 5 apasari la rand). Aprobarea
+                # umana poate lua 30-60 s, deci asteptam 120 s inainte sa renuntam - o singura
+                # fereastra de aprobare, nu 5.
+                cmd,a0,a1,d = self._recv(120)
             except socket.timeout:
                 raise RuntimeError(
                     "adbd is WAITING FOR the app key to be APPROVED: accept the 'Allow USB "
@@ -462,20 +468,26 @@ class Adb:
                 _n_auth = getattr(self, "_auth_tries", 0)
                 self._auth_tries = _n_auth + 1
                 if _n_auth == 0:
+                    # ★ FAZA 4x (DOVEDIT pe device, SM-A366B/Android 16, 2026-10-16):
+                    # ORDINEA REALA e INVERSA fata de ce credea codul. Test brut (socket,
+                    # urmarind fiecare pachet): AUTH_SIGNATURE -> adbd retrimite TOKEN NOU
+                    # (respinse) de fiecare data, desi openssl confirma "Verified OK" si cheia
+                    # privata e IDENTICA cu a adb-ului de pe PC care merge; AUTH_RSAPUBLICKEY
+                    # -> A_CNXN IMEDIAT, fara dialog "Allow". De aceea: RSAPUBLICKEY PRIMA.
                     try:
-                        _sig = _rsa_sign_token(d)
-                        self._send(A_AUTH, AUTH_SIGNATURE, 0, _sig)
-                        print("[adb] AUTH -> AUTH_SIGNATURE (%d bytes)" % len(_sig), flush=True)
+                        pub = open(PUBC, "rb").read().strip() + b"\0"
+                    except Exception:
+                        pub = b""
+                    if pub:
+                        print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
+                        self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
                         continue
-                    except Exception as _e:
-                        print("[adb] semnare indisponibila (%s) -> RSAPUBLICKEY" % str(_e)[:60], flush=True)
                 try:
-                    pub = open(PUBC, "rb").read().strip() + b"\0"
-                except Exception:
-                    pub = b""
-                if pub:
-                    print("[adb] AUTH -> trimit RSAPUBLICKEY", len(pub), "bytes", flush=True)
-                    self._send(A_AUTH, AUTH_RSAPUBLICKEY, 0, pub)
+                    _sig = _rsa_sign_token(d)
+                    self._send(A_AUTH, AUTH_SIGNATURE, 0, _sig)
+                    print("[adb] AUTH -> AUTH_SIGNATURE (%d bytes)" % len(_sig), flush=True)
+                except Exception as _e:
+                    print("[adb] semnare indisponibila (%s)" % str(_e)[:60], flush=True)
                 _auth_left -= 1
                 if _auth_left <= 0:
                     raise RuntimeError(
