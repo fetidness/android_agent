@@ -3,9 +3,47 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `bb75de9`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
+> Ultimul commit inclus: `c6d98b1`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
 
 **Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
+
+---
+
+### 2026-10-16 (f) - ADB: UN singur dialog Allow + conexiuni fantoma curatate
+
+> **Observat de operator:** „cand pornesc aplicatia la rece... ma intreaba direct sa ii dau allow.
+> ii dau allow, apoi ii zic agentului sa isi testeze conexiunea uid 2000 si iarasi ma intreaba.
+> abia a 2-a oara se salveaza allow-ul pe sesiune."
+
+**Cauza 1 - timeout prea scurt (dovedit): `_recv(10)`** in `Adb.connect()`. Aprobarea umana poate
+lua 30-60 s; la expirare `shared()` reconecta, iar FIECARE reconnect deschidea un dialog NOU.
+Fix: `_recv(120)` + `_auth_left = 1` (3 incercari nu ajutau, agravau dialogul).
+
+**Cauza 2 - HANDSHAKE NESERIALIZAT (cauza reala a celor 2 Allow-uri):** `shared()` NU era sub
+`_SOCK_LOCK`, deci doua thread-uri care o chemau simultan la pornire (a11y_selfheal + primul tool)
+vedeau amandoua `_SHARED is None` si deschideau CATE O CONEXIUNE -> doua dialoguri. Dovada pe
+device: prima conexiune ramanea `ESTABLISHED` cu 44 B necititi (handshake abandonat) = FANTOMA.
+Fix: tot `shared()` (inclusiv `connect()`) e acum sub `_SOCK_LOCK`, prin `_shared_locked()`.
+Verificat: 4 thread-uri simultane -> `fd-uri distincte: {4}` = UN singur handshake.
+
+**Cauza 3 - conexiuni fantoma:** un socket cu date in queue dar fara raspuns (handshake abandonat)
+NU e "viu" desi `select()` zice ca are date; refolosirea lui otravea comanda urmatoare.
+Fix: la reutilizare, daca are date in queue face un `ping()` REAL si, daca nu raspunde, il inchide
+CURAT si deschide altul (nu-l lasa in ESTABLISHED).
+
+**Cauza 4 - a11y_selfheal pornea al doilea handshake:** acum cere `shared(auto=False)` - refoloseste
+conexiunea existenta si NU deschide una noua la startup (un Allow consumat inutil, cand operatorul
+nu e atent).
+
+**Rezultat:** la pornirea la rece -> UN singur dialog Allow; apoi toate comenzile (adbsh, a11y,
+orice) folosesc aceeasi conexiune.
+
+**Investigatia conexiunii "neobisnuite" raportate de agent (10.0.0.1 -> 10.0.0.2:7777/7780)**
+- NU e malware: `10.0.0.2` e un **P-CSCF** (server IMS) al operatorului. Dovada din `dumpsys`:
+  `PcscfAddresses: [10.0.0.2, 10.0.0.3]`, APN `ims` CONNECTED pe `rmnet_data8`,
+  operator Telenor DK (MCC 238/MNC 02) prin Lebara. Porturile 7777/7780 = trafic VoLTE/IMS normal.
+- "Neobisnuit" doar aparent: SIM1 e OUT_OF_SERVICE dar sesiunea IMS ramane activa (comportament
+  normal cand VoLTE e inregistrat pe celalalt slot / IWLAN).
 
 ---
 

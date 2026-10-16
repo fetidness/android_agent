@@ -2525,12 +2525,19 @@ def a11y_selfheal(verbose=True):
         import adb_client
     except Exception:
         return out
+    # ★ FAZA 4z-B: a11y_selfheal NU trebuie sa porneasca un al DOILEA handshake in paralel cu
+    # primul tool care foloseste adb (doua handshake-uri simultane = doua dialoguri "Allow").
+    # shared() e acum serializat prin _SOCK_LOCK, deci aici e suficient sa reutilizam conexiunea
+    # EXISTENTA daca e deja deschisa (auto=False): daca nu exista, preferam sa NU pornim una
+    # la startup (consuma un Allow inutil) - o face primul tool, cand operatorul e atent.
     try:
-        a = adb_client.shared()
-        if a is None or a.s is None:
-            return out
+        a = adb_client.shared(auto=False)
+    except TypeError:
+        a = None                        # versiune veche fara `auto`: nu insistam
     except Exception:
-        return out                      # adb indisponibil: tacut, fara blocaj
+        a = None
+    if a is None or getattr(a, "s", None) is None:
+        return out                      # fara conexiune activa: tacut, fara blocaj, fara dialog
     pkg = "net.sys32.agent"
     svc = pkg + "/" + pkg + ".AgentAccessibilityService"
     try:

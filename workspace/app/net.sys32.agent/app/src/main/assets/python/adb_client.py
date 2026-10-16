@@ -265,11 +265,29 @@ def shared(host="127.0.0.1", port=None, auto=True):
     Astfel adbd vede O SINGURA sesiune -> un singur dialog 'Allow'.
     """
     global _SHARED, _SHARED_PID
+    # ★ FAZA 4z-B (SERIALIZARE HANDSHAKE - dovedit pe device): shared() NU era sub _SOCK_LOCK,
+    # deci doua thread-uri care o chemau simultan la pornire (a11y_selfheal + primul tool)
+    # vedeau amandoua `_SHARED is None` si deschideau CATE O CONEXIUNE -> DOUA dialoguri
+    # "Allow USB debugging" (simptomul raportat: "ma intreaba, ii dau allow, ma intreaba iar").
+    # Acum totul (inclusiv connect()) e sub lock: un singur handshake, un singur Allow.
+    with _SOCK_LOCK:
+        return _shared_locked(host, port, auto)
+
+
+def _shared_locked(host="127.0.0.1", port=None, auto=True):
+    global _SHARED, _SHARED_PID
     pid = os.getpid()
     if _SHARED_PID != pid:
         _SHARED = None
         _SHARED_PID = pid
     if _SHARED is not None and _SHARED.s is not None:
+        # ★ FAZA 4z-A (conexiuni FANTOMA, dovedite pe device): o conexiune poate ramane
+        # ESTABLISHED cu date NECITITE in queue (44 B = raspunsul de autorizare al adbd) dupa
+        # ce handshake-ul a fost abandonat (ex. dialogul "Allow" a venit prea tarziu pentru
+        # timeout-ul vechi). Un astfel de socket NU e "viu" desi select() zice ca are date:
+        # il refolosim => comanda urmatoare citeste restul handshake-ului si iese GUNOI.
+        # De aceea: daca are date in queue, fac un ping REAL; daca nu raspunde, il inchid
+        # CURAT (nu il las in ESTAB ca fantoma) si deschid unul nou.
         try:
             import select as _sel
             r, _, _ = _sel.select([_SHARED.s], [], [], 0)
@@ -277,6 +295,17 @@ def shared(host="127.0.0.1", port=None, auto=True):
                 peek = _SHARED.s.recv(1, 0x02)     # MSG_PEEK
                 if peek == b"":
                     _SHARED = None                  # EOF real
+                else:
+                    # date in queue: fie un raspuns real de citit, fie un handshake abandonat.
+                    # Test ieftin: incerc un ping; daca iese prost, conexiunea e fantoma.
+                    try:
+                        if not _SHARED.ping():
+                            _SHARED.close()
+                            _SHARED = None
+                    except Exception:
+                        try: _SHARED.close()
+                        except Exception: pass
+                        _SHARED = None
         except BlockingIOError:
             pass                                    # EAGAIN: e viu
         except Exception:
