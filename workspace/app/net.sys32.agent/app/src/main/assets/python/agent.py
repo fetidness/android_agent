@@ -790,16 +790,16 @@ def media_rescan():
     except Exception: pass
 def _task_foot(stare="done"):
     media_rescan()   # fisierele noi devin vizibile in file manager
-    """Closes the task: stops the timer and breaks down the total (thinking vs. tool) + the steps + the TOKENS
-    consumed by this task, taken from the server usage accumulated in TASK since _task_head()."""
-    tot=(time.time()-TASK["t0"]) if TASK["t0"] else 0.0
+    """Closes the task: steps/rounds + the tokens of THIS task and of the session,
+    all on ONE line (variant 1)."""
     LIVE.update(phase="idle",desc="",col=None,n=0)
-    ph=TASK["think"]+TASK["tool"]
-    other=max(0.0,tot-ph)   # time NOT covered by any _spin: HTTP request, parsing, compact_history/save_ctx, rounding
-    # Footer MINIMAL: doar "TASK #N done" + steps + total. Tokenii se afiseaza
-    # separat, in blocul de la flush_task_tokens (tok / session tok).
-    b=G+"  ·  "+str(TASK["steps"])+(" tool call" if TASK["steps"]==1 else " tool calls")+" / "+str(TASK["rounds"])+(" round" if TASK["rounds"]==1 else " rounds")+"  ·  total "+C+_dur(tot)+N
-    return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+N+b
+    st=str(TASK["steps"])+(" tool call" if TASK["steps"]==1 else " tool calls")+", "+str(TASK["rounds"])+(" round" if TASK["rounds"]==1 else " rounds")
+    hit=("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"])) if TASK["tok_in"] else "0%"
+    b=G+"    \u25aa tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" \u00b7 hit "+hit
+    si,so=SESS["in"],SESS["out"]
+    sh=("%d%%"%int(100.0*SESS["cache_hit"]/si)) if si else "0%"
+    b+=G+"    \u25aa session tok \u2191"+_K(si)+" \u2193"+_K(so)+" = "+_K(si+so)+" \u00b7 hit "+sh+N
+    return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+" \u00b7 "+st+b
 
 # ==================== MONITOR DE STATUS (0 tokeni, fara API) ====================
 # DE CE EXISTA: operatorul a intrebat daca putem verifica statusul la fiecare minut.
@@ -915,6 +915,9 @@ def _spin(fn,*a,phase="tool",desc="",col=None):
     if phase: LIVE.update(phase=phase,desc=desc,col=col,n=TASK["steps"]+1,t=time.time())
     t0=time.time()
     if VERBOSE[0] or NOSPIN[0] or not sys.stdout.isatty():
+        # No live line in this mode. Clear any residue of the PREVIOUS frame first, otherwise its
+        # "\r+\33[K" could wipe the output _show_step is about to print (VERBOSE prints it).
+        if sys.stdout.isatty(): print("\r\33[K",end="",flush=True)
         r=fn(*a); dt=time.time()-t0; LIVE["dt"]=dt
         if phase=="think": TASK["think"]+=dt
         elif phase=="tool": TASK["tool"]+=dt
@@ -1402,20 +1405,9 @@ def print_usage_compact(usage):
     ROUND_LINES[:]=[line]   # keep only the last round
 
 def flush_task_tokens():
-    """Prints (1) the token line of the last round and (2) the cumulative
-    total for the session. No-op if no round has run."""
-    lines=list(ROUND_LINES)
+    """No-op: the token summary is now printed by _task_foot() on the SAME line as the
+    task footer. Kept so every existing caller stays valid."""
     del ROUND_LINES[:]
-    if not SESS["rounds"] and not lines: return
-    print()   # blank line: the token block is separate from the "TASK #N done" footer above it
-    for ln in lines: print(G+"   "+ln+N)
-    if TASK["tok_in"]: print(G+"   \u25aa this task cache HIT "+("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"]))+" (higher = cheaper)"+N)
-    si,so=SESS["in"],SESS["out"]
-    cum="   \u25aa session tok \u2191%s \u2193%s = %s"%(_K(si),_K(so),_K(si+so))
-    if si: cum+=" \u00b7 hit %d%%"%int(100.0*SESS["cache_hit"]/si)
-    cum+=" \u00b7 %d rds"%SESS["rounds"]
-    print(G+cum+N)
-    print("\n")   # 2 blank lines: separate the token block from the next "TU >" prompt (every caller of this returns to input())
 
 # Lone surrogates are invalid UTF-8 and crash json.dumps in the HTTP layer / get rejected by the API;
 # non-ASCII control chars in tool output (device logs, binary-ish dumps) can break the request too.

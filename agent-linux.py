@@ -700,17 +700,16 @@ def _task_head(q=""):
          BAR+"╰"+"─"*w+"╯"+N]
     return "\n"+"\n".join(box)+"\n\n"+N   # box, then exactly 2 blank lines before the first step
 def _task_foot(stare="done"):
-    """Closes the task: stops the timer and breaks down the total (thinking vs. tool) + the steps + the TOKENS
-    consumed by this task, taken from the server usage accumulated in TASK since _task_head()."""
-    tot=(time.time()-TASK["t0"]) if TASK["t0"] else 0.0
+    """Closes the task: steps/rounds + the tokens of THIS task and of the session,
+    all on ONE line (variant 1)."""
     LIVE.update(phase="idle",desc="",col=None,n=0)
-    ph=TASK["think"]+TASK["tool"]
-    other=max(0.0,tot-ph)   # time NOT covered by any _spin: HTTP request, parsing, compact_history/save_ctx, rounding
-    b=G+"  ·  "+str(TASK["steps"])+(" tool call" if TASK["steps"]==1 else " tool calls")+" / "+str(TASK["rounds"])+(" round" if TASK["rounds"]==1 else " rounds")+"  ·  total "+C+_dur(tot)+N+G+" = thinking "+_dur(TASK["think"])+" + tool "+_dur(TASK["tool"])+" + other "+_dur(other)+N
-    b+=G+"  ·  tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" = "+_K(TASK["tok_in"]+TASK["tok_out"])+" this task"
-    if TASK["tok_in"]: b+=" \u00b7 cache HIT "+("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"]))
-    b+=N
-    return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+N+b
+    st=str(TASK["steps"])+(" tool call" if TASK["steps"]==1 else " tool calls")+", "+str(TASK["rounds"])+(" round" if TASK["rounds"]==1 else " rounds")
+    hit=("%d%%"%int(100.0*TASK["cache"]/TASK["tok_in"])) if TASK["tok_in"] else "0%"
+    b=G+"    \u25aa tok \u2191"+_K(TASK["tok_in"])+" \u2193"+_K(TASK["tok_out"])+" \u00b7 hit "+hit
+    d=_ins_load(); ti=int(d.get("tok_in",0)); to=int(d.get("tok_out",0)); ca=int(d.get("cache_hit",0))
+    sh=("%d%%"%int(100.0*ca/ti)) if ti else "0%"
+    b+=G+"    \u25aa session tok \u2191"+_K(ti)+" \u2193"+_K(to)+" = "+_K(ti+to)+" \u00b7 hit "+sh+N
+    return BAR+"  +-"+N+ST+" TASK #"+str(TASK["n"])+" "+stare+" \u00b7 "+st+b
 
 # ==================== MONITOR DE STATUS (0 tokeni, fara API) ====================
 # DE CE: verificarea periodica PRIN API ar retrimite tot contextul la fiecare check
@@ -802,6 +801,9 @@ def _spin(fn,*a,phase="tool",desc="",col=None):
     if phase: LIVE.update(phase=phase,desc=desc,col=col,n=TASK["steps"]+1,t=time.time())
     t0=time.time()
     if VERBOSE[0] or not sys.stdout.isatty():
+        # VERBOSE: no live line at all. Clear any residue of the PREVIOUS live frame first,
+        # otherwise its "\r+\33[K" could wipe the output _show_step is about to print.
+        if sys.stdout.isatty(): print("\r\33[K",end="",flush=True)
         r=fn(*a); dt=time.time()-t0; LIVE["dt"]=dt
         if phase=="think": TASK["think"]+=dt
         elif phase=="tool": TASK["tool"]+=dt
@@ -1991,19 +1993,9 @@ def print_usage_compact(usage):
     ROUND_LINES[:]=[line]   # keep only the last round
 
 def flush_task_tokens():
-    """Prints (1) the token line of the last round and (2) the cumulative
-    total for the session. No-op if no round has run."""
-    lines=list(ROUND_LINES)
+    """No-op: the token summary is now printed by _task_foot() on the SAME line as
+    the task footer. Kept so every existing caller stays valid."""
     del ROUND_LINES[:]
-    if not SESS["rounds"] and not lines: return
-    print()   # blank line: the token block is separate from the "TASK #N done" footer above it
-    for ln in lines: print(G+"   "+ln+N)
-    si,so=SESS["in"],SESS["out"]
-    cum="   \u25aa session tok \u2191%s \u2193%s = %s"%(_K(si),_K(so),_K(si+so))
-    if si: cum+=" \u00b7 hit %d%%"%int(100.0*SESS["cache_hit"]/si)
-    cum+=" \u00b7 %d rds"%SESS["rounds"]
-    print(G+cum+N)
-    print("\n")   # 2 blank lines: separate the token block from the next "TU >" prompt (every caller of this returns to input())
 def complete_pending(msgs):
     """After Ctrl+C, the last assistant message may declare N tool_calls with answers
     for only some of them; the API requires an answer for EVERY declared call."""
