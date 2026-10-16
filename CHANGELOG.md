@@ -3,9 +3,50 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `b1236a6`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
+> Ultimul commit inclus: `b49dbf3`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
 
 **Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
+
+---
+
+### 2026-10-16 (c) - TOOLCHAIN: Rust reparat complet + self-heal acopera rustc
+
+> **Cerut de operator:** „citeste conversatia agentului android. a intampinat o problema cu rust"
+> apoi „agentul raporteaza ca heal nu acopera si rust".
+
+**Rust - reparație reala (fisierul lipsea fizic din APK)**
+- Cauza: `assets/toolchain/rust-libs.tar` era TRUNCHIAT (264 MB / 184 fisiere, `tar: Unexpected
+  EOF`), fara `librustc_driver-3ed50e27f892bfb5.so` si `libLLVM.so.21.1`. `rustc` e doar un
+  wrapper de 7 KB (`librustc_exec.so`) care are nevoie de driver -> "CANNOT LINK EXECUTABLE".
+- Surse gasite: `agent-full-backup.zip` de pe HDD-ul extern (`/media/gab/STOCARE1`) continea
+  arhiva COMPLETA de 840 MB / 344 fisiere. Compatibilitate verificata: `librustc_exec.so` avea
+  acelasi md5 (`f2731fb8...`) in ambele APK-uri, deci hash-ul cerut se potrivea exact.
+- Fix: arhiva completa inlocuita in assets, APK reconstruit fara Gradle (repack + zipalign +
+  semnare cu acelasi debug keystore), `pm install -r` = Success, re-extragere automata la
+  pornire (mecanismul de semnatura (size,mtime) din `toolchain._ensure_rust`).
+
+**rustc exec direct (regresie introdusa de wrapper-ul de script, reparata)**
+- `rustc` pus ca SCRIPT shell in filesDir NU e executabil de untrusted_app (noexec pe shebang):
+  `cargo` face `exec` DIRECT pe el -> "could not execute process `rustc -vV` ... Permission
+  denied (13)". Selftest-ul trecea (il invoca prin `sh`), deci era un FALS VERDE periculos.
+- Fix: acelasi tipar ca la clang/flang/cython - launcher ELF `libshwrap_exec.so` + logica in
+  `rustc.sh` + binarul real in `rustc-bin`. Aplicat IDENTIC in `files/tmp/` SI `toolchain/bin/`.
+- Bug ascuns gasit la testare: `made.append(...)` folosit in `_ensure_rust` (variabila exista
+  doar in `_ensure_launchers`) -> `NameError` prins de `except: pass`, deci TACUT, oprea
+  executia inainte de crearea `toolchain/bin/rustc`.
+
+**Self-heal acopera acum rustc (lacuna raportata de agent)**
+- Agentul a testat: a rupt `rustc`, a rulat `heal` -> "nothing to repair" desi era rupt.
+  Verificarile de launcheri existente NU includeau rustc.
+- Invariant NOU `("rust_launcher", ...)` in `selfheal.py`: check IEFTIN (stat/readlink, fara
+  subprocess) pe cele 4 cai; semnaleaza `missing` / `dead link` / `rustc is a script`.
+  Fix = `toolchain._ensure_rust()`. Faze: startup, build, error, full.
+
+**Verificare (teste reale pe device, nu declarative)**
+- `rustc --version` -> 1.98.1; `cargo build` -> binar rulat OK; selftest 18/18.
+- Testul dur al agentului reprodus: rupt `rustc` (script) -> heal -> `repaired: ['rust_launcher']`,
+  `unresolved: []`; rupt ambele cai + repornire app -> reparate AUTOMAT la startup.
+- UI: `[self-heal] OK - environment healthy (8 checks, 39 ms)`, fara `UNSOLVED: rust_launcher`.
 
 ---
 

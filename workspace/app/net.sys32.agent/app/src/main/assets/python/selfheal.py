@@ -323,9 +323,50 @@ def _fix_adbkeys():
     return "adb/tls keys"
 
 
+def _chk_rust():
+    """★ LACUNA raportata de agent (testat: a rupt rustc, heal a zis "nothing to repair").
+
+    `cargo` face `exec` DIRECT pe `rustc`; daca `tmp/rustc` e un SCRIPT (nu launcher ELF) sau
+    symlink-ul lui e MORT (nativeLibraryDir schimbat la update de APK) -> "could not execute
+    process `rustc -vV` ... Permission denied (13)". Verificarile de launcheri de mai sus NU
+    acopera rustc, deci mediul parea sanatos. Check IEFTIN: doar stat/readlink, fara subprocess.
+    """
+    tc = _tc()
+    if not tc:
+        return []
+    nat = tc._native_dir() or ""
+    if not nat:
+        return []
+    pr = []
+    # fiecare cale trebuie sa fie un executabil VIU si, pentru launcher, sa duca spre libshwrap
+    for p in (F + "/tmp/rustc", F + "/tmp/rustc-bin",
+              F + "/toolchain/bin/rustc", F + "/toolchain/bin/rustc-bin"):
+        if not os.path.lexists(p):
+            pr.append("missing: " + p)
+            continue
+        if not tc._exec_ok(p):
+            pr.append("dead link: " + p)
+            continue
+        # rustc trebuie sa fie launcher ELF (libshwrap), NU script shell: cargo face exec direct
+        if p.endswith("/rustc") and not os.path.islink(p):
+            pr.append("rustc is a script (cargo exec fails): " + p)
+    return pr
+
+
+def _fix_rust():
+    """Reconstruieste wiring-ul rustc (launcher ELF + script + binar) prin _ensure_rust()."""
+    tc = _tc()
+    try:
+        tc._ensure_rust()
+    except Exception:
+        pass
+    return "rust launcher"
+
+
 # (nume, faze, check, fix)
 INVARIANTS = (
     ("launchers", ("startup", "build", "error", "full"), _chk_launchers, _fix_launchers),
+    ("rust_launcher", ("startup", "build", "error", "full"), _chk_rust, _fix_rust),
     ("shadowed", ("startup", "build", "error", "full"), _chk_shadow, _fix_shadow),
     ("dirs", ("startup", "build", "error", "full"), _chk_dirs, _fix_dirs),
     ("ld_path", ("startup", "build", "error", "full"), _chk_ld, _fix_ld),

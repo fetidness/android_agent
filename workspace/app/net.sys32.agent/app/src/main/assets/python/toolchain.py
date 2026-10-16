@@ -994,7 +994,9 @@ def _ensure_launchers():
                 ("ranlib", "libllvmranlib_exec.so"), ("nm", "libllvmnm_exec.so"),
                 ("strip", "libllvmstrip_exec.so"), ("clang", "libclang_exec.so"),
                 ("clang++", "libclang_exec.so"), ("pkg-config", "libpkgconf_exec.so"),
-                ("maturin", "libmaturin_exec.so"), ("rustc", "librustc_exec.so"),
+                ("maturin", "libmaturin_exec.so"),
+                # ★ "rustc" NU se mai pune aici ca symlink ELF: devine WRAPPER script (vezi
+                # _ensure_rust) care injecteaza linkerul; rustc direct nu citeste RUSTFLAGS.
                 ("cargo", "libcargo_exec.so"), ("flang", "libflang_exec.so"),
                 ("patchelf", "libpatchelf_exec.so"), ("ld.lld", "liblld_exec.so"),
                 # aliasuri llvm-* (numele pe care le cheama cmake/autotools: "llvm-ar: Permission denied")
@@ -2607,6 +2609,24 @@ def _ensure_rust():
     for _nm, _so in (("rustc", "librustc_exec.so"), ("cargo", "libcargo_exec.so")):
         if nat and os.path.exists(nat + "/" + _so):
             _p = F + "/tmp/" + _nm
+            # rustc devine un WRAPPER script (vezi mai jos): NU-l rescriem cu symlink.
+            # Link-ul ELF real sta in rustc-bin, creat aici, si e folosit de wrapper.
+            if _nm == "rustc":
+                _bin0 = F + "/tmp/rustc-bin"
+                # ★ dupa un update de APK, symlink-ul vechi arata spre lib dir-ul VECHI
+                # (dispărut) -> "inaccessible or not found". `lexists` e TRUE pentru un
+                # symlink mort, deci trebuie verificat TARGETUL, nu existenta link-ului.
+                _dead = False
+                if os.path.islink(_bin0):
+                    try: _dead = not os.path.exists(os.readlink(_bin0))
+                    except Exception: _dead = True
+                if _dead:
+                    try: os.remove(_bin0)
+                    except Exception: pass
+                if not os.path.lexists(_bin0):
+                    try: os.symlink(nat + "/" + _so, _bin0)
+                    except Exception: pass
+                continue
             try:
                 _st = False
                 if os.path.islink(_p):
@@ -2620,6 +2640,74 @@ def _ensure_rust():
                     os.symlink(nat + "/" + _so, _p)
             except Exception:
                 pass
+    # ★ wrapper pentru `rustc` INVOCAT DIRECT: rustc NU citeste RUSTFLAGS din mediu (doar
+    # cargo o face), deci fara `-C linker=...` cade cu "linker `cc` not found". Cargo mergea
+    # deja (config.toml); rustc direct nu. Il invelim intr-un script care injecteaza flag-urile
+    # de link (acelasi set ca _rust_link_flags) daca nu sunt deja date de utilizator.
+    try:
+        # ★ FAZA 4k (regresie raportata de agent): `rustc` ca SCRIPT in filesDir NU e executabil
+        # de untrusted_app (noexec pe shebang) -> cargo, care face `exec` DIRECT pe rustc, cadea
+        # cu "could not execute process `rustc -vV` ... Permission denied (13)", desi selftest-ul
+        # (care il invoca prin `sh`) trecea. Fix: acelasi tipar ca la clang/flang/cython -
+        # launcher ELF `libshwrap_exec.so` (executa `sh rustc.sh "$@"`) + logica in `rustc.sh`.
+        _rc = F + "/tmp/rustc-bin"          # binarul real (ELF, symlink in nativeLibraryDir)
+        _want_body = ('#!/system/bin/sh\n'
+                      '# generat de toolchain.py - rustc nu citeste RUSTFLAGS; injectam linkerul\n'
+                      'for a in "$@"; do case "$a" in -C|--emit|-o|linker=*) '
+                      'case "$a" in linker=*) exec ' + _rc + ' "$@";; esac;; esac; done\n'
+                      'exec ' + _rc + ' ' + _rust_link_flags() + ' "$@"\n')
+        _sw = (nat + "/libshwrap_exec.so") if nat else ""
+        # rustc.sh = logica (citibila, dar neexecutabila direct: o citeste launcherul ELF)
+        _shp = F + "/tmp/rustc.sh"
+        if (not os.path.exists(_shp)) or open(_shp).read() != _want_body:
+            open(_shp, "w").write(_want_body)
+        os.chmod(_shp, 0o755)
+        _p = F + "/tmp/rustc"
+        if _sw and os.path.exists(_sw):
+            # launcher ELF -> executabil si de cargo (exec direct), nu doar prin sh
+            _ok = os.path.islink(_p) and os.path.exists(os.readlink(_p)) and os.readlink(_p) == _sw
+            if not _ok:
+                if os.path.lexists(_p): os.remove(_p)
+                os.symlink(_sw, _p)
+        else:
+            if os.path.lexists(_p): os.remove(_p)
+            open(_p, "w").write(_want_body); os.chmod(_p, 0o755)
+        # ★ ACEEASI poveste in toolchain/bin (e in PATH-ul agentului): `bin/rustc` trebuie sa fie
+        # wrapper-ul, iar ELF-ul real in bin/rustc-bin. Altfel cel care cheama `rustc` din PATH
+        # ocoleste injectarea linkerului -> "linker `cc` not found".
+        try:
+            _bcd = F + "/toolchain/bin"
+            os.makedirs(_bcd, exist_ok=True)   # BIN e creat mai tarziu in _ensure_launchers; aici il pre-creem
+            if os.path.isdir(_bcd):
+                _bb = _bcd + "/rustc-bin"
+                _dead2 = False
+                if os.path.islink(_bb):
+                    try: _dead2 = not os.path.exists(os.readlink(_bb))
+                    except Exception: _dead2 = True
+                if _dead2:
+                    try: os.remove(_bb)
+                    except Exception: pass
+                if not os.path.lexists(_bb) and nat and os.path.exists(nat + "/librustc_exec.so"):
+                    os.symlink(nat + "/librustc_exec.so", _bb)
+                _bp = _bcd + "/rustc"
+                _body_b = _want_body.replace(_rc, _bb)
+                # si aici launcher ELF (nu script): acelasi motiv ca la files/tmp/rustc
+                _shb = _bcd + "/rustc.sh"
+                if (not os.path.exists(_shb)) or open(_shb).read() != _body_b:
+                    open(_shb, "w").write(_body_b)
+                os.chmod(_shb, 0o755)
+                if _sw and os.path.exists(_sw):
+                    _okb = os.path.islink(_bp) and os.readlink(_bp) == _sw
+                    if not _okb:
+                        if os.path.lexists(_bp): os.remove(_bp)
+                        os.symlink(_sw, _bp)
+                else:
+                    if os.path.lexists(_bp): os.remove(_bp)
+                    open(_bp, "w").write(_body_b); os.chmod(_bp, 0o755)
+        except Exception:
+            pass
+    except Exception:
+        pass
     # librustc_driver refera std::__ndk1::* (libc++). Daca NU are deja NEEDED
     # libc++_shared.so (patch cu patchelf la impachetare), singura cale de a-l incarca
     # e LD_PRELOAD - si doar pentru procesele Rust, ca sa nu atingem clang-ul.
@@ -3320,10 +3408,20 @@ def selftest():
     if rs and os.path.exists(rsc):
         t0 = time.time()
         try:
-            p = subprocess.run([rsc, "--edition", "2021", "-o", T + "/t_rust", rs,
-                                "-C", "linker=" + F + "/tmp/clang",
-                                "-C", "link-arg=--target=aarch64-linux-android%d" % api,
-                                "-C", "link-arg=--sysroot=" + ROOT + "/sysroot"],
+            # ★ CAPCANA (regresie prinsa de selftest): `tmp/rustc` e un SCRIPT shell (wrapper
+            # care injecteaza linkerul - rustc nu citeste RUSTFLAGS), iar Android NU executa
+            # scripturi cu shebang din filesDir (noexec) -> PermissionError(13). Deci il rulam
+            # prin /system/bin/sh. Pentru un vechi symlink ELF (fara wrapper) il rulam direct.
+            try:
+                _is_script = open(rsc, "rb").read(2) == b"#!"
+            except Exception:
+                _is_script = False
+            _cmd = ["/system/bin/sh", rsc] if _is_script else [rsc]
+            # wrapper-ul injecteaza singur -C linker; flag-urile le dam doar la ELF direct
+            _extra = [] if len(_cmd) == 2 else ["-C", "linker=" + F + "/tmp/clang",
+                        "-C", "link-arg=--target=aarch64-linux-android%d" % api,
+                        "-C", "link-arg=--sysroot=" + ROOT + "/sysroot"]
+            p = subprocess.run(_cmd + ["--edition", "2021", "-o", T + "/t_rust", rs] + _extra,
                                cwd=T, capture_output=True, text=True, timeout=1200,
                                env=rust_env(), stdin=subprocess.DEVNULL)
             r["rust"] = bool(p.returncode == 0 and os.path.exists(T + "/t_rust"))
