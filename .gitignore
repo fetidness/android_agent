@@ -84,3 +84,6 @@ workspace/app/net.sys32.agent/app/src/main/assets/android_build/
 
 # backup-uri locale (generate de agent la editari)
 *.bak_*
+
+# ---- ledger de consum (date de runtime, se scrie la fiecare runda) ----
+insights.json

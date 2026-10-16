@@ -3,9 +3,48 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `f4f72b4`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
+> Ultimul commit inclus: `b1236a6`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
 
 **Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
+
+---
+
+### 2026-10-16 - contorul de SESIUNE corect + footer compact (ambele agenti)
+
+> **Cerut de operator:** „verifica agent-linux.py de ce imi scrie session tok ↑29.74M ... cand eu
+> abia am pornit sesiunea", apoi „vreau sa fie afisat DOAR pentru sesiunea curenta deci cand dau
+> /reset ar trebui sa o ia de la 0", apoi „fa footerul mai mic pe android ca e scrisul prea mare".
+
+**Bug gasit si reparat - `session tok` arata totalul ISTORIC, nu sesiunea**
+- In `agent-linux.py`, `_task_foot()` citea cifra din `_ins_load()` (`insights.json`), adica
+  ledgerul persistent cumulat din 15 octombrie (29.79M), nu sesiunea curenta. Aparea un total
+  enorm chiar la prima comanda dupa pornire. Eticheta „session" era deci mincinoasa.
+- Fix: footer-ul foloseste acum `SESS` (contorul real al sesiunii, acumulat in
+  `print_usage_compact`). In `agent.py` (Android) footer-ul era deja corect - nu avea bug-ul.
+
+**Contorul de sesiune supravietuieste repornirii, dar /reset il aduce la zero (NOU)**
+- Persistenta in `insights.json` sub cheia separata `"session"` (ledgerul istoric rămâne intact).
+- `_sess_save()` / `_sess_load()`: salvate la fiecare runda, restaurate la pornire
+  (`SESS.update(_sess_load())`). In `agent.py` incarcarea ruleaza DUPA definirea helperilor
+  (INSIGHTS_FILE e mai jos in fisier decat SESS) - altfel `NameError`.
+- `/reset` face `SESS.update(...)` + `_sess_save()`: zero in memorie SI pe disc.
+
+**Footer compact, wrap-safe (NOU)**
+- Pe ecran de telefon fontul monospace de 15sp incape ~34-38 caractere; footer-ul pe un rand
+  (122 caractere) se rupea haotic. Acum: header pe rand propriu + `tok` / `sess` pe randuri
+  aliniate (`#1 done`, `tools`, `rnd`, `tok`, `sess`). Fiecare rand <= 36 caractere.
+- Linie goala intre footer si prompt. Aplicat IDENTIC in `agent-linux.py` si `agent.py`.
+
+**Verificare**
+- Ambele fisiere: `py_compile` OK; test end-to-end (restart -> supravietuieste; `/reset` ->
+  zero; ledger istoric intact dupa ambele).
+- Android: APK reconstruit fara Gradle (repack `assets/python/agent.py` + zipalign + semnare cu
+  acelasi debug keystore `68244d4c...`), `pm install -r` = Success, verificat VIZUAL pe Samsung
+  SM-A366B (capturi): footer pe 3 randuri, ZERO rupere, `session` persistat in `insights.json`.
+
+**Curatenie**
+- `insights.json` scos din git (`git rm --cached`) si adaugat in `.gitignore`: e ledger de
+  consum scris la fiecare runda, nu cod - nu are ce cauta in istoric.
 
 ---
 
