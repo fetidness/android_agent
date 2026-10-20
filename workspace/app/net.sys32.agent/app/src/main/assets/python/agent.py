@@ -1161,6 +1161,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) OR a local path/.tar.gz/URL on the device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
+{"type": "function", "function": {"name": "terminal", "description": "LINUX TERMINAL real in aplicatie (bash in Debian, pty adevarat - nu pipe). Deschide terminal cu sesiuni multiple, culori ANSI, vim/htop/nano functionale. Actions: open (deschide terminalul; uid2000=true pentru shell Android uid 2000), run (cmd=: executa in Debian si intoarce output), list (sesiuni), kill (inchide toate).", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["open", "run", "list", "kill"]}, "cmd": {"type": "string", "description": "pentru run: comanda de executat"}, "uid2000": {"type": "boolean", "description": "true = shell Android uid 2000 (pm/dumpsys/settings); false = Debian root"}, "timeout": {"type": "integer", "description": "secunde pentru run (implicit 120)"}}, "required": ["action"]}}},
    {"type":"function","function":{"name":"build_apk","description":"COMPILES AN ANDROID APK ON THE DEVICE, FULLY OFFLINE (no PC). Uses Gradle+AGP+JDK+aapt2+cmake+NDK, all bundled in the APK. Actions: setup (extracts the tools from assets into filesDir, once - run it first; it also self-tests java+aapt2); build (compiles an Android project from <dir> -> APK, runs preflight and automatically PUBLISHES the APK to /sdcard/Download/Agent/workspace/; params: dir=project path, task=assembleDebug default); verify (checks an existing APK: params: apk=path); install (installs the APK WITHOUT a PC: tries publish -> /data/local/tmp -> pm install as shell uid=2000; if adb is not authorised it opens the SYSTEM INSTALLER on the phone (one tap, no adb); params: apk=path OR dir=project); selftest (checks that java+aapt2 really run, heals a missing libX.so.N by itself). Ex: build_apk action=build dir=/path/to/android_project, then build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"the Android project path (for build)"},"apk":{"type":"string","description":"the APK path (for verify/install; for install you may also pass dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"read","description":"Read a FILE in chunks (paginate). Use this to read the parts of a large file or a truncated tool log that were not shown in the window. Returns a header with the exact byte range and, if not at EOF, the next command to continue with.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path (absolute, or relative to the working directory)"},"offset":{"type":"integer","description":"byte offset to start at (default 0)"},"limit":{"type":"integer","description":"max bytes to return (default 4000, max 20000)"}},"required":["path"]}}},
    {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small. Do NOT bundle heavy/crashable pipelines here (a failure must stay isolated).","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"help","description":"Return the FULL guide for an advanced Android topic, on demand - the detailed reflection/objects reference is kept OUT of the fixed prompt to save tokens and delivered here instead. Topics: \"reflection\" (eval ops: services/info/call/new/get/set/objs, targets svc:/class:/obj:/ctx/app, how to pass object refs), \"objects\" (proxy vs subclass for callbacks, await/events, getSystemService, Executor), \"privileged\" (capture/vpn/guard detail), \"all\" (everything). Call it the moment the native shortcuts are not enough.","parameters":{"type":"object","properties":{"topic":{"type":"string","description":"reflection | objects | privileged | all"}},"required":["topic"]}}},{"type":"function","function":{"name":"moa","description":"Ask the model SEVERAL independent times on a HARD question and synthesize the best answer (self-consistency). Costs N+1 model calls: use ONLY when a wrong answer is expensive, never for routine work.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"the question to answer independently N times"},"context":{"type":"string","description":"optional context"},"n":{"type":"integer","description":"independent attempts (default 3)"}},"required":["question"]}}},{"type":"function","function":{"name":"delegate","description":"Spawn an ISOLATED subagent on a self-contained goal and get back only its short report - the parent never sees the child steps, so a long investigation costs almost no context. Use for independent research/checks you do not want polluting this conversation. Pass tasks=[{goal,context},...] to run SEVERAL in PARALLEL, or goal=<string> for one.","parameters":{"type":"object","properties":{"goal":{"type":"string","description":"one self-contained goal (single subagent)"},"context":{"type":"string","description":"optional facts the subagent needs"},"tasks":{"type":"array","description":"several subagents in PARALLEL","items":{"type":"object","properties":{"goal":{"type":"string"},"context":{"type":"string"}}}}}}}},{"type":"function","function":{"name":"run_code","description":"Programmatic Tool Calling: write ONE Python script that calls your OWN tools as functions - python(code), bash(cmd), smart(arg), read(arg), multi(list), skill(name), todo(dict), android({tool,action,params}), adbsh(cmd) - and prints a summary. Collapses a multi-step chain into a SINGLE step: only stdout returns, saving a lot of context on 5+ step jobs. Cap: 50 nested calls.","parameters":{"type":"object","properties":{"code":{"type":"string","description":"the Python script; call tools as functions and print() what you need"}},"required":["code"]}}},{"type":"function","function":{"name":"todo","description":"Maintain a TASK LIST for multi-step work: pass todos=[{content,status}] to write (status: pending|in_progress|completed|cancelled), omit todos to read. The list survives context compression and is re-injected, so use it to keep your plan on long tasks.","parameters":{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed","cancelled"]}}}},"merge":{"type":"boolean","description":"merge into the existing list instead of replacing it"}}}}},{"type":"function","function":{"name":"skill","description":"Load a saved SKILL by name and return its FULL body (or action=\"list\" to see the index). USE THIS whenever the SKILLS index in the prompt shows a skill that is even partially relevant to the task: it gives you the exact commands and pitfalls that a past session already worked out ON THIS DEVICE. Reading a skill beats improvising. Do NOT guess the path - pass the name.","parameters":{"type":"object","properties":{"name":{"type":"string","description":"the skill name exactly as shown in the SKILLS index (e.g. device-audit)"},"action":{"type":"string","description":"optional: \"list\" to return the skills index instead of a body","enum":["list"]}}}}}]
@@ -2448,6 +2449,8 @@ def _call_tool_inner(c):
         return bg_tool(a)
     if fn=="adbsh":
         return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
+    if fn=="terminal":
+        return run_terminal_tool(a)
     if fn=="toolchain":
         return run_toolchain_tool(a)
     if fn=="build_apk":
@@ -3658,6 +3661,229 @@ def _uses_python_h(path):
         return False
 
 
+_ADB_LOCK = None
+
+
+def _adb():
+    """client ADB intern, cu verificare IEFTINA a socket-ului.
+
+    ★ Doua capcane reale, in ordine:
+      1. `is_socket_healthy()` trimite un `echo` de test la FIECARE apel => 2 comenzi
+         ADB per comanda de terminal => lentoare de 10 s si dialog "Allow USB
+         debugging" repetat. NU se foloseste.
+      2. Fara NICIO verificare, socket-ul moare dupa ~1 min de inactivitate si
+         `shared()` intoarce obiectul cu `s = None` => `AttributeError: 'NoneType'
+         object has no attribute 'sendall'` (reprodus acum in UI).
+    Solutia: verificare de STARE (fara I/O), apoi reconectare doar daca e moarta.
+    """
+    import adb_client
+    global _ADB_LOCK
+    if _ADB_LOCK is None:
+        import threading
+        _ADB_LOCK = threading.Lock()
+    with _ADB_LOCK:
+        a = adb_client.shared()
+        dead = False
+        try:
+            dead = (a is None) or (getattr(a, "s", None) is None) or \
+                   bool(getattr(a.s, "_closed", False))
+            if not dead:
+                # socket inchis de adbd: fileno -1 sau select gata cu 0 bytes
+                import select as _sel
+                fd = a.s.fileno()
+                if fd < 0:
+                    dead = True
+        except Exception:
+            dead = True
+        if dead:
+            try:
+                adb_client.close_shared()
+            except Exception:
+                pass
+            a = adb_client.shared()
+        return a
+
+
+def run_in_debian(cmd, timeout=120, uid2000=False):
+    """Ruleaza o comanda in Debian (rootfs /data/local/tmp) sau ca uid 2000.
+
+    ★ DE CE PRIN ADB (dovada pe device, 2026-10-20):
+      /data/data este montat NOEXEC:
+        tmpfs /data/data tmpfs rw,nosuid,nodev,noexec,...
+      iar untrusted_app nu poate execve binarare din app_data_file (W^X).
+      `c.shell()` trimite comanda la adbd, care o executa ca uid 2000
+      (u:r:shell:s0) - deci execve-ul il face ADBD, nu aplicatia. Nu e un
+      workaround: e singura cale corecta fara root.
+    """
+    import shlex
+    c = _adb()
+    # ★ DETECTIE AUTOMATA (cerut de operator: "apt install da eroare"):
+    # uid 2000 = Android (/system/bin: pm, dumpsys, getprop, settings, am, input)
+    # Debian   = rootfs (/usr/bin: apt, ls, cat, python, nano, git, vim...)
+    # Daca operatorul scrie o comanda Debian in modul uid2000, o rulam in Debian
+    # (altfel "apt: inaccessible or not found" - confuz si inutil).
+    if uid2000 and cmd.strip():
+        first = cmd.strip().split()[0]
+        ANDROID_CMDS = {"pm", "dumpsys", "getprop", "setprop", "settings", "am", "input",
+                        "svc", "cmd", "wm", "screencap", "screenrecord", "logcat",
+                        "uiautomator", "appops", "content", "id", "whoami", "ps",
+                        "top", "kill", "killall", "date", "df", "du", "ls", "cat",
+                        "echo", "netstat", "ifconfig", "ip", "ping", "toybox",
+                        "sh", "getevent", "dmesg", "monkey", "dalvikvm"}
+        DEBIAN_HINTS = {"apt", "apt-get", "dpkg", "python3", "python", "pip", "pip3",
+                        "nano", "vim", "vi", "emacs", "git", "make", "gcc", "g++",
+                        "curl", "wget", "ssh", "scp", "tar", "gzip", "unzip",
+                        "systemctl", "useradd", "passwd", "crontab"}
+        if first in DEBIAN_HINTS:
+            uid2000 = False
+    if uid2000:
+        # ★ `adb_client.shell()` trimite `shell,v2,raw:<cmd>`, iar adbd EXECUTA
+        # comanda direct (nu prin `sh -c`). Fara înveliș, `id -u` devenea
+        # execve("id") -> "/system/bin/sh: inaccessible or not found". Deci
+        # împachetăm explicit în `sh -c`.
+        # ★ CRITIC: adbd despacheteaza `shell,v2,raw:<service>` si SPARGE pe spatii,
+        # dand bucatile ca argv separate. Deci `sh -c id -u` devine argv=["id","-u"]
+        # -> "sh: -u: inaccessible or not found", iar nonce-ul ajunge tot argv.
+        # Solutia dovedita: comanda trece ca BASE64 (o singura bucata, fara spatii)
+        # si e decodata in sh:  echo <b64> | base64 -d | sh
+        import base64 as _b64
+        b = _b64.b64encode(cmd.encode()).decode()
+        return c.shell("echo " + b + " | base64 -d | /system/bin/sh", timeout=timeout) or ""
+    full = (
+        "/data/local/tmp/libproot_exec.so -0 -r /data/local/tmp/debian -w /root "
+        "--link2symlink --sysvipc --kernel-release=6.1.0-debian "
+        "--bind=/dev --bind=/proc --bind=/sys "
+        "/usr/bin/env -i "
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
+        "HOME=/root TERM=xterm-256color LANG=C.UTF-8 "
+        "/bin/bash -c \"echo %s | base64 -d | /bin/bash\""
+        % base64.b64encode(cmd.encode()).decode()
+    )
+    return c.shell(full, timeout=timeout) or ""
+
+
+_TERM_WORKER_STARTED = [False]
+
+
+def _terminal_file_worker():
+    """Thread care supravegheaza files/tmp/term_in.txt (scris de UI) si executa
+    comenzile in Debian, scriind rezultatul in files/tmp/term_out_<sid>.txt.
+
+    FORMAT term_in.txt (3 linii, scris de TerminalClient.kt):
+        linia 1: "0" (Debian root) sau "1" (uid 2000)
+        linia 2: session id (int)
+        linia 3: comanda (poate contine orice, inclusiv spatii)
+
+    ★ De ce fisiere: untrusted_app nu poate execve nimic (/data/data e NOEXEC si
+    SELinux W^X), deci executia trebuie sa treaca prin adb_client - care exista
+    doar in procesul agentului.
+    """
+    import time as _t
+    home = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    inn = os.path.join(home, "tmp", "term_in.txt")
+    last = ""
+    while True:
+        try:
+            _t.sleep(0.25)
+            if not os.path.exists(inn):
+                continue
+            try:
+                with open(inn, "r", errors="replace") as f:
+                    content = f.read()
+            except Exception:
+                continue
+            if not content.strip():
+                continue
+            # ★ fiecare comanda are un ID unic (linia 4), deci aceeasi comanda
+            # repetata (`ls` de doua ori) este executata de fiecare data.
+            # Comparatia de continut bloca reluarea aceleiasi comenzi.
+            if content == last:
+                continue
+            last = content
+            lines = content.rstrip("\n").split("\n")
+            if len(lines) < 3:
+                continue
+            # ★ EXACT 3 linii: flag / sid / comanda. Linia a 4-a este NONCE-ul pus
+            # de UI ca sa forteze re-executarea aceleiasi comenzi - daca o includem
+            # in comanda, bash incearca sa execute nonce-ul
+            # ("sh: <stdin>[3]: 1792...: inaccessible or not found").
+            flag, sid, cmd = lines[0].strip(), lines[1].strip(), lines[2].strip()
+            if not cmd:
+                continue
+            uid2000 = flag == "1"
+            sid = sid or "1"
+            out = os.path.join(home, "tmp", "term_out_%s.txt" % sid)
+            prompt = "uid2000:~$ " if uid2000 else "root@debian:~# "
+            try:
+                res = run_in_debian(cmd, timeout=300, uid2000=uid2000)
+            except Exception as _e:
+                res = "[eroare] %s: %s" % (type(_e).__name__, _e)
+            # ★ formatarea: comanda pe o linie, output-ul pe liniile urmatoare
+            # (cerut de operator: rezultatul sa fie JOS, nu continuat dupa comanda)
+            body = (res or "").rstrip("\n")
+            chunk = prompt + cmd + "\n"
+            if body:
+                chunk += body + "\n"
+            chunk += "\n"
+            try:
+                with open(out, "a", errors="replace") as f:
+                    f.write(chunk)
+            except Exception:
+                pass
+        except Exception:
+            _t.sleep(1)
+
+
+def _start_terminal_worker():
+    if _TERM_WORKER_STARTED[0]:
+        return
+    _TERM_WORKER_STARTED[0] = True
+    try:
+        import threading
+        threading.Thread(target=_terminal_file_worker, daemon=True).start()
+    except Exception:
+        pass
+
+
+def run_terminal_tool(a):
+    """Tool `terminal`: comenzi in Debian (root) sau shell Android uid 2000."""
+    act = (a.get("action") or "run").lower()
+    cmd = a.get("cmd") or ""
+    uid2000 = bool(a.get("uid2000"))
+    timeout = int(a.get("timeout") or 120)
+
+    if act == "status":
+        c = _adb()
+        try:
+            who = c.shell("id -u", timeout=20).strip()
+            ver = run_in_debian("cat /etc/debian_version", timeout=30).strip()
+            n = run_in_debian("ls /usr/bin | wc -l", timeout=30).strip()
+            return json.dumps({"adb_uid": who, "debian": ver, "binaries": n}, indent=1)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    if act == "open":
+        try:
+            args = ["am", "start", "-n", "net.sys32.agent/.LinuxTerminalActivity"]
+            if uid2000:
+                args += ["-e", "uid2000", "true"]
+            subprocess.run(args, capture_output=True, timeout=20)
+            return "[terminal] deschis"
+        except Exception as e:
+            return "[terminal] open failed: %s" % e
+
+    if act in ("run", "exec", ""):
+        if not cmd:
+            return "[terminal] cmd lipseste (ex: action=run cmd='uname -a')"
+        try:
+            out = run_in_debian(cmd, timeout=timeout, uid2000=uid2000)
+        except Exception as e:
+            return "[terminal] eroare: %s: %s" % (type(e).__name__, e)
+        if not out.strip():
+            return "(comanda a rulat, fara output)"
+        return out[-8000:]
+
+    return "[terminal] actiuni: status | run | open (cmd=..., uid2000=true)"
 def run_toolchain_tool(a):
     """Toolchain nativ de compilare pe telefon (clang, pip, meson...)."""
     import subprocess as _sp
@@ -4820,6 +5046,27 @@ if __name__ == "__main__":
         # ★ FIX CRITIC: fara stub-urile NDK (sysroot) in LD_LIBRARY_PATH - altfel
         # orice proces copil (pip/build backend/setuptools) moare cu SIGSEGV (-11).
         os.environ["LD_LIBRARY_PATH"] = _clean_ld(":".join(_partsS))
+        # ★ SURSA UNICA pentru procesele copil (terminal_server, proot, bash):
+        # scriem LD_LIBRARY_PATH-ul final intr-un fisier, ca sa-l foloseasca EXACT
+        # acelasi mediu ca agentul. Fara asta, copiii reconstruiau alt LD si proot
+        # cadea cu `execve: Permission denied`.
+        try:
+            with open(os.path.join(_FdS, "ld_path.txt"), "w") as _ldf:
+                _ldf.write(os.environ["LD_LIBRARY_PATH"])
+        except Exception:
+            pass
+        # ★ TERMINAL: pornim serverul ACUM, dupa ce mediul (LD_LIBRARY_PATH) e
+        # scris in ld_path.txt - altfel copilul pornea cu mediu incomplet si proot
+        # cadea cu `execve: Permission denied`.
+        try:
+            _ensure_terminal_server()
+        except Exception:
+            pass
+        # ★ canalul UI <-> agent pentru terminal (fisiere in files/tmp)
+        try:
+            _start_terminal_worker()
+        except Exception:
+            pass
         # ★ (cerut de operator): linia de diagnostic NU se mai afiseaza in UI la pornire.
         if os.environ.get("AGENT_VERBOSE"):
             print("[pas2] PATH aplicat: " + os.environ.get("PATH", "")[:80])

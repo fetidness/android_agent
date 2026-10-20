@@ -716,6 +716,27 @@ class Adb:
             txt = "[adb] command exceeded %ss (the process may still run in the background)" % int(timeout)
         return txt
 
+    # ---------------------------------------------------------------- STREAMING
+    def open_stream(self, cmd):
+        """Deschide o sesiune shell PERSISTENTA (pentru terminal interactiv).
+
+        Returneaza (lid, reader) unde reader are .read(timeout) / .write(bytes) / .close().
+        Protocoale ADB: A_OPEN o data, apoi A_WRTE in ambele sensuri (stdin/stdout).
+        Folosit de terminal_server pentru pty-ul din aplicatie.
+        """
+        self.lid += 1
+        lid = self.lid
+        with _SOCK_LOCK:
+            try:
+                import select as _sel
+                r, _, _ = _sel.select([self.s], [], [], 0)
+                if r:
+                    self._drain()
+            except Exception:
+                pass
+            self._send(A_OPEN, lid, 0, ("shell,v2,raw:" + cmd).encode() + b"\0")
+        return lid, _AdbStream(self, lid)
+
     def ping(self):
         """Verifica daca sesiunea adb e inca sanatoasa (fara sa lase reziduuri)."""
         try:
@@ -728,3 +749,76 @@ if __name__ == "__main__":
     a = Adb(); a.connect()
     for c in ["id", "getprop ro.product.model"]:
         print(f"\n$ {c}\n{a.shell(c)}", flush=True)
+
+
+class _AdbStream:
+    """Sesiune ADB persistenta: citire/scriere continua (terminal interactiv)."""
+
+    def __init__(self, adb, lid):
+        self.adb = adb
+        self.lid = lid
+        self.closed = False
+        self.buf = b""
+
+    def write(self, data):
+        if self.closed:
+            return
+        try:
+            with _SOCK_LOCK:
+                self.adb._send(A_WRTE, self.lid, self.lid, data)
+        except Exception:
+            self.closed = True
+
+    def read(self, timeout=0.5):
+        """intoarce bytes noi (stdout+stderr demultiplexat) sau b"" la timeout."""
+        if self.closed:
+            return b""
+        out = b""
+        import time as _t
+        end = _t.time() + timeout
+        try:
+            while _t.time() < end:
+                with _SOCK_LOCK:
+                    try:
+                        c, a0, a1, d = self.adb._recv(max(0.05, end - _t.time()))
+                    except Exception:
+                        break
+                if a1 != self.lid:
+                    continue
+                if c == A_WRTE:
+                    out += _demux_v2(d)
+                    with _SOCK_LOCK:
+                        try:
+                            self.adb._send(A_OKAY, self.lid, self.lid)
+                        except Exception:
+                            pass
+                elif c == A_CLSE:
+                    self.closed = True
+                    break
+                elif c == A_OKAY:
+                    continue
+        except Exception:
+            pass
+        return out
+
+    def close(self):
+        self.closed = True
+        try:
+            with _SOCK_LOCK:
+                self.adb._send(A_CLSE, self.lid, self.lid)
+        except Exception:
+            pass
+
+
+def _demux_v2(data):
+    """extrage payload-ul din substream-urile shell-v2 (1=stdout, 2=stderr, 3=exit)."""
+    out = b""
+    i = 0
+    while i + 5 <= len(data):
+        st = data[i]
+        ln = int.from_bytes(data[i + 1:i + 5], "little")
+        payload = data[i + 5:i + 5 + ln]
+        if st in (1, 2):
+            out += payload
+        i += 5 + ln
+    return out

@@ -148,6 +148,8 @@ class MainActivity : AppCompatActivity() {
         }
         val btnFontMinus = miniBtn("A-", "#ABB2BF") { changeFontSize(-1f) }
         val btnFontPlus  = miniBtn("A+", "#ABB2BF") { changeFontSize(+1f) }
+        // Desktop Debian (proot + Xtigervnc): GUI integrat, client RFB propriu
+        val btnDesktop = miniBtn("TERMINAL", "#98C379") { openTerminal() }
         // bannerul mutat din terminal in bara: ⚡ AGENT DeepSeek + linia de ajutor
         val banner = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -175,6 +177,7 @@ class MainActivity : AppCompatActivity() {
         bar.addView(btnFontMinus, LinearLayout.LayoutParams(-2, -2))
         bar.addView(fontLabel, LinearLayout.LayoutParams(-2, -2))
         bar.addView(btnFontPlus, LinearLayout.LayoutParams(-2, -2))
+        bar.addView(btnDesktop, LinearLayout.LayoutParams(-2, -2))
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))    // bara sta SUS
 
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -838,6 +841,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Porneste efectiv motorul: assets, bridge, python, serviciu. O SINGURA DATA. */
+    /** Deschide terminalul LINUX real (bash in Debian prin pty). */
+    fun openTerminal() {
+        try {
+            startActivity(Intent(this, LinuxTerminalActivity::class.java))
+        } catch (e: Exception) {
+            appendAnsi("\n[terminal] cannot open: ${e.message}\n")
+        }
+    }
+
     private fun startCore() {
         if (coreStarted) return
         coreStarted = true
@@ -1039,6 +1051,7 @@ class MainActivity : AppCompatActivity() {
         // punem la loc memoria salvata (daca exista); altfel ramane cea din APK
         if (memSaved != null) memFile.writeText(memSaved)
         try { extractToolchain() } catch (_: Exception) {}
+            try { extractProotAssets() } catch (_: Exception) {}
         stamp.writeText(want)
         // curatam stampila veche (hardcodata), ca sa nu ramana pe disc
         try { legacy.delete() } catch (_: Exception) {}
@@ -1070,6 +1083,38 @@ class MainActivity : AppCompatActivity() {
 
     /** ★ Extrage toolchain-ul nativ (clang-21, lld, binutils, sysroot) si il face executabil.
      *  AAPT pierde bitul de executie la ambalare → chmod 755 obligatoriu pe bin/. */
+    /**
+     * Extrage desktopul Debian (proot): scriptul de start + rootfs-ul comprimat.
+     * Rootfs-ul (~86 MB zstd) NU se dezarhiveaza aici: un tar zstd dureaza zeci de
+     * secunde si ar bloca pornirea. Il lasam in files/proot si `proot_tool.py install`
+     * il extrage o singura data, in background, cand operatorul cere desktopul.
+     */
+    private fun extractProotAssets() {
+        val dest = File(filesDir, "proot")
+        val stamp = File(dest, ".stamp")
+        val want = assetsStampValue()
+        try {
+            if (stamp.exists() && stamp.readText() == want &&
+                File(dest, "trixie-arm64.tar.zst").exists()) return
+        } catch (_: Exception) {}
+        dest.mkdirs()
+        fun copyDir(path: String, out: File) {
+            val list = assets.list(path) ?: return
+            if (list.isEmpty()) {
+                out.parentFile?.mkdirs()
+                assets.open(path).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+            } else {
+                out.mkdirs()
+                for (child in list) copyDir(if (path.isEmpty()) child else "$path/$child", File(out, child))
+            }
+        }
+        try {
+            copyDir("proot", dest)
+            File(dest, "debian_x.sh").setExecutable(true, false)
+            stamp.writeText(want)
+        } catch (_: Exception) {}
+    }
+
     private fun extractToolchain() {
         val dest = File(filesDir, "toolchain")
         // ★ NU sterge ce a construit AGENTUL pe device: files/toolchain/git (git 2.47.1 + dropbear,

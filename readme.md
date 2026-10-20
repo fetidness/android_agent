@@ -2,6 +2,106 @@
 
 > **Stare 2026-10-15 (b):** peste optimizarile Hermes s-a adaugat **modul SAFE** - zavor nou de scriere in `agent.py` pentru partitiile de sistem (`/system`,`/vendor`,`/etc`,`/proc`,`/sys`,`/dev/block`,`/data/system`,`/data/misc`,`/data/adb`,`/apex`,`/product`,`/odm`,`/boot`) si anti-evaziune pe cai CONSTRUITE din variabile (`_WRITE_VAR_RX` + `_SENSITIVE_HINT`). Comportament nou: **SAFE = REFUZ (galben)**, operatorul poate debloca cu `/unsafe`; in `/unsafe` comanda hardline e executata cu linie de audit rosie `[UNSAFE]`. Cod mort sters (`_compact_history_DISABLED`, 32 linii) + `agent.py` marcat executabil (755). Detalii: `CHANGELOG.md` 2026-10-15 (b) si Etapa 94 mai jos.
 
+> **Stare 2026-10-20:** aplicatia are acum un **TERMINAL LINUX REAL in UI** (Debian 13.7 arm64
+> nativ prin proot, rootfs in `/data/local/tmp/debian`). GUI/VNC/LXDE/LXQt au fost **eliminate**
+> la cererea operatorului (nu va folosi desktop grafic pe telefon). Vezi sectiunea
+> "TERMINAL LINUX (2026-10-20)" si `CHANGELOG.md` 2026-10-20.
+
+## 🖥 TERMINAL LINUX (2026-10-20) - ARHITECTURA
+
+Butonul **TERMINAL** din bara aplicatiei deschide `LinuxTerminalActivity`: tab-uri multiple,
+camp de scris, bara de taste redusa (`CTRL` `TAB` `ESC`). Comenzile ruleaza in **Debian 13.7
+arm64** (rootfs nativ, zero emulare) sau ca **uid 2000** - alese AUTOMAT dupa comanda.
+
+```
+UI (Kotlin)  --scrie-->  files/tmp/term_in.txt
+                              |  (flag / sid / comanda / nonce)
+                        agent.py: _terminal_file_worker()
+                              |
+                        adb_client.shared().shell()
+                              |
+                        adbd (uid 2000, u:r:shell:s0)   <-- aici se face execve-ul
+                              |
+                    proot -0 -r /data/local/tmp/debian
+                              |
+                    bash in Debian   /   /system/bin/sh (uid 2000)
+                              |
+UI (TextView) <--citeste-- files/tmp/term_out_<sid>.txt
+```
+
+### DE CE PRIN ADB (si nu direct din aplicatie)
+
+1. **`/data/data` este montat `noexec`** - rootfs-ul nu poate rula de acolo:
+   `tmpfs /data/data tmpfs rw,nosuid,nodev,noexec`. De aceea rootfs-ul sta in
+   **`/data/local/tmp/debian`** (273 MB, 286 binare, in afara APK-ului).
+2. **`untrusted_app` nu poate `execve` din `app_data_file`** (SELinux W^X):
+   `proot error: execve("/usr/bin/env"): Permission denied`.
+   `adb_client.shell()` trimite comanda la adbd, care face execve-ul ca **uid 2000**
+   (`u:r:shell:s0`) - deci trece de W^X. Nu e workaround, e singura cale fara root.
+
+### CAPCANE DOVEDITI (fiecare a costat un diagnostic)
+
+| # | Simptom | Cauza | Fix |
+|---|---------|-------|-----|
+| 1 | `proot error: execve("/usr/bin/env"): Permission denied` | `/data/data` e `noexec` + W^X pe `app_data_file` | rootfs in `/data/local/tmp` + executie prin `adb_client` |
+| 2 | `AttributeError: 'NoneType' object has no attribute 'sendall'` | `adb_client.shared()` moare dupa ~1 min de inactivitate | verificare IEFTINA a socket-ului (`s is None`, `fileno() < 0`) inainte de fiecare apel. **NU** `is_socket_healthy()` - trimite un `echo` per apel => 2 comenzi ADB => lentoare 10 s + dialog Allow repetat |
+| 3 | `/system/bin/sh: -u: inaccessible or not found` | **adbd sparge comanda pe spatii** in `shell,v2,raw:<cmd>` si da bucatile ca argv | comanda trece ca **base64**: `echo <b64> \| base64 -d \| sh` |
+| 4 | `/system/bin/sh: <stdin>[3]: 1792...: inaccessible` | nonce-ul de re-executare ajungea in comanda | worker-ul citeste **exact 3 linii** (flag/sid/comanda) |
+| 5 | tab-urile sub ceas | `FLAG_LAYOUT_NO_LIMITS` scoate fereastra de sub bara de sistem | padding = `insets.getInsets(statusBars()).top` |
+| 6 | campul de scris nu primea text | `TextView` cu `setTextIsSelectable(true)` fura focusul (`mServedView=TextView`) | `isFocusable=false` pe TextView + focus explicit pe EditText |
+
+### DETECTIE AUTOMATA Debian vs Android
+
+`run_in_debian()` alege singur mediul dupa primul cuvant al comenzii:
+- **Debian** (`DEBIAN_HINTS`): `apt`, `apt-get`, `dpkg`, `python3`, `pip`, `nano`, `vim`, `git`,
+  `make`, `gcc`, `curl`, `wget`, `tar`, `systemctl`, `useradd`...
+- **uid 2000** (`ANDROID_CMDS`): `pm`, `dumpsys`, `getprop`, `setprop`, `settings`, `am`, `input`,
+  `wm`, `screencap`, `logcat`, `uiautomator`, `appops`, `content`, `svc`...
+
+Deci `apt install nano` scris in modul uid2000 ruleaza automat in Debian (inainte:
+`/system/bin/sh: apt: inaccessible or not found`).
+
+### CE FUNCTIONEAZA (testat pe device)
+
+```
+uid2000:~$ id -u                    -> 2000
+uid2000:~$ getprop ro.product.model -> SM-A366B
+uid2000:~$ pm list packages | wc -l -> 416
+
+root@debian:~# cat /etc/debian_version -> 13.7
+root@debian:~# ls /usr/bin | wc -l      -> 286
+root@debian:~# apt --version | head -1  -> apt 3.0.3 (arm64)
+```
+
+### CE NU SE POATE (dovedit, nu presupus)
+
+| Limitare | Cauza |
+|---|---|
+| `nano`, `vim`, `htop` interactive | adbd nu trimite `A_WRTE` catre stdin in sesiunile `shell,raw`/`v2` (promptul apare, tastele nu ajung); `mkfifo` e refuzat in `/data/local/tmp` |
+| pty real in aplicatie | `pty.fork()` moare la execve (W^X); `pty.openpty()` + proot nu se leaga |
+| GPU nativ (`/dev/dri/renderD128`) | `Permission denied` si pentru uid 2000 (context `graphics_device`) |
+
+### Comenzi utile in camet (agent)
+
+```
+terminal action=run cmd="apt-get install -y htop"        # automat in Debian
+terminal action=run cmd="pm list packages" uid2000=true   # shell Android
+terminal action=status                                    # adb uid + versiune Debian + nr. binare
+terminal action=open                                      # deschide UI-ul de terminal
+```
+
+### Rootfs: unde sta si cum se reinstaleaza
+
+```
+/data/local/tmp/debian          # rootfs Debian 13.7 arm64 (273 MB, 286 binare)
+/data/local/tmp/libproot_exec.so  # proot 5.1.107 compilat cross (NDK 29)
+```
+
+Rootfs-ul NU e in APK (ar adauga 117 MB). Se genereaza o data pe laptop cu
+`debootstrap --arch=arm64 --variant=minbase trixie` si se copiaza in `/data/local/tmp`.
+
+---
+
 ## 🟢 O SINGURA APLICATIE PE DEVICE (actualizat 6 oct 2026)
 
 Pe telefon exista **o singura aplicatie**: **`net.sys32.agent`** (afisat „Agent").

@@ -3,9 +3,143 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `c6d98b1`. Sesiunea 2026-10-15 a fost **comisa si impinsa** (`059453b` Hermes, `fa3a537` sync, `f4f72b4` agent.py optimizat).
+> Ultimul commit inclus: `6f72ee5` (2026-10-16).
 
-**Total: 249 commituri in 16 zile** (19 sep -> 4 oct).
+---
+
+### 2026-10-20 - TERMINAL LINUX REAL IN APLICATIE (Debian 13 arm64 nativ, proot)
+
+> **Cerut de operator:** "vreau sa fie doar terminal... in terminal vreau sa vad real date
+> ca intr-un terminal adevarat... agentul are acces complet la debian si poate rula comenzi
+> linux in terminal cu privilegii uid 2000."
+> S-a renuntat COMPLET la GUI (VNC/LXDE/LXQt) - operatorul nu va folosi desktop grafic pe telefon.
+
+#### Ce s-a livrat
+
+| Componenta | Rol |
+|---|---|
+| `assets/python/terminal_server.py` | wrapper `run_in_debian()` (fost server de pty, acum deprecat - vezi mai jos) |
+| `assets/python/agent.py` | tool nou `terminal` (status/run/open) + `_terminal_file_worker()` |
+| `LinuxTerminalActivity.kt` | UI terminal: tab-uri multiple, camp de scris, bara de taste |
+| `TerminalClient.kt` | canal UI <-> agent prin fisiere in `files/tmp` (zero socket) |
+| `assets/proot/debian_x.sh` | pornire sesiune X11 (pastrat din etapa GUI) |
+| rootfs Debian 13.7 | `/data/local/tmp/debian` (273 MB, 286 binare, extins in afara APK) |
+
+#### ARHITECTURA (dovedita pe device)
+
+```
+UI (Kotlin)  --scrie-->  files/tmp/term_in.txt
+                              |
+                        agent.py: _terminal_file_worker()
+                              |
+                        adb_client.shared().shell()   <-- aici se face execve-ul
+                              |
+                        adbd (uid 2000, u:r:shell:s0)
+                              |
+                        proot -0 -r /data/local/tmp/debian
+                              |
+                        bash in Debian 13.7  /  /system/bin/sh (uid 2000)
+                              |
+UI (TextView) <--citeste-- files/tmp/term_out_<sid>.txt
+```
+
+#### 5 CAPCANE REALE, FIECARE CU DOVADA
+
+1. **`/data/data` este montat `noexec`** (gasit de agentul de pe device):
+   ```
+   tmpfs /data/data tmpfs rw,seclabel,nosuid,nodev,noexec,relatime,mode=751
+   ```
+   Consecinta: rootfs-ul NU poate sta in `files/debian` daca vrem sa rulam binarele lui.
+   Fix: rootfs mutat in **`/data/local/tmp/debian`** (nu e noexec pentru uid 2000).
+   *30 de teste au fost pierdute cautand in LD_LIBRARY_PATH si SELinux inainte de a verifica `mount`.*
+
+2. **`untrusted_app` nu poate `execve` nimic din `app_data_file`** (SELinux W^X):
+   ```
+   proot error: execve("/usr/bin/env"): Permission denied
+   ```
+   Fix: executia trece prin **`adb_client.shell()`** - adbd face execve-ul ca uid 2000
+   (`u:r:shell:s0`), nu procesul aplicatiei. Nu e workaround, e singura cale fara root.
+
+3. **`adb_client.shared()` moare dupa ~1 min de inactivitate** (gasit de agentul de pe device):
+   ```
+   AttributeError: 'NoneType' object has no attribute 'sendall'
+   ```
+   Fix: verificare IEFTINA a starii socket-ului inainte de fiecare apel (`s is None`, `fileno() < 0`).
+   ATENTIE: `is_socket_healthy()` NU se foloseste - trimite un `echo` de test la fiecare apel =>
+   2 comenzi ADB per comanda => lentoare de 10 s si dialog "Allow USB debugging" repetat.
+
+4. **adbd sparge comanda pe spatii** in `shell,v2,raw:<cmd>`:
+   ```
+   /system/bin/sh: -u: inaccessible or not found     (din "sh -c id -u")
+   ```
+   Fix: comanda trece ca **base64** - `echo <b64> | base64 -d | sh` (o singura bucata, fara spatii).
+
+5. **nonce-ul de re-executare ajungea in comanda**:
+   ```
+   /system/bin/sh: <stdin>[3]: 1792526111.2433681: inaccessible or not found
+   ```
+   Fix: worker-ul citeste **exact 3 linii** (flag / sid / comanda); linia a 4-a e nonce si se ignora.
+
+#### Ce a fost eliminat
+
+- `VncClient.kt`, `DesktopActivity.kt`, biblioteca `vernacular-vnc` (62 fisiere Java),
+  10 clase shim `java.awt` - GUI complet scos.
+- `terminal_server.py` ca proces separat (nu putea face proot: noexec + W^X).
+- LXDE/LXQt/X11 din rootfs (~1.1 GB eliberat).
+
+#### Ce NU se poate (dovedit)
+
+| Limitare | Cauza |
+|---|---|
+| `nano`, `vim`, `htop` interactive | adbd nu trimite input in sesiunile `shell,raw`/`v2` (promptul apare, tastele nu ajung); `mkfifo` e refuzat in `/data/local/tmp` |
+| pty real in aplicatie | `pty.fork()` moare la execve (W^X); `pty.openpty()` + proot nu se leaga |
+| GPU nativ (`/dev/dri/renderD128`) | `Permission denied` chiar si pentru uid 2000 (context `graphics_device`) |
+
+#### Ce functioneaza (testat pe device)
+
+```
+uid2000:~$ id -u                    -> 2000
+uid2000:~$ getprop ro.product.model -> SM-A366B
+uid2000:~$ pm list packages | wc -l -> 416
+
+root@debian:~# cat /etc/debian_version -> 13.7
+root@debian:~# ls /usr/bin | wc -l      -> 286
+root@debian:~# apt --version | head -1  -> apt 3.0.3 (arm64)
+```
+
+**Detectie automata** (`DEBIAN_HINTS` in `run_in_debian`): `apt`, `python3`, `nano`, `git`, `make`
+ruleaza automat in Debian; `pm`, `dumpsys`, `getprop`, `settings`, `am` ruleaza pe uid 2000.
+Deci `apt install nano` scris in modul uid2000 merge (inainte dadea
+`/system/bin/sh: apt: inaccessible or not found`).
+
+#### UI terminal
+
+- tab-uri multiple (`+` = sesiune noua, `/exit` = inchide tab, ultimul tab inchide ecranul)
+- camp de scris VIZIBIL deasupra barei de taste (inainte era 1x1 px invizibil)
+- bara de taste redusa la `CTRL` `TAB` `ESC` (eliminate F1-F12 si sagetile: inutile fara pty)
+- output-ul apare pe linie noua, cu linie goala intre comenzi
+- padding pentru bara de status (tab-urile nu mai stau sub ceas)
+
+---
+
+### 2026-10-20 - GUI VNC (INCERCAT SI ABANDONAT)
+
+Etapele GUI au fost implementate si **dovedite functional** inainte de a fi scoase la cererea
+operatorului (nu va folosi desktop grafic pe telefon). Pastrate aici ca istoric si ca lectii:
+
+- **proot compilat cross** (NDK 29, `-mcpu=cortex-a76+crypto`); NDK 27 e RUPT (clang-18 => SIGSEGV).
+- **Debian 13.7 arm64** rulat nativ prin proot (zero emulare): `uname -s` -> Linux, `uid=0`.
+- **Benchmark**: overhead proot ~11% intr-un proces (bucla 20k: 0.10s vs 0.09s);
+  `PROOT_NO_SECCOMP=1` NU ajuta.
+- **GUI complet**: Xtigervnc + fluxbox/LXDE, client VNC scris de la zero, apoi `vernacular-vnc`.
+- **LXQt NU functioneaza**: pachetul Debian `lxqt-panel 2.1.4` nu contine plugin-urile de baza
+  (`libtaskbar.so`, `libmainmenu.so`, `libworldclock.so`) - desi livrara fisierele `.desktop`.
+  Recompilat din sursa 2.1.4 => plugin-urile sunt STATICE in binar (`STATIC_PLUGINS`), deci
+  `libtaskbar.so` nu exista nici dupa build. Panelul functioneaza cu binarul recompilat.
+- **LXDE functioneaza** (openbox + lxpanel + pcmanfm), necesita `dbus-daemon --session` manual.
+
+---
+
 
 ---
 
