@@ -7,6 +7,97 @@
 
 ---
 
+### 2026-10-21 (b) - DShell BRIDGE integrat in agent.py + paritate 100%
+
+> **Cerut de operator:** "fa toate modificarile necesare pentru ca aplicatia sa fie
+> stabila atunci cand o reinstalam sau o compilam din codul sursa. integreaza bridge
+> in agent si tot ce mai trebuie."
+
+#### Ce s-a schimbat fata de versiunea (a)
+
+`dshell_bridge.py` (proces separat, rulat manual cu `bg`) a fost **ABSORBIT in `agent.py`**.
+Nu mai exista proces separat, deci nu se mai poate desincroniza la rebuild si nu mai
+depinde de un `bg` pornit manual.
+
+#### Integrare in agent.py
+
+| Functie | Rol |
+|---|---|
+| `_dshell_port()` | portul: `DSHELL_BRIDGE_PORT` sau 46500 |
+| `_dshell_serve(port)` | accepta conexiuni, thread daemon |
+| `_dshell_client(conn)` | un client Debian: linii JSON in/out |
+| `_dshell_handle(req)` | dispatch: ping / sh / debian / eval / orice tool |
+| `_dshell_eval(expr)` | reflecție Java via `android_bridge.call("eval")` |
+| `_start_dshell_bridge()` | pornire idempotenta (flag) |
+| `_install_dshell_client()` | self-heal client in rootfs |
+| `_start_dshell()` | ambele, chemat din blocul de startup |
+
+Pornirea se face in `if __name__ == "__main__":`, **dupa** ce `LD_LIBRARY_PATH` e scris
+in `ld_path.txt` si dupa `_start_terminal_worker()`.
+
+#### Stabilitate la rebuild / reinstalare (cerinta principala)
+
+1. **Idempotent** - `DSHELL_BRIDGE_STARTED` impiedica dubla pornire.
+2. **Porturi alternative** - daca 46500 e ocupat de o instanta veche, incearca
+   46500..46519 si scrie portul REAL. (Reparat dupa ce s-a constatat ca `bind` eșua
+   silentios si bridge-ul murea fara sa scrie `dshell.port`.)
+3. **Portfile in 2 locuri** - `files/tmp/dshell.port` (agentul) si
+   `workspace/dshell.port` (Debian, prin bind `/sdcard`).
+   `/data/local/tmp/dshell.port` a fost incercat dar **eșueaza** din procesul app
+   (uid app nu are acces acolo) - nu e critic, `/sdcard` acopera cazul.
+4. **Client self-heal** - `_install_dshell_client()` rescrie `dshell.py` in rootfs la
+   fiecare pornire, cu comparare de bytes (nu scrie degeaba). Rootfs-ul traieste in
+   `/data/local/tmp` (in afara APK), deci supravietuieste reinstalarii; doar clientul
+   se resincronizeaza.
+5. **`DSHELL_PORT` injectat** in `run_in_debian()` prin `env -i`, deci orice comanda
+   Debian vede portul corect fara sa-l caute.
+
+#### Paritate 100% cu tool-urile agentului
+
+Bridge-ul expune **orice** tool, nu doar `sh`/`debian`/`eval`. `_dshell_handle()` trateaza
+orice `cmd` necunoscut ca nume de tool si il deleaga la `android_bridge.call(cmd, action, **params)`.
+
+Tool-uri testate din Debian: `ui` (read/find/click), `notif`, `ime`, `sensors`, `location`,
+`battery`, `camera`, `apps`, `settings`, `system`, `storage`, `processes`, `network`,
+`display`, `audio`, `telephony`, `wifi`, `nfc`, `usb`, `clipboard`, `notify`, `vibrate`,
+`tts`, `volume`, `device`, `intent`, `appinfo`, `capture`, `vpn`, `guard`.
+
+#### Bug-uri prinse in testare
+
+- **`action` trimis greșit**: era pus in `params` in loc de argument pozitional la
+  `android_bridge.call(tool, action, **params)` -> `ui read` returna `null`.
+- **Cheia de raspuns**: tool-urile intorc `text` (ui), `data`, `result`, sau chei proprii
+  (system -> `model`). Handler-ul accepta acum toate formele.
+- **`OSError: I/O error`** la coada `evalq/` pe `/sdcard` (MediaProvider). Rezolvat prin
+  **eliminarea cozii** - reflecția se face direct, suntem in procesul aplicatiei.
+
+#### Teste end-to-end din Debian (rulate)
+
+```
+dshell ping                             -> pong
+dshell eval "2+3"                       -> 5
+dshell eval '{"op":"call","target":"ctx","method":"getPackageName"}' -> net.sys32.agent
+dshell sh "id -u"                       -> 2000
+dshell sh "getprop ro.product.model"    -> SM-A366B
+dshell sh "pm list packages"            -> 416 pachete
+dshell sh "settings put system screen_brightness 100"  -> aplicat (13 -> 100)
+dshell ui '{"action":"read","max":10}'  -> arborele UI real
+dshell ui '{"action":"find","text":"TERMINAL"}' -> buton gasit la [937,209], clickable
+dshell sensors '{"action":"list"}'      -> LSM6DSV Accelerometer, MXGX300 Magnetometer
+dshell battery '{"action":"full"}'      -> nivel, temperatura, tensiune
+dshell system '{"action":"model"}'      -> SM-A366B, bootloader A366BXXU5BYK5
+dshell display '{"action":"info"}'      -> 1080x2340, 450 dpi, 120 Hz
+dshell debian "uname -r"                -> 6.1.0-debian
+```
+
+#### Limite reale (aceleasi, dovedite)
+
+UNIX socket-uri, `/dev/net/tun`, `iptables`, root real de kernel. `getSerial` da
+`SecurityException` - si pentru agent, deci nu e o diferență intre noi.
+
+---
+
+
 ### 2026-10-21 - DShell BRIDGE: Debian vorbeste cu Androidul (TCP localhost)
 
 > **Cerut de operator:** "cum putem lega debian complet de tine... adica prin debian sa

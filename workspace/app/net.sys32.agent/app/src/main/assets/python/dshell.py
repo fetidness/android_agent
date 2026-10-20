@@ -5,23 +5,31 @@ Folosire:
   dshell sh "id -u"              ruleaza ca uid 2000 (adbd)
   dshell debian "uname -a"       ruleaza in Debian
   dshell ping
+  dshell ui '{"action":"read","max":15}'    orice tool Android
+  dshell battery '{"action":"full"}'
+  dshell eval '{"op":"call","target":"ctx","method":"getPackageName"}'
 
 Portul se citeste din dshell.port (scris de server), sau din $DSHELL_PORT.
 """
 import json, os, socket, sys
 
-PORTFILE = "/sdcard/Download/Agent/workspace/dshell.port"
-DEFAULT_PORT = 45780
+PORTFILE_CANDIDATES = (
+    "/sdcard/Download/Agent/workspace/dshell.port",
+    "/data/local/tmp/dshell.port",
+)
+DEFAULT_PORT = 46500
 
 
 def get_port():
     p = os.environ.get("DSHELL_PORT")
     if p:
         return int(p)
-    try:
-        return int(open(PORTFILE).read().strip())
-    except Exception:
-        return DEFAULT_PORT
+    for f in PORTFILE_CANDIDATES:
+        try:
+            return int(open(f).read().strip())
+        except Exception:
+            continue
+    return DEFAULT_PORT
 
 
 def call(cmd, arg="", port=None, timeout=None):

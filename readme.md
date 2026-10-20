@@ -10,82 +10,115 @@
 
 ## 🔗 DShell BRIDGE (2026-10-21) - DEBIAN VORBESTE CU ANDROIDUL
 
-Punte RPC care permite codului din **Debian (proot)** sa execute tot ce poate
-face agentul: comenzi Android ca uid 2000, reflecție SDK si comenzi in Debian.
+Punte RPC prin **TCP pe localhost** care da codului din Debian acces la **tot** ce
+poate face agentul: comenzi Android uid 2000, reflecție SDK si toate tool-urile native.
 
-### De ce exista
+### De ce TCP si nu UNIX socket (dovedit pe device)
 
-`/data/data` este `noexec`, iar contextul SELinux `shell_data_file` (unde ruleaza
-rootfs-ul din `/data/local/tmp`) **nu poate crea UNIX socket-uri**:
-
-```
-safesocket.Listen: listen unix /root/x.sock: bind: permission denied   (orice cale)
-```
-
-UNIX socket-urile merg DOAR in `app_data_file`. Dar **TCP pe localhost merge** din
-Debian (dovedit: `BIND_ON on 127.0.0.1`). De aceea puntea este TCP, nu UNIX.
-
-### Componente
+Rootfs-ul sta in `/data/local/tmp` (context SELinux `shell_data_file`). Din acel context
+`socket.bind()` da `Permission denied` pe **orice** cale:
 
 ```
-files/python/dshell_bridge.py   server RPC, ruleaza IN PROCESUL APLICATIEI
-files/python/dshell.py          client, se instaleaza in Debian (/usr/local/bin/dshell)
-/sdcard/Download/Agent/workspace/dshell.port   portul, scris de server, citit de client
-/sdcard/Download/Agent/workspace/evalq/        coada pentru reflecție (req/res JSON)
+/root/test.sock              -> PermissionError
+/var/run/tailscale/...sock   -> PermissionError
+/data/local/tmp/x.sock       -> PermissionError
+/sdcard/.../t.sock           -> PermissionError
 ```
 
-### Protocol
+Merge DOAR in `app_data_file` (`/data/data/net.sys32.agent/files/`), unde Debian nu are
+acces. **TCP pe 127.0.0.1 nu e blocat** - de aceea puntea este TCP.
 
-O linie JSON per cerere, raspuns o linie JSON:
+Consecinta practica: `tailscale` se INSTALEAZA (1.104.2, 23 s) dar nu poate PORNI
+(`safesocket.Listen: bind: permission denied`). La fel orice daemon care cere UNIX socket.
+
+### Arhitectura
 
 ```
-->  {"cmd":"ping"}
-<-  {"ok":true,"out":"pong"}
-
-->  {"cmd":"sh","arg":"id -u"}                      shell uid 2000 (adbd)
-<-  {"ok":true,"out":"2000\n"}
-
-->  {"cmd":"debian","arg":"uname -r"}               ruleaza in Debian
-<-  {"ok":true,"out":"6.1.0-debian\n"}
-
-->  {"cmd":"eval","arg":"<expresie>"}               reflecție Android (coada evalq/)
-<-  {"ok":true,"out":"..."}
-
-->  {"cmd":"sh","arg":"pm list packages","timeout":180}
+Debian (proot)                    procesul APLICATIEI
+  dshell <tool> '<json>'   --TCP-->  _dshell_serve()  (thread daemon)
+  /usr/local/bin/dshell                |
+  citeste dshell.port                  +-> sh      = adb_client.shell()  (uid 2000)
+                                       +-> debian  = run_in_debian()     (proot)
+                                       +-> eval    = android_bridge.call("eval")
+                                       +-> ui/notif/sensors/location/... = tool-urile native
 ```
+
+Ruleaza **in procesul aplicatiei** pentru ca reflecția Java si serviciile Android
+(Accessibility, NotificationListener, IME, MediaProjection, VpnService) traiesc acolo.
+
+### Fisiere
+
+| Fisier | Rol |
+|---|---|
+| `assets/python/agent.py` | `_dshell_*()` + `_start_dshell()` la startup |
+| `assets/python/dshell.py` | client pentru Debian (instalat automat in `/usr/local/bin/dshell`) |
+| `files/tmp/dshell.port` | portul, scris de server |
+| `workspace/dshell.port` | aceeasi valoare, vizibila din Debian prin bind `/sdcard` |
+
+`dshell_bridge.py` (versiunea standalone, rulata cu `bg`) a fost **absorbita in
+`agent.py`** - nu mai e nevoie de proces separat si nu se mai desincronizeaza la rebuild.
+
+### Protocol (o linie JSON per cerere, o linie JSON raspuns)
+
+```
+->  {"cmd":"ping"}                                  <-  {"ok":true,"out":"pong"}
+->  {"cmd":"sh","arg":"id -u"}                      <-  {"ok":true,"out":"2000\n"}
+->  {"cmd":"debian","arg":"uname -r"}               <-  {"ok":true,"out":"6.1.0-debian\n"}
+->  {"cmd":"eval","arg":"2+3"}                      <-  {"ok":true,"out":"5"}
+->  {"cmd":"eval","arg":"{\"op\":\"call\",\"target\":\"ctx\",\"method\":\"getPackageName\"}"}
+                                                    <-  {"ok":true,"out":"net.sys32.agent"}
+->  {"cmd":"ui","arg":"{\"action\":\"read\",\"max\":10}"}
+                                                    <-  {"ok":true,"out":"[1] TextView ..."}
+->  {"cmd":"battery","arg":"{\"action\":\"full\"}"}  <-  {"ok":true,"out":"{...}"}
+```
+
+`cmd` poate fi oricare nume de tool: `ui`, `notif`, `ime`, `sensors`, `location`,
+`battery`, `camera`, `apps`, `settings`, `system`, `storage`, `processes`, `network`,
+`display`, `audio`, `telephony`, `wifi`, `nfc`, `usb`, `clipboard`, `notify`, `vibrate`,
+`tts`, `volume`, `device`, `intent`, `appinfo`, `capture`, `vpn`, `guard`.
 
 ### Folosire din Debian
 
 ```bash
 dshell ping
-dshell sh "id -u"                                  # 2000
+dshell sh "id -u"                                   # 2000
 dshell sh "pm list packages | head -3"
-dshell sh "getprop ro.product.model"               # SM-A366B
-dshell sh "dumpsys battery | grep level"
-dshell debian "uname -a"                           # in Debian
-DSHELL_PORT=45900 dshell eval "2+3"                # 5
+dshell sh "settings put system screen_brightness 100"
+dshell debian "uname -a"
+dshell eval "2+3"                                   # 5
+dshell eval '{"op":"call","target":"ctx","method":"getPackageName"}'
+dshell ui '{"action":"read","max":10}'              # arborele UI al ecranului
+dshell ui '{"action":"find","text":"TERMINAL"}'
+dshell sensors '{"action":"list"}'
+dshell battery '{"action":"full"}'
 ```
 
-### Porturi
+### Stabilitate la rebuild / reinstalare
 
-Implicit **45900** (se poate schimba cu `DSHELL_BRIDGE_PORT` la server si
-`DSHELL_PORT` la client). Portul real este scris in `dshell.port`, iar clientul
-il citeste de acolo daca `DSHELL_PORT` nu e setat.
+- `_start_dshell()` e **idempotent** (flag `DSHELL_BRIDGE_STARTED`) si e chemat din
+  blocul de startup din `agent.py`, dupa ce `LD_LIBRARY_PATH` e scris in `ld_path.txt`.
+- **Porturi alternative**: daca portul 46500 e ocupat de o instanta veche, bridge-ul
+  incearca 46500..46519 si scrie portul REAL in `dshell.port`.
+- **Client self-heal**: `_install_dshell_client()` rescrie `dshell.py` in rootfs la
+  fiecare pornire (comparare de bytes - nu scrie degeaba), deci dupa rebuild clientul
+  din Debian e mereu sincron cu codul din APK.
+- Rootfs-ul Debian traieste in `/data/local/tmp` (in afara APK-ului), deci
+  supravietuieste reinstalarii; doar clientul se resincronizeaza.
 
-### Coada evalq (reflecție)
+### Limite reale (dovedite, nu presupuse)
 
-Debian scrie `evalq/req.<ts>.json` cu `{"expr":"..."}`; worker-ul din aplicație
-(pornit automat de `serve_forever`) scrie `evalq/res.<ts>.json` cu
-`{"ok":true,"out":"..."}`. Scrierea raspunsului este **atomica** (`.tmp` + `rename`),
-deci cititorul nu prinde niciodata un fisier pe jumatate scris.
+- **UNIX socket-uri** interzise -> daemonii care le cer (tailscaled, containerd) imposibili
+- **`/dev/net/tun`** inaccesibil (`system:vpn`); aplicatia poate crea TUN prin
+  `VpnService` si Debian il VEDE, dar nu poate deschide device-ul
+- **`iptables`** inaccesibil (`could not get iptables version`)
+- **root real de kernel** nu exista (`uid=0` in proot e cosmetic; procesul real e uid 2000)
+- **`getSerial`** da `SecurityException` - si pentru agent, nu doar pentru Debian
 
-### Ce NU poate face puntea
+### Capcana importanta
 
-- creare de UNIX socket-uri (blocheaza daemonii care le cer: tailscaled, containerd)
-- creare de TUN din Debian (dar aplicatia il poate crea prin `VpnService`)
-- `iptables` (refuzat din contextul shell)
-- root real de kernel
-
+`ip route add ... dev tun0` rulat din Debian a returnat **`RC=0`** dar ruta **nu exista**
+in kernel. **Proot raporteaza succes pentru operații pe care nu le poate face** - nu te
+increde in exit code-urile din Debian pentru operații de retea.
 ## 🖥 TERMINAL LINUX (2026-10-20) - ARHITECTURA
 
 Butonul **TERMINAL** din bara aplicatiei deschide `LinuxTerminalActivity`: tab-uri multiple,

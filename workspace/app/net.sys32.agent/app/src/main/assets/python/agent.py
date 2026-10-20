@@ -3757,8 +3757,9 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
         "/usr/bin/env -i "
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
         "HOME=/root TERM=xterm-256color LANG=C.UTF-8 "
+        "DSHELL_PORT=%s "
         "/bin/bash -c \"echo %s | base64 -d | /bin/bash\""
-        % base64.b64encode(cmd.encode()).decode()
+        % (_dshell_port(), base64.b64encode(cmd.encode()).decode())
     )
     return c.shell(full, timeout=timeout) or ""
 
@@ -3842,6 +3843,258 @@ def _start_terminal_worker():
     try:
         import threading
         threading.Thread(target=_terminal_file_worker, daemon=True).start()
+    except Exception:
+        pass
+
+
+# ======================= DShell BRIDGE (Debian <-> Android) =======================
+# Server RPC prin TCP pe 127.0.0.1, ca Debian (proot) sa poata executa tot ce poate
+# agentul: comenzi Android (uid 2000), reflecție SDK si tool-uri native.
+#
+# ★ DE CE TCP si NU UNIX SOCKET (dovedit pe device 2026-10-21):
+#   rootfs-ul sta in /data/local/tmp (context SELinux `shell_data_file`), iar din acel
+#   context socket.bind() da `Permission denied` pe ORICE cale (/root, /var/run,
+#   /data/local/tmp, /sdcard). Merge DOAR in app_data_file. TCP pe localhost nu e blocat.
+#
+# ★ DE CE RULEAZA IN PROCSESUL APLICATIEI: reflecția Java si serviciile Android
+#   (Accessibility, NotificationListener, IME, MediaProjection, VpnService) traiesc
+#   in acest proces; un proces separat nu le poate atinge.
+DSHELL_BRIDGE_STARTED = [False]
+DSHELL_PORT_FILE = os.path.join(HOME_DIR, "tmp", "dshell.port")
+DSHELL_DEFAULT_PORT = 46500
+
+
+def _dshell_port():
+    """Portul bridge-ului: env DSHELL_BRIDGE_PORT sau implicit 46500."""
+    try:
+        return int(os.environ.get("DSHELL_BRIDGE_PORT") or DSHELL_DEFAULT_PORT)
+    except Exception:
+        return DSHELL_DEFAULT_PORT
+
+
+def _dshell_handle(req):
+    """Executa o cerere venita din Debian. Returneaza dict {ok, out|err}."""
+    import json as _j
+    cmd_ = (req.get("cmd") or "").strip()
+    arg = req.get("arg", "")
+    tmo = int(req.get("timeout") or 120)
+    if cmd_ == "ping":
+        return {"ok": True, "out": "pong"}
+    if cmd_ == "sh":
+        return {"ok": True, "out": _adb().shell(arg, timeout=tmo) or ""}
+    if cmd_ == "debian":
+        return {"ok": True, "out": run_in_debian(arg, timeout=tmo) or ""}
+    if cmd_ == "eval":
+        return {"ok": True, "out": _dshell_eval(arg)}
+    # orice alt nume = un tool al agentului (ui, notif, sensors, location, ...)
+    try:
+        import android_bridge as _ab
+        params = {}
+        if arg and str(arg).strip():
+            try:
+                params = _j.loads(arg) if isinstance(arg, str) else dict(arg)
+            except Exception:
+                params = {"action": str(arg).strip()}
+        action = params.pop("action", "")
+        r = _ab.call(cmd_, action, **params)
+        if isinstance(r, dict):
+            if r.get("ok"):
+                if "data" in r:
+                    d = r["data"]
+                elif "result" in r:
+                    d = r["result"]
+                elif "text" in r:
+                    d = r["text"]
+                else:
+                    d = {k: v for k, v in r.items() if k != "ok"}
+                return {"ok": True, "out": d if isinstance(d, str) else _j.dumps(d, ensure_ascii=False)}
+            return {"ok": False, "err": "[%s] %s" % (cmd_, str(r.get("error"))[:400])}
+        return {"ok": True, "out": str(r)}
+    except Exception as e:
+        return {"ok": False, "err": "%s: %s" % (type(e).__name__, e)}
+
+
+def _dshell_eval(expr):
+    """Reflecție Android. `expr` = JSON cu op-uri ({"op":"call",...}) sau expresie Python."""
+    import json as _j
+    req = None
+    if isinstance(expr, dict):
+        req = expr
+    elif isinstance(expr, str) and expr.strip().startswith("{"):
+        try:
+            req = _j.loads(expr)
+        except Exception:
+            req = None
+    if req is None:
+        try:
+            return str(eval(expr, {"__builtins__": {}}, {}))
+        except Exception:
+            return "[eval] %s" % expr
+    try:
+        import android_bridge as _ab
+        r = _ab.call("eval", expr=req)
+        if isinstance(r, dict):
+            if r.get("ok"):
+                d = r.get("data", r.get("result"))
+                return d if isinstance(d, str) else _j.dumps(d, ensure_ascii=False)
+            return "[eval err] " + str(r.get("error"))[:400]
+        return str(r)
+    except Exception as e:
+        return "[eval err] %s" % e
+
+
+def _dshell_client(conn):
+    """Un client Debian: linii JSON in, linii JSON out."""
+    import json as _j
+    try:
+        conn.settimeout(300)
+        buf = b""
+        while True:
+            while b"\n" not in buf:
+                d = conn.recv(65536)
+                if not d:
+                    return
+                buf += d
+            line, buf = buf.split(b"\n", 1)
+            if not line.strip():
+                continue
+            try:
+                req = _j.loads(line.decode("utf-8", "replace"))
+            except Exception as e:
+                conn.sendall((_j.dumps({"ok": False, "err": "json: %s" % e}) + "\n").encode())
+                continue
+            try:
+                resp = _dshell_handle(req)
+            except Exception as e:
+                resp = {"ok": False, "err": "%s: %s" % (type(e).__name__, e)}
+            conn.sendall((_j.dumps(resp) + "\n").encode())
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _dshell_serve(port):
+    """Accepta conexiuni de la Debian, la nesfarsit (thread daemon)."""
+    import socket as _so
+    import threading as _th
+    # ★ Porturi alternative: dupa un rebuild/reinstalare, o instanta veche poate
+    # tine portul. Incercam portul cerut, apoi urmatoarele 20, ca bridge-ul sa
+    # porneasca MEREU si sa scrie in dshell.port portul REAL pe care asculta.
+    srv = None
+    bound = None
+    for cand in range(port, port + 20):
+        try:
+            _s = _so.socket(_so.AF_INET, _so.SOCK_STREAM)
+            _s.setsockopt(_so.SOL_SOCKET, _so.SO_REUSEADDR, 1)
+            _s.bind(("127.0.0.1", cand))
+            _s.listen(16)
+            srv, bound = _s, cand
+            break
+        except Exception:
+            try:
+                _s.close()
+            except Exception:
+                pass
+    if srv is None:
+        return
+    # scrie portul in TOATE locurile de unde clientul il poate citi:
+    #   files/tmp        -> agentul
+    #   /data/local/tmp  -> Debian (uid 2000 are acces)
+    #   /sdcard/...      -> Debian (bind /sdcard)
+    for _pf in (DSHELL_PORT_FILE,
+                "/data/local/tmp/dshell.port",
+                os.path.join(WORK, "dshell.port")):
+        try:
+            d_ = os.path.dirname(_pf)
+            if d_:
+                os.makedirs(d_, exist_ok=True)
+            with open(_pf, "w") as f:
+                f.write(str(bound))
+        except Exception:
+            pass
+    while True:
+        try:
+            conn, _ = srv.accept()
+        except Exception:
+            break
+        try:
+            _th.Thread(target=_dshell_client, args=(conn,), daemon=True).start()
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _start_dshell_bridge():
+    """Porneste bridge-ul o singura data (idempotent)."""
+    if DSHELL_BRIDGE_STARTED[0]:
+        return
+    DSHELL_BRIDGE_STARTED[0] = True
+    try:
+        import threading
+        t = threading.Thread(target=_dshell_serve, args=(_dshell_port(),), daemon=True)
+        t.start()
+    except Exception:
+        DSHELL_BRIDGE_STARTED[0] = False
+
+
+DSHELL_CLIENT_INSTALLED = [False]
+
+
+def _install_dshell_client():
+    """Copiaza clientul dshell.py in Debian (/usr/local/bin/dshell), o singura data.
+
+    ★ De ce e nevoie: dupa o reinstalare/rebuild al APK, rootfs-ul Debian ramane
+    (e in /data/local/tmp, in afara APK-ului), dar clientul poate lipsi sau poate
+    fi o versiune veche. Il rescriem la fiecare pornire ca sa fie mereu sincron
+    cu codul din APK. Nu consuma nimic daca e deja la zi (comparare de bytes).
+    """
+    if DSHELL_CLIENT_INSTALLED[0]:
+        return
+    DSHELL_CLIENT_INSTALLED[0] = True
+    try:
+        src = os.path.join(_SANDBOX, "dshell.py")
+        if not os.path.exists(src):
+            return
+        data = open(src, "rb").read()
+        # calea publica (Debian o vede prin bind /sdcard)
+        pub = WORK + "/dshell.py"
+        try:
+            cur = open(pub, "rb").read()
+        except Exception:
+            cur = b""
+        if cur != data:
+            try:
+                os.makedirs(WORK, exist_ok=True)
+                with open(pub, "wb") as f:
+                    f.write(data)
+            except Exception:
+                return
+        # instaleaza in rootfs (doar daca diferă, ca sa nu scriem degeaba)
+        run_in_debian(
+            "if ! cmp -s /sdcard/Download/Agent/workspace/dshell.py /usr/local/bin/dshell "
+            "2>/dev/null; then cp /sdcard/Download/Agent/workspace/dshell.py "
+            "/usr/local/bin/dshell && chmod +x /usr/local/bin/dshell; fi; echo ok",
+            timeout=30,
+        )
+    except Exception:
+        pass
+
+
+def _start_dshell():
+    """Porneste bridge-ul + instaleaza clientul. Idempotent, best-effort."""
+    try:
+        _start_dshell_bridge()
+    except Exception:
+        pass
+    try:
+        import threading
+        threading.Thread(target=_install_dshell_client, daemon=True).start()
     except Exception:
         pass
 
@@ -5066,6 +5319,13 @@ if __name__ == "__main__":
         # ★ canalul UI <-> agent pentru terminal (fisiere in files/tmp)
         try:
             _start_terminal_worker()
+        except Exception:
+            pass
+        # ★ DShell BRIDGE: Debian primeste acces la tot ce poate agentul
+        # (comenzi Android uid 2000 + reflecție SDK + tool-uri native), prin TCP
+        # pe 127.0.0.1. Pornit DUPA ce LD_LIBRARY_PATH e scris in ld_path.txt.
+        try:
+            _start_dshell()
         except Exception:
             pass
         # ★ (cerut de operator): linia de diagnostic NU se mai afiseaza in UI la pornire.
