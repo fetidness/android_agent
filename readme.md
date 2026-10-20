@@ -7,6 +7,85 @@
 > la cererea operatorului (nu va folosi desktop grafic pe telefon). Vezi sectiunea
 > "TERMINAL LINUX (2026-10-20)" si `CHANGELOG.md` 2026-10-20.
 
+
+## 🔗 DShell BRIDGE (2026-10-21) - DEBIAN VORBESTE CU ANDROIDUL
+
+Punte RPC care permite codului din **Debian (proot)** sa execute tot ce poate
+face agentul: comenzi Android ca uid 2000, reflecție SDK si comenzi in Debian.
+
+### De ce exista
+
+`/data/data` este `noexec`, iar contextul SELinux `shell_data_file` (unde ruleaza
+rootfs-ul din `/data/local/tmp`) **nu poate crea UNIX socket-uri**:
+
+```
+safesocket.Listen: listen unix /root/x.sock: bind: permission denied   (orice cale)
+```
+
+UNIX socket-urile merg DOAR in `app_data_file`. Dar **TCP pe localhost merge** din
+Debian (dovedit: `BIND_ON on 127.0.0.1`). De aceea puntea este TCP, nu UNIX.
+
+### Componente
+
+```
+files/python/dshell_bridge.py   server RPC, ruleaza IN PROCESUL APLICATIEI
+files/python/dshell.py          client, se instaleaza in Debian (/usr/local/bin/dshell)
+/sdcard/Download/Agent/workspace/dshell.port   portul, scris de server, citit de client
+/sdcard/Download/Agent/workspace/evalq/        coada pentru reflecție (req/res JSON)
+```
+
+### Protocol
+
+O linie JSON per cerere, raspuns o linie JSON:
+
+```
+->  {"cmd":"ping"}
+<-  {"ok":true,"out":"pong"}
+
+->  {"cmd":"sh","arg":"id -u"}                      shell uid 2000 (adbd)
+<-  {"ok":true,"out":"2000\n"}
+
+->  {"cmd":"debian","arg":"uname -r"}               ruleaza in Debian
+<-  {"ok":true,"out":"6.1.0-debian\n"}
+
+->  {"cmd":"eval","arg":"<expresie>"}               reflecție Android (coada evalq/)
+<-  {"ok":true,"out":"..."}
+
+->  {"cmd":"sh","arg":"pm list packages","timeout":180}
+```
+
+### Folosire din Debian
+
+```bash
+dshell ping
+dshell sh "id -u"                                  # 2000
+dshell sh "pm list packages | head -3"
+dshell sh "getprop ro.product.model"               # SM-A366B
+dshell sh "dumpsys battery | grep level"
+dshell debian "uname -a"                           # in Debian
+DSHELL_PORT=45900 dshell eval "2+3"                # 5
+```
+
+### Porturi
+
+Implicit **45900** (se poate schimba cu `DSHELL_BRIDGE_PORT` la server si
+`DSHELL_PORT` la client). Portul real este scris in `dshell.port`, iar clientul
+il citeste de acolo daca `DSHELL_PORT` nu e setat.
+
+### Coada evalq (reflecție)
+
+Debian scrie `evalq/req.<ts>.json` cu `{"expr":"..."}`; worker-ul din aplicație
+(pornit automat de `serve_forever`) scrie `evalq/res.<ts>.json` cu
+`{"ok":true,"out":"..."}`. Scrierea raspunsului este **atomica** (`.tmp` + `rename`),
+deci cititorul nu prinde niciodata un fisier pe jumatate scris.
+
+### Ce NU poate face puntea
+
+- creare de UNIX socket-uri (blocheaza daemonii care le cer: tailscaled, containerd)
+- creare de TUN din Debian (dar aplicatia il poate crea prin `VpnService`)
+- `iptables` (refuzat din contextul shell)
+- root real de kernel
+
 ## 🖥 TERMINAL LINUX (2026-10-20) - ARHITECTURA
 
 Butonul **TERMINAL** din bara aplicatiei deschide `LinuxTerminalActivity`: tab-uri multiple,

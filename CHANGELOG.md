@@ -7,6 +7,98 @@
 
 ---
 
+### 2026-10-21 - DShell BRIDGE: Debian vorbeste cu Androidul (TCP localhost)
+
+> **Cerut de operator:** "cum putem lega debian complet de tine... adica prin debian sa
+> poti sa faci absolut tot ce poti face tu ca agent."
+
+#### Problema
+
+Rootfs-ul Debian ruleaza in `/data/local/tmp` (context SELinux `shell_data_file`). Din acel
+context, **UNIX socket-urile sunt interzise** - orice cale:
+
+```
+safesocket.Listen: listen unix /root/x.sock: bind: permission denied
+safesocket.Listen: listen unix /var/run/tailscale/tailscaled.sock: bind: permission denied
+```
+
+Dovedit cu teste A/B: `socket.bind()` da `PermissionError` pe `/root`, `/var/run`,
+`/data/local/tmp` si `/sdcard`; merge DOAR in `app_data_file`
+(`/data/data/net.sys32.agent/files/`), unde Debian nu are acces.
+
+Consecinta: daemonii care cer UNIX socket (tailscaled, containerd) nu pot porni din Debian.
+Tailscale s-a putut INSTALA (1.104.2, 23 s, repo oficial), dar nu s-a putut PORNI.
+
+#### Solutia: TCP pe localhost
+
+TCP **nu** este blocat de SELinux. Dovedit:
+
+```
+python3 -c "socket.bind(('127.0.0.1',41999))"  ->  BIND_OK
+```
+
+Deci puntea este un server TCP care ruleaza **in procesul aplicatiei** (unde exista SDK
+Android + `adb_client`) si pe care Debian il cheama.
+
+#### Ce s-a livrat
+
+| Componenta | Rol |
+|---|---|
+| `assets/python/dshell_bridge.py` | server RPC in procesul aplicatiei (port 45900) |
+| `assets/python/dshell.py` | client pentru Debian (`/usr/local/bin/dshell`) |
+| `dshell.port` (in workspace) | descoperirea portului: serverul scrie, clientul citeste |
+| `evalq/` (in workspace) | coada JSON pentru reflecție Android, scriere atomica |
+
+#### Protocol
+
+O linie JSON per cerere, o linie JSON raspuns:
+
+```
+{"cmd":"ping"}                       -> {"ok":true,"out":"pong"}
+{"cmd":"sh","arg":"id -u"}           -> {"ok":true,"out":"2000\n"}
+{"cmd":"debian","arg":"uname -r"}    -> {"ok":true,"out":"6.1.0-debian\n"}
+{"cmd":"eval","arg":"2+3"}           -> {"ok":true,"out":"5"}
+```
+
+#### Teste end-to-end (rulate din Debian, prin punte)
+
+```
+dshell ping                             -> pong
+dshell eval "6*7"                       -> 42
+dshell sh "id -u"                       -> 2000
+dshell sh "getprop ro.product.model"    -> SM-A366B
+dshell sh "pm list packages | head -3"  -> package:com.sec.android.RilServiceModeApp ...
+dshell sh "dumpsys battery"             -> date complete baterie
+dshell debian "uname -r"                -> 6.1.0-debian
+```
+
+#### Detalii de implementare
+
+- **Worker permanent** pentru `evalq/`: `eval_worker()` porneste automat in
+  `serve_forever()`, scaneaza la 50 ms si goleste coada singur (fara intervenția agentului).
+- **Scriere atomica** a raspunsului: `.tmp.<base>` + `os.rename()` - cititorul nu prinde
+  niciodata un fisier pe jumatate scris. (Bug prins in testare: prima versiune facea
+  `open().read()` dupa ce serverul scrisese deja, si prindea fisier gol.)
+- **Auto-heal ADB**: `_sh()` verifica `is_socket_healthy()` si reconecteaza inainte de
+  fiecare comanda (altfel `AttributeError: NoneType has no attribute sendall`).
+
+#### Ce NU poate face puntea (limite reale, dovedite)
+
+- creare UNIX socket-uri -> daemonii care le cer ramin imposibili
+- creare TUN din Debian -> dar aplicatia il poate crea prin `VpnService` si Debian il VEDE
+  (`tun0`, IP real, prin kernelul comun)
+- `iptables` -> `could not get iptables version: exit status 1`
+- root real de kernel (`uid=0` in proot este cosmetic; procesul real e uid 2000)
+
+#### Capcana importanta
+
+`ip route add ... dev tun0` rulat din Debian a returnat **`RC=0`** dar ruta **nu exista**
+in kernel (`ip route | grep -c` -> 0). Proot raporteaza succes pentru operații pe care nu
+le poate face. **Nu te increde in exit code-urile din Debian pentru operații de retea.**
+
+---
+
+
 ### 2026-10-20 - TERMINAL LINUX REAL IN APLICATIE (Debian 13 arm64 nativ, proot)
 
 > **Cerut de operator:** "vreau sa fie doar terminal... in terminal vreau sa vad real date
