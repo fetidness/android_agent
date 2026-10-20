@@ -3753,6 +3753,7 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
         "/data/local/tmp/libproot_exec.so -0 -r /data/local/tmp/debian -w /root "
         "--link2symlink --sysvipc --kernel-release=6.1.0-debian "
         "--bind=/dev --bind=/proc --bind=/sys "
+        "--bind=/sdcard --bind=/storage --bind=/data/local/tmp "
         "/usr/bin/env -i "
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
         "HOME=/root TERM=xterm-256color LANG=C.UTF-8 "
