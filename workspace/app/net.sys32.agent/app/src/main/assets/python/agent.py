@@ -3728,7 +3728,7 @@ def run_in_debian_meta(cmd, timeout=120, uid2000=False):
     return run_in_debian(cmd, timeout=timeout, uid2000=_eff), _eff
 
 
-def run_in_debian(cmd, timeout=120, uid2000=False):
+def run_in_debian(cmd, timeout=120, uid2000=False, _conn=None):
     """Ruleaza o comanda in Debian (rootfs /data/local/tmp) sau ca uid 2000.
 
     ★ DE CE PRIN ADB (dovada pe device, 2026-10-20):
@@ -3740,7 +3740,9 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
       workaround: e singura cale corecta fara root.
     """
     import shlex
-    c = _adb()
+    # ★ _conn: conexiune DEDICATA (bridge-ul dshell). Fara ea, `dshell debian`
+    # chemat in timp ce shell-ul Debian e ocupat intra in deadlock pe _SOCK_LOCK.
+    c = _conn if _conn is not None else _adb()
     # ★ DETECTIE AUTOMATA (cerut de operator: "apt install da eroare"):
     # uid 2000 = Android (/system/bin: pm, dumpsys, getprop, settings, am, input)
     # Debian   = rootfs (/usr/bin: apt, ls, cat, python, nano, git, vim...)
@@ -3778,7 +3780,8 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
         # si e decodata in sh:  echo <b64> | base64 -d | sh
         import base64 as _b64
         b = _b64.b64encode(cmd.encode()).decode()
-        return c.shell("echo " + b + " | base64 -d | /system/bin/sh", timeout=timeout) or ""
+        _runit = getattr(c, "shell_unlocked", c.shell) if _conn is not None else c.shell
+        return _runit("echo " + b + " | base64 -d | /system/bin/sh", timeout=timeout) or ""
     full = (
         "/data/local/tmp/libproot_exec.so -0 -r /data/local/tmp/debian -w /root "
         "--link2symlink --sysvipc --kernel-release=6.1.0-debian "
@@ -3798,7 +3801,10 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
         "/bin/bash -c \"echo %s | base64 -d | /bin/bash\" </dev/null"
         % (_dshell_port(), base64.b64encode(cmd.encode()).decode())
     )
-    return c.shell(full, timeout=timeout) or ""
+    # ★ pe conexiunea DEDICATA sarim peste _SOCK_LOCK (altfel `dshell debian` din
+    # Debian se auto-blocheaza: parintele tine lock-ul pe toata durata comenzii).
+    _runit = getattr(c, "shell_unlocked", c.shell) if _conn is not None else c.shell
+    return _runit(full, timeout=timeout) or ""
 
 
 _TERM_WORKER_STARTED = [False]
@@ -4065,7 +4071,13 @@ def _dshell_handle(req):
         except Exception as e:
             return {"ok": False, "err": "sh: %s: %s" % (type(e).__name__, e)}
     if cmd_ == "debian":
-        return {"ok": True, "out": run_in_debian(arg, timeout=tmo) or ""}
+        # ★ conexiune DEDICATA + shell_unlocked: altfel `dshell debian` chemat din
+        # Debian intra in deadlock pe _SOCK_LOCK (acelasi motiv ca la "sh").
+        try:
+            dconn = _dshell_adb()
+            return {"ok": True, "out": run_in_debian(arg, timeout=tmo, _conn=dconn) or ""}
+        except Exception as e:
+            return {"ok": False, "err": "debian: %s: %s" % (type(e).__name__, e)}
     if cmd_ == "eval":
         return {"ok": True, "out": _dshell_eval(arg)}
     # orice alt nume = un tool al agentului (ui, notif, sensors, location, ...)
