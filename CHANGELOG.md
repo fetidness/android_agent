@@ -5,6 +5,54 @@
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
 > Ultimul commit inclus: `6f72ee5` (2026-10-16).
 
+### 2026-10-21 (c) - BINDER nativ: Debian vorbeste direct cu serviciile Android
+
+> **Cerut de operator:** "implementeaza la nivel de debian ca el sa comunice cu
+> acest binder. si el sa aiba acces complet la servicii."
+
+#### Rezultat
+
+Debian-ul (proot) apeleaza acum **nativ** serviciile Android prin `/dev/binder`,
+fara bridge si fara procesul aplicatiei:
+
+```
+android-binder list | wc -l      -> 468  (identic cu /system/bin/service list)
+android-binder iface display     -> android.hardware.display.IDisplayManager
+android-binder aidlcall display android.hardware.display.IDisplayManager 1
+                                 -> status=0x0, date reale
+```
+
+Din Python (modul global): `import binder; b = binder.Binder(); b.call("display", 1)`
+
+#### Ce s-a adaugat
+
+- `assets/binder/debian_binder.c` - client Binder nativ glibc (gcc din Debian)
+- `assets/binder/binder.py` - modul Python (list / check / handle / iface / call)
+- `assets/binder/install_binder.sh` - instalare in `/opt/android-binder` + symlink
+- `assets/binder/bctl-android` - clientul Android echivalent (istoric)
+- `DEBIAN_BINDER.md` - protocolul complet, offseturi verificate prin ptrace
+
+#### Descoperiri tehnice (toate dovedite pe device)
+
+- binarul Android NU ruleaza din Debian (libc incompatibil) -> compilare nativa glibc
+- `setgid` INAINTE de `setuid(2000)`, altfel EPERM in proot; fara setuid SELinux
+  refuza `binder_call` (proot da uid 0, contextul ramane `shell:s0`)
+- secventa obligatorie inainte de primul apel:
+  `BC_ACQUIRE` -> `BC_INCREFS` -> `BC_FREE_BUFFER` -> `INTERFACE_TRANSACTION` -> apel
+  (daca FREE_BUFFER vine inainte de ACQUIRE/INCREFS nu mai vine niciun reply)
+- `flags = 0x10` (TF_ACCEPT_FDS) obligatoriu; `code` la off 16, `data_size` la off 32
+- descriptorul AIDL se obtine cu `iface`, nu se ghiceste
+  (ex: serviciul `mount` are `android.os.storage.IStorageManager`)
+- padding `vector<String16>`: la multiplu de 4, dar STRICT mai mare daca e deja aliniat
+  -> 468/468 servicii identice cu `service list`
+
+#### Limitari (SELinux, context shell:s0)
+
+- `EX_SECURITY` pe media.*, stats, surfaceflinger, connectivity
+- servicii lazy (activity, window, notification): `getService` intoarce null
+
+---
+
 ---
 
 ### 2026-10-21 (b) - DShell BRIDGE integrat in agent.py + paritate 100%
