@@ -50,6 +50,16 @@ class Binder:
         # uz, iar procesul aplicatiei are propriul binder (runtime Android).
         # Un singur client se pastreaza viu (vezi _binder_client din agent.py).
         self.fd = os.open(dev, os.O_RDWR)
+        # inchidem clientii ramasi de la instante anterioare ale ACESTUI modul
+        # (niciodata fd-urile altui proces/cod: binder-ul aplicatiei e pe alt fd)
+        for old in list(Binder._MY_FDS):
+            if old == self.fd:
+                continue
+            try:
+                os.close(old)
+            except OSError:
+                pass
+            Binder._MY_FDS.discard(old)
         Binder._MY_FDS.add(self.fd)
         fcntl.fcntl(self.fd, fcntl.F_SETFL,
                     fcntl.fcntl(self.fd, fcntl.F_GETFL) | os.O_NONBLOCK)
