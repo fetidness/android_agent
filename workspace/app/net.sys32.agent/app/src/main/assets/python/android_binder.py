@@ -38,8 +38,19 @@ class BinderError(Exception):
 class Binder:
     """Client Binder in-process. `mmap` pana la 1 MB, non-blocking."""
 
-    def __init__(self, dev="/dev/binder", rdbuf=262144):
+    # ★ NICIODATA nu inchide fd-uri binder care nu iti apartin: procesul
+    # aplicatiei are propriul binder (folosit de runtime-ul Android) si daca
+    # il inchizi aplicatia ramane intr-o stare instabila pana la restart.
+
+    # fd-urile deschise de ACEST modul (ca sa nu atingem binder-ul aplicatiei)
+    _MY_FDS = set()
+
+    def __init__(self, dev="/dev/binder", rdbuf=262144, cleanup=True):
+        # ★ NU inchidem fd-uri ale altor instante: mmap-ul lor poate fi inca in
+        # uz, iar procesul aplicatiei are propriul binder (runtime Android).
+        # Un singur client se pastreaza viu (vezi _binder_client din agent.py).
         self.fd = os.open(dev, os.O_RDWR)
+        Binder._MY_FDS.add(self.fd)
         fcntl.fcntl(self.fd, fcntl.F_SETFL,
                     fcntl.fcntl(self.fd, fcntl.F_GETFL) | os.O_NONBLOCK)
         self.mapsz = 0
@@ -111,7 +122,16 @@ class Binder:
         return bytes(o)
 
     # ---------- tranzactie ----------
-    def transact(self, handle, code, data=b"", do_free=True, tries=800, timeout_s=8.0):
+    def transact(self, handle, code, data=b"", do_free=True, timeout_s=8.0):
+        """Trimite o tranzactie si intoarce (pid, data, offsets) din BR_REPLY.
+
+        Reply-ul are 76 de octeti, cu offseturi VERIFICATE prin ptrace:
+          off 0 : 0x720c BR_NOOP
+          off 4 : 0x7206 BR_REPLY
+          off 8 : 0x80407203 (header de comanda)
+          off 12: binder_transaction_data
+          pid@40  data_size@44  offsets_size@52  data.ptr@60  offsets.ptr@68
+        """
         pkt = struct.pack("<I", BC_TRANSACTION)
         t = bytearray(64)
         struct.pack_into("<I", t, 0, handle)
@@ -122,27 +142,43 @@ class Binder:
             k = ctypes.create_string_buffer(bytes(data), len(data))
             self._keep.append(k)
             struct.pack_into("<Q", t, 48, ctypes.addressof(k))
+
         ok, rc = self._bwr(pkt + bytes(t))
         if ok < 0:
-            raise BinderError("BINDER_WRITE_READ a esuat (errno=%s)" % getattr(self, "_last_errno", "?"))
+            raise BinderError("send esuat (errno=%s)" % getattr(self, "_last_errno", "?"))
+
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             if not rc:
                 ok, rc = self._bwr(None)
                 if ok < 0:
-                    raise BinderError("citire binder a esuat")
+                    raise BinderError("read esuat (errno=%s)" % getattr(self, "_last_errno", "?"))
             if not rc:
                 time.sleep(0.002)
                 continue
             used, rc = rc, 0
-            raw = self._rd.raw[:used]
+            buf = self._rd.raw[:used]
+
+            # cauta BR_REPLY in buffer (inaintea lui pot veni NOOP/COMPLETE)
+            pos = 0
+            while pos + 4 <= used:
+                w, = struct.unpack_from("<I", buf, pos)
+                if w in (BR_NOOP, BR_TRANSACTION_COMPLETE):
+                    pos += 4
+                    continue
+                break
             if used < 76:
-                return None
-            pid, = struct.unpack_from("<I", raw, 40)
-            dsz, = struct.unpack_from("<Q", raw, 44)
-            osz, = struct.unpack_from("<Q", raw, 52)
-            dptr, = struct.unpack_from("<Q", raw, 60)
-            optr, = struct.unpack_from("<Q", raw, 68)
+                continue                      # inca nu e reply complet
+            w, = struct.unpack_from("<I", buf, pos)
+            if (w & 0xFFFF) != BR_REPLY:
+                continue
+
+            # offseturi ABSOLUTE in buffer (verificate prin ptrace pe libbinder)
+            pid, = struct.unpack_from("<I", buf, 40)
+            dsz, = struct.unpack_from("<Q", buf, 44)
+            osz, = struct.unpack_from("<Q", buf, 52)
+            dptr, = struct.unpack_from("<Q", buf, 60)
+            optr, = struct.unpack_from("<Q", buf, 68)
             self.last_dptr = dptr
             d = b""
             offs = b""
@@ -263,6 +299,7 @@ class Binder:
             os.close(self.fd)
         except OSError:
             pass
+        Binder._MY_FDS.discard(self.fd)
 
 
 def strings(data):

@@ -83,3 +83,30 @@ P: /data/data/net.sys32.agent/files/python/android_binder.py   modulul (live)
 P: /data/data/net.sys32.agent/files/python/agent.py            tool-ul integrat
 P: /storage/emulated/0/Download/Agent/workspace/android_binder.py
 P: workspace/app/.../assets/python/android_binder.py            (in repo)
+
+===============================================================================
+## LECTII DUROASE (2026-10-21, dupa testul in-productie)
+===============================================================================
+
+TRAP: NICIODATA sa nu inchizi fd-uri binder care nu iti apartin. Procesul
+      aplicatiei are propriul binder (fd ~8, folosit de runtime-ul Android).
+      Daca il inchizi, ORICE ioctl binder din proces da errno=13 (EACCES) si
+      aplicatia ramane instabila PANA LA RESTART.
+      Simptom: `binder error: send esuat (errno=13)` / `errno=9 (EBADF)`.
+      Fix: restart aplicatie. In cod: un singur os.close, pe self.fd.
+
+TRAP: NU pastra mai multi clienti Binder simultan in acelasi proces. Al doilea
+      client (fd nou) primeste "reply prea mic" pentru ca primul are tranzactii
+      in curs. Un singur client viu, refolosit (`_binder_client()` din agent.py).
+
+TRAP: dupa un esec de comunicatie, clientul poate ramane cu buffere in coada.
+      Tool-ul face UN reset (close + instanta noua) si reincearca o data.
+      Daca tot esueaza, e semn de stare compromisa -> restart.
+
+OK:  secventa dovedita in productie (10/10 apeluri consecutive):
+       list(468) -> handle -> iface -> call, fara crestere de fd-uri.
+
+OK:  apelul pe `power` code 5 intoarce mesajul REAL de permisiuni:
+       "Neither user 10408 nor current process has
+        android.permission.DEVICE_POWER."
+     Deci binder-ul spune exact ce lipseste - foloseste-l ca diagnostic.

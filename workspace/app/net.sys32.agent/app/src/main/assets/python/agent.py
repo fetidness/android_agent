@@ -2387,16 +2387,50 @@ def run_binder_tool(action, params=None):
 
         return ("actiune necunoscuta: %s (foloseste list|check|handle|iface|call|raw)" % a)
     except Exception as e:
-        # clientul poate fi intr-o stare moarta (fd inchis, mmap invalid) -> reincercam o data
+        # clientul poate fi intr-o stare moarta (fd blocat, buffer neeliberat,
+        # timeout) -> il aruncam si reincercam ODATA cu unul proaspat
         try:
+            if _BINDER[0] is not None:
+                try:
+                    _BINDER[0].close()
+                except Exception:
+                    pass
             _BINDER[0] = None
             b = _binder_client()
             if a == "list":
                 svcs = b.list()
                 return "%d servicii:\n%s" % (len(svcs), "\n".join(
                     "%d\t%s" % (i, x) for i, x in enumerate(svcs)))
-        except Exception:
-            pass
+            if a == "check":
+                return "%s: %s" % (name, "found" if b.check(name) else "not found")
+            if a == "handle":
+                h = b.handle(name)
+                return "%s: %s" % (name, "null (lazy sau inexistent)"
+                                   if h is None else "handle=%d" % h)
+            if a == "iface":
+                d = b.iface(name)
+                return "%s: %s" % (name, d or "(fara descriptor - nu e AIDL)")
+            if a in ("call", "raw"):
+                code = int(p.get("code", 0) or 0)
+                cargs = p.get("args") or []
+                if isinstance(cargs, (int, str)):
+                    cargs = [cargs]
+                cargs = [int(x) & 0xFFFFFFFF for x in cargs]
+                st, data = b.call(name, code, p.get("descriptor"), *cargs)
+                out = ["%s code=%d -> status=%s len=%d (client refacut)"
+                       % (name, code, st, len(data))]
+                try:
+                    from android_binder import strings as _strings
+                    txt = _strings(data)[:8]
+                    if txt:
+                        out.append("stringuri: " + " | ".join(s2[:80] for s2 in txt))
+                except Exception:
+                    pass
+                if data:
+                    out.append("hex: " + data[:256].hex())
+                return "\n".join(out)
+        except Exception as e2:
+            return "binder error (dupa reset): %s: %s" % (type(e2).__name__, e2)
         return "binder error: %s: %s" % (type(e).__name__, e)
 
 
