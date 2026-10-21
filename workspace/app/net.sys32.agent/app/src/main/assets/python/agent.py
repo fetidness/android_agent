@@ -2299,14 +2299,31 @@ def run_adbsh_tool(cmd, timeout=20):
 # ---------------------------------------------------------------------------
 _BINDER = [None]
 
-def _binder_client():
-    """Client Binder lazy, refolosit intre apeluri (fd + mmap raman deschise)."""
-    if _BINDER[0] is not None:
-        return _BINDER[0]
+_BINDER_MOD = [None]
+
+def _binder_mod():
+    """Modulul android_binder, incarcat O SINGURA DATA per proces.
+
+    ★ CRITIC: reincarcarea la fiecare apel reseteaza `Binder._MY_FDS`, deci
+    curatenia din constructor nu mai vede clientii vechi si fiecare apel lasa
+    un fd binder orfan in urma. Dupa ~4 apeluri ioctl-ul incepe sa dea
+    timeout si serviciile nu mai pot fi obtinute.
+    """
+    if _BINDER_MOD[0] is not None:
+        return _BINDER_MOD[0]
     import importlib.util as _iu
     here = os.path.dirname(os.path.abspath(__file__))
     sp = _iu.spec_from_file_location("android_binder", os.path.join(here, "android_binder.py"))
     mod = _iu.module_from_spec(sp); sp.loader.exec_module(mod)
+    _BINDER_MOD[0] = mod
+    return mod
+
+
+def _binder_client():
+    """Client Binder lazy, refolosit intre apeluri (fd + mmap raman deschise)."""
+    if _BINDER[0] is not None:
+        return _BINDER[0]
+    mod = _binder_mod()
     _BINDER[0] = mod.Binder()
     return _BINDER[0]
 
