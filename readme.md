@@ -8,6 +8,11 @@
 > "TERMINAL LINUX (2026-10-20)" si `CHANGELOG.md` 2026-10-20.
 
 
+> **Stare 2026-10-21 (c):** Debian-ul are acum si **BINDER NATIV** - apeleaza direct
+> serviciile Android prin `/dev/binder`, fara bridge. `android-binder list` da 468 de
+> servicii (identic cu `service list`), iar `android-binder aidlcall ...` face apeluri AIDL
+> reale. Vezi sectiunea "BINDER NATIV" si `DEBIAN_BINDER.md`.
+
 ## 🔗 DShell BRIDGE (2026-10-21) - DEBIAN VORBESTE CU ANDROIDUL
 
 Punte RPC prin **TCP pe localhost** care da codului din Debian acces la **tot** ce
@@ -119,6 +124,151 @@ dshell battery '{"action":"full"}'
 `ip route add ... dev tun0` rulat din Debian a returnat **`RC=0`** dar ruta **nu exista**
 in kernel. **Proot raporteaza succes pentru operații pe care nu le poate face** - nu te
 increde in exit code-urile din Debian pentru operații de retea.
+
+---
+
+## 🔌 BINDER NATIV (2026-10-21) - DEBIAN APELEAZA DIRECT SERVICIILE ANDROID
+
+Peste bridge-ul DShell, Debian-ul are acum acces **nativ** la serviciile Android prin
+`/dev/binder`, fara bridge si fara procesul aplicatiei.
+
+### Ce face
+
+```
+android-binder list | wc -l      -> 468   (identic cu /system/bin/service list)
+android-binder check package     -> package: found
+android-binder handle display    -> display  1
+android-binder iface display     -> android.hardware.display.IDisplayManager
+android-binder aidlcall display android.hardware.display.IDisplayManager 1
+                                 -> status=0x0, 1736 bytes de date reale
+```
+
+Din Python (modul global, instalat in site-packages):
+```python
+import binder
+b = binder.Binder()
+len(b.list())                          # 468
+b.handle("display")                    # 1
+b.interface_descriptor("display")      # android.hardware.display.IDisplayManager
+st, data = b.call("display", 1)        # status=0, date reale
+b.strings(data)[:3]                    # ['android.view.DisplayAddress$Physical', ...]
+```
+
+### Instalare (in Debian, proot)
+
+```bash
+sh /opt/android-binder/install_binder.sh
+# sau, din surse:
+cd /root/binder && gcc -O2 -o binder debian_binder.c
+cp binder /opt/android-binder/android-binder
+```
+
+Ce instaleaza:
+- `/opt/android-binder/android-binder` - binar nativ glibc
+- `/opt/android-binder/binder.py` - modul Python
+- `/opt/android-binder/debian_binder.c` - sursa
+- `/usr/local/bin/android-binder` - symlink
+- `<site-packages>/binder.py` - modul importabil global
+
+### De ce trebuie compilat NATIV (nu se poate reutiliza binarul Android)
+
+Binarul Android (`bctl`) este linked cu libc-ul Android (bionic), deci din proot da:
+
+```
+/bin/bash: /data/local/tmp/bctl: cannot execute: required file not found
+```
+
+Debian are `gcc 14.2` si `/usr/include/linux/android/binder.h`, deci clientul se
+compileaza nativ glibc si vorbeste direct cu driverul binder.
+
+### Identitate si SELinux (dovedit)
+
+- proot da **uid 0**, dar contextul SELinux ramane `u:r:shell:s0`
+- cu uid 0, servicemanager refuza: `status=0x80000001` (`EX_SECURITY`)
+- solutia: `setgid(2000)` **INAINTE** de `setuid(2000)` (altfel `EPERM` in proot)
+- dupa setuid, totul functioneaza identic cu `adbsh`
+
+### Protocol (offseturi verificate prin ptrace pe libbinder, nu ghicite)
+
+**Parcel AIDL** (exemplu `checkService`):
+```
+off  0 : 0x80000000   strict policy
+off  4 : 0xFFFFFFFF
+off  8 : 0x53595354   'TSYS'
+off 12 : len(descriptor)
+off 16 : UTF-16 descriptor + 4 B padding
+off 72 : int32 len(arg)  (String16)
+off 76 : UTF-16 arg + padding
+```
+
+**Tranzactie** (`binder_transaction_data`, 64 B):
+```
+off  0 : target.handle   u32
+off 16 : code            u32      <- NU 12
+off 20 : flags           u32      <- 0x10 (TF_ACCEPT_FDS) OBLIGATORIU
+off 32 : data_size       u64      <- NU 20
+off 40 : offsets_size    u64
+off 48 : data.ptr        u64
+off 56 : data.offsets.ptr u64
+```
+
+**Reply** (76 B):
+```
+off  0 : 0x720c BR_NOOP
+off  4 : 0x7206 BR_REPLY
+off  8 : 0x80407203 (header separat)
+off 12 : binder_transaction_data
+         off 40 : sender_pid   u32  = 1000
+         off 44 : data_size    u64
+         off 52 : offsets_size u64
+         off 60 : data.ptr     u64  in zona mmap
+         off 68 : offsets.ptr  u64
+```
+
+**Secventa OBLIGATORIE inainte de primul apel** (altfel nu vine niciun reply):
+```
+1. BC_TRANSACTION getService (handle 0)
+2. BC_ACQUIRE  (0x40046304) + u32 handle
+3. BC_INCREFS  (0x40046305) + u32 handle
+4. BC_FREE_BUFFER (0x40086303) + u64 dptr   <- DUPA acquire/increfs!
+5. INTERFACE_TRANSACTION (0x5f4e5446) pe handle
+6. apelul real
+```
+Daca `FREE_BUFFER` vine INAINTE de `ACQUIRE`/`INCREFS`, kernelul livreaza doar
+`BR_TRANSACTION_COMPLETE` (8 bytes) si apoi timeout la infinit. Asta a costat cele
+mai multe iteratii de debugging.
+
+### Capcane dovedite
+
+- descriptorul AIDL **NU se ghiceste** - obtine-l cu `android-binder iface <nume>`.
+  Exemplu: serviciul `mount` are `android.os.storage.IStorageManager`, nu `IMountService`.
+- serviciile AIDL cer descriptorul in parcel, altfel:
+  `Binder invocation to an incorrect interface` (status `-1`)
+- handle-ul e **local procesului**: obtine-l in acelasi proces in care apelezi
+- `mmap` pe `/dev/binder` accepta pana la **1 MB** (nu doar 4096)
+- padding `vector<String16>`: la multiplu de 4, dar **STRICT mai mare** daca e deja
+  aliniat (dedus din 468 elemente reale -> 468/468 identice cu `service list`)
+- pentru tracing: `PTRACE_PEEKDATA`; `process_vm_readv` da `EPERM` din `shell:s0`
+
+### Limitari reale (SELinux, `shell:s0`)
+
+- `EX_SECURITY` pe: `media.*`, `stats`, `surfaceflinger`, `connectivity`
+- servicii **lazy** (`activity`, `window`, `notification`): `getService` intoarce null
+- merg: `package`, `power`, `display`, `input`, `mount`, `alarm`, `clipboard`,
+  `battery`, `device_policy`, `dropbox`, `bluetooth_manager`
+
+### Fisiere
+
+```
+workspace/app/.../assets/binder/debian_binder.c    client nativ glibc
+workspace/app/.../assets/binder/binder.py          modul Python
+workspace/app/.../assets/binder/install_binder.sh  instalare
+workspace/app/.../assets/binder/binder_android.c   clientul Android (referinta)
+DEBIAN_BINDER.md                                   protocol complet
+```
+
+---
+
 ## 🖥 TERMINAL LINUX (2026-10-20) - ARHITECTURA
 
 Butonul **TERMINAL** din bara aplicatiei deschide `LinuxTerminalActivity`: tab-uri multiple,
