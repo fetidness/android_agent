@@ -232,6 +232,22 @@ android-binder selftest          numara: accesibile / lazy / refuzate SELinux,
 android-binder iface <nume>      descriptorul AIDL (nu cere semnatura speciala)
 ```
 
+## UNDE STA BINARUL (dupa setup-ul automat, 2026-10-21)
+===============================================================================
+```
+/data/local/tmp/debian                          rootfs-ul REAL (executabil;
+                                                files/debian NU poate fi executat)
+/data/local/tmp/proot_exec.so                   proot copiat executabil
+/data/local/tmp/binder/                         sursa clientului (din assets/binder)
+/opt/android-binder/android-binder              binarul compilat
+/usr/local/bin/android-binder  (in guest)       symlink -> binar
+files/.debian_ready                             flag: setup complet
+
+DE CE: aplicatia (uid 10xxx) nu poate execve din app_data_file (W^X SELinux) si
+nu poate scrie in /data/local/tmp -> setup-ul se face de adbd (uid 2000) la prima
+deschidere a terminalului. Detalii in readme.md -> "SETUP AUTOMAT".
+```
+
 ===============================================================================
 ## FISIERE
 ===============================================================================

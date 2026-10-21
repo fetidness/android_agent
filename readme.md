@@ -17,6 +17,84 @@
 > servicii (identic cu `service list`), iar `android-binder aidlcall ...` face apeluri AIDL
 > reale. Vezi sectiunea "BINDER NATIV" si `DEBIAN_BINDER.md`.
 
+## 🚀 SETUP AUTOMAT (2026-10-21) - INSTALAREA APK = MEDIU COMPLET FUNCTIONAL
+
+### Ce se intampla
+
+`adb install` + **prima deschidere a TERMINALULUI**. Atat. Sistemul isi instaleaza
+singur, o singura data (~3-5 minute), tot ce nu poate veni in APK:
+
+| Pas | Ce face | Unde ajunge |
+|---|---|---|
+| 1 | Linux filesystem (rootfs Debian 13 trixie arm64) | `/data/local/tmp/debian` |
+| 2 | Linux runtime (proot cross-compilat) | `/data/local/tmp/proot_exec.so` |
+| 3 | Compiler toolchain (`apt-get install gcc libc6-dev`) | in rootfs |
+| 4 | Android service access (`android-binder` compilat din sursa din APK) | `/usr/local/bin/android-binder` |
+
+La final: `android-binder selftest` ruleaza automat si scrie rezumatul.
+Flag: `files/.debian_ready`. A doua deschidere a terminalului nu mai face nimic.
+Reincercare manuala: scrie `setup` in terminal.
+
+### De ce la deschiderea terminalului si nu la pornirea aplicatiei
+
+Aplicatia (uid 10xxx, `untrusted_app`) **nu poate** face singura setup-ul:
+
+```
+# aplicatia nu poate execve din app_data_file (W^X SELinux):
+$ cp rootfs/usr/bin/echo files/tmp/echo_test
+$ files/tmp/echo_test hello
+sh: files/tmp/echo_test: No such file or directory     <- desi exista, -rwxr-xr-x
+# /data NU e noexec; restrictia e SELinux.
+
+# aplicatia nu poate scrie in /data/local/tmp:
+$ touch /data/local/tmp/_w
+Permission denied                                        <- drwxrwx--x shell shell
+```
+
+Deci rootfs-ul executabil si proot trebuie instalate de **adbd (uid 2000,
+`u:r:shell:s0`)**. Setup-ul ruleaza prin `adb_client` si scrie progresul in
+terminal - exact canalul prin care operatorul vede ce se intampla.
+
+### Cum arata in terminal
+
+```
+Setting up the Linux environment
+------------------------------
+This is the first run, so the system installs what
+it needs.
+It takes a few minutes. Please wait until you see
+DONE.
+The terminal stays open; each step is listed as it
+finishes.
+
+  [done] Linux filesystem
+  [done] Linux runtime
+  [done] Compiler toolchain
+  [done] Android service access
+
+DONE
+Everything is ready. You can use the terminal now.
+```
+
+Reguli de afisare (cerute de operator): **fara coduri ANSI** (terminalul le arata
+ca text brut: `[38;5;203mDONE[0m`), **o linie per mesaj**, doar in terminal -
+nimic sub "AGENT DeepSeek" in fereastra principala.
+
+### Capcane dovedite (fiecare a costat o instalare)
+
+TRAP: AGP **dezactiveaza compresia** la ambalare -> pe device ajunge
+  `trixie-arm64.tar` NECOMPRIMAT, desi in sursa e `.tar.gz`. `tar -xzf` pe el da
+  "zcat: not gzip / tar: had errors". Detectie pe **magic bytes**.
+TRAP: `extractAssets()` copia doar `assets/python`; `assets/binder` si
+  `assets/skills` trebuie copiate explicit (altfel agentul isi scrie un client
+  binder nou de la zero, cu offseturi gresite, si raporteaza "0 servicii").
+TRAP: erau DOUA `memory.md` in assets (radacina = cel bun, `python/` = unul vechi
+  de 690 B). `copyDir("python")` il aducea pe cel vechi.
+TRAP: nodurile din `/dev` (mknod fara root) si hardlink-urile din `/usr/bin` fac
+  `tar` sa iasa cu eroare; NU invalideaza rootfs-ul (`/dev` e legat de la gazda).
+TRAP: terminalul chema `libproot_exec.so`, setup-ul instaleaza `proot_exec.so`
+  -> "inaccessible or not found" la ORICE comanda din Debian.
+
 ## 🔗 DShell BRIDGE (2026-10-21) - DEBIAN VORBESTE CU ANDROIDUL
 
 Punte RPC prin **TCP pe localhost** care da codului din Debian acces la **tot** ce

@@ -3,7 +3,96 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `6f72ee5` (2026-10-16).
+> Ultimul commit inclus: `815fa1d` (2026-10-21).
+
+### 2026-10-21 (e) - SETUP AUTOMAT: instalarea APK = mediu complet functional
+
+> **Cerut de operator:** "aplicatia instalata de la 0 trebuie sa fie complet
+> functionala" si "cand deschid prima data terminalul, sa porneasca setupul".
+
+#### Ce se intampla acum
+
+Dupa `adb install` + prima deschidere a TERMINALULUI, sistemul isi instaleaza
+singur tot ce ii lipseste, o singura data (~3-5 minute), si scrie progresul
+**exclusiv in terminal**, in engleza, fara coduri ANSI (nu se randeaza):
+
+```
+Setting up the Linux environment
+------------------------------
+This is the first run, so the system installs what
+it needs.
+It takes a few minutes. Please wait until you see
+DONE.
+The terminal stays open; each step is listed as it
+finishes.
+
+  [done] Linux filesystem
+  [done] Linux runtime
+  [done] Compiler toolchain
+  [done] Android service access
+
+DONE
+Everything is ready. You can use the terminal now.
+```
+
+Comanda `setup` in terminal reia doar pasii lipsa (idempotent, flag
+`files/.debian_ready`).
+
+#### Cele 5 cauze reale ale esecurilor anterioare (fiecare dovedita pe device)
+
+1. **`extractAssets()` copia doar `assets/python`.** `assets/binder` (sursa C,
+   `bctl-android`, `install_binder.sh`) si `assets/skills` nu ajungeau
+   NICIODATA pe device. La instalare curata agentul nu avea nici documentatie,
+   nici installer, deci isi scria un client binder nou de la zero - cu offseturi
+   gresite - si raporta "0 din 25 servicii".
+2. **Erau DOUA `memory.md`** in assets: cel bun in radacina si unul vechi (690 B,
+   doar antetul) in `assets/python/`. `copyDir("python")` il aducea pe cel vechi,
+   deci toate lectiile despre binder se pierdeau.
+3. **Aplicatia nu poate execve din `app_data_file`** (W^X SELinux): o copie a
+   lui `echo` din rootfs in `files/tmp` da "No such file or directory" la exec,
+   desi fisierul exista si e `-rwxr-xr-x`. `/data` NU e montat noexec - restrictia
+   e SELinux.
+4. **Aplicatia nu poate scrie in `/data/local/tmp`** (`drwxrwx--x shell shell`):
+   `PermissionError` la `makedirs`. Doar uid 2000 (adbd) poate -> setup-ul se
+   executa prin `adb_client`, nu direct.
+5. **Terminalul chema `/data/local/tmp/libproot_exec.so`**, dar setup-ul
+   instaleaza binarul ca `proot_exec.so` -> ORICE comanda din Debian esua cu
+   "inaccessible or not found".
+
+#### Alte bug-uri reparate
+
+- AGP **dezactiveaza compresia** la ambalare: pe device ajunge
+  `trixie-arm64.tar` NECOMPRIMAT, iar codul folosea `tar -xzf` -> "zcat: not gzip".
+  Acum detectia se face pe magic bytes (gzip / zstd / tar simplu).
+- Extragerea rootfs-ului pica la final din cauza nodurilor `/dev` (mknod fara
+  root) si a hardlink-urilor din `/usr/bin`; acum sunt tolerate daca structura
+  `bin/ etc/ usr/` exista (`/dev` e oricum legat de la gazda).
+- `debian_binder.c`: `selftest` nou (numara accesibile / lazy / refuzate SELinux),
+  handle citit corect (`0x80000001` = null din parcel, NU handle), buffer de reply
+  256 KB (lista se trunchia la ~80 din 467), nume de serviciu pana la 256 caractere.
+- Validarea de la pasul binder era gresita (cerea "android-binder" in output, dar
+  scriptul se termina cu `selftest`) -> raporta fals "install failed".
+
+#### Masuratoare reala (SM-A366B, Android 16, instalare curata)
+
+```
+din aplicatie (untrusted_app): 467 servicii, handle package=1 display=2 power=3
+  call display 1 -> status=0, 1736 bytes (DisplayAddress$Physical, QCM)
+  call power 5   -> status=-1 "Neither user N nor current process has
+                    android.permission.DEVICE_POWER"  (eroare reala a sistemului)
+din Debian (u:r:shell:s0): android-binder selftest
+  servicii listate 467 | getService REUSIT 212 | lazy 3 | refuzate SELinux 251
+```
+
+~350 servicii sunt **lazy** (`activity`, `window`, `notification`,
+`SurfaceFlinger`, `stats`, `media.*`): se inregistreaza in servicemanager abia
+cand le cere un client din framework. Un esantion din ele da "0/N" si pare ca
+binder-ul e stricat - de aceea exista acum `selftest`.
+
+#### UI
+
+- subtitlu fereastra principala: `Type /help` (inainte se trunchia)
+- caseta de input din terminal: fara hint-ul "uid 2000 - scrie o comanda..."
 
 ### 2026-10-21 (d) - BINDER IN-PROCESS: agentul apeleaza serviciile Android direct
 

@@ -75,6 +75,27 @@ Assets-ul e inclus automat (`src/main/assets/`). Nu exista pas suplimentar:
 build_apk action=build dir=/root/work/android_agent/workspace/app/net.sys32.agent
 ```
 
+## Instalare pe device (de la 0) - automat
+
+Dupa `adb install`, **deschide TERMINALUL o singura data**. Setup-ul ruleaza
+singur (~3-5 minute) si isi instaleaza tot ce lipseste:
+
+| Pas | Rezultat |
+|---|---|
+| Linux filesystem | `/data/local/tmp/debian` |
+| Linux runtime | `/data/local/tmp/proot_exec.so` |
+| Compiler toolchain | `gcc` in rootfs (apt) |
+| Android service access | `/usr/local/bin/android-binder` |
+| Verificare | `android-binder selftest` + flag `files/.debian_ready` |
+
+Reincercare manuala: scrie `setup` in terminal.
+
+DE CE NU SE POATE LA PORNIREA APLICATIEI (dovedit pe device):
+- aplicatia nu poate execve din `app_data_file` (W^X SELinux): o copie a lui
+  `echo` in `files/tmp` da "No such file or directory" la exec
+- aplicatia nu poate scrie in `/data/local/tmp` (`drwxrwx--x shell shell`)
+-> instalarea trebuie facuta de adbd (uid 2000), deci la deschiderea terminalului.
+
 ## Ce NU e in repo (si de ce)
 
 - rootfs-ul Debian (`/data/local/tmp/debian`) — 25 MB+, se reinstaleaza
@@ -85,11 +106,12 @@ build_apk action=build dir=/root/work/android_agent/workspace/app/net.sys32.agen
 
 ```
 # in aplicatie (agentul)
-binder action=list                        -> 469 servicii
+binder action=list                        -> ~467 servicii
+binder action=handle name=package         -> 1
 binder action=call name=display code=1    -> status=0, 1736 bytes
 
 # in Debian
-android-binder selftest                   -> "getService REUSIT: 213 / 469", CONCLUZIE explicita
+android-binder selftest                   -> 212/467 accesibile + CONCLUZIE explicita
 android-binder iface package              -> android.content.pm.IPackageManager
 android-binder iface display              -> android.hardware.display.IDisplayManager
 ```
