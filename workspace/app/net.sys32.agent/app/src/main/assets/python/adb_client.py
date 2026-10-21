@@ -672,6 +672,29 @@ class Adb:
                     pass
             return r
 
+    def shell_unlocked(self, cmd, timeout=15):
+        """Ruleaza o comanda FARA lock-ul global `_SOCK_LOCK`.
+
+        ★ DE CE EXISTA (dovedit pe device, reprodus in izolare):
+        `shell()` ia `_SOCK_LOCK` - un lock GLOBAL, nu per-conexiune. Shell-ul Debian
+        (`run_in_debian` -> `_adb().shell()`) il TINE pe toata durata comenzii, deci un
+        al doilea thread (bridge-ul dshell) care cheama `shell()` astepta acelasi lock
+        pana la timeout -> `dshell sh` din Debian atarna cu rc=124, desi `dshell camera`
+        (care nu atinge adb) mergea perfect. O conexiune ADB separata NU e suficienta:
+        lock-ul era global. De aceea aici sarim peste el.
+
+        SIGURANTA: se foloseste EXCLUSIV pe o conexiune PRIVATA (vezi `_dshell_adb`),
+        cu care nu imparte socket-ul niciun alt thread. Serializarea intre thread-uri
+        nu mai e necesara pentru ca nu exista concurenta pe acel socket.
+        """
+        if getattr(self, "_poisoned", False):
+            self._poisoned = False
+            try:
+                self.close(); self.connect()
+            except Exception:
+                pass
+        return self._shell_locked(cmd, timeout)
+
     def _shell_locked(self, cmd, timeout=15):
         """Runs ONE shell command over a shell-v2 stream and returns its output.
 

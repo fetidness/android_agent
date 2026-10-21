@@ -4017,6 +4017,37 @@ def _dshell_port():
         return DSHELL_DEFAULT_PORT
 
 
+_DSHELL_ADB = [None]          # conexiune ADB DEDICATA bridge-ului (nu cea partajata)
+
+
+def _dshell_adb():
+    """Conexiune ADB proprie pentru bridge-ul dshell.
+
+    ★ DE CE (dovedit pe device 2026-xx): `sh` chemat din Debian folosea `_adb().shell()`,
+    adica socket-ul PARTAJAT, serializat de `_SOCK_LOCK`. Dar shell-ul Debian INSUSI ruleaza
+    prin acelasi `_adb().shell()` si TINE lock-ul pe durata comenzii -> handler-ul bridge-ului
+    (alt thread) astepta lock-ul pana la timeout, adica EXACT deadlock-ul care facea
+    `dshell sh` sa atarne cu rc=124. O conexiune separata ocoleste complet acel lock:
+    adbd accepta mai multe sesiuni, iar cea dedicata e folosita DOAR de bridge.
+    """
+    import adb_client as _ac
+    c = _DSHELL_ADB[0]
+    if c is not None and getattr(c, "s", None) is not None and not getattr(c, "closed", False):
+        return c
+    try:
+        _DSHELL_ADB[0] = None
+        c = _ac.Adb()          # conexiune NOUA, nu cea partajata
+        c.connect()
+        _DSHELL_ADB[0] = c
+        return c
+    except Exception:
+        _DSHELL_ADB[0] = None
+        # ★ NU cadem pe shared() cu lock BLOCANT: daca shell-ul Debian parinte tine
+        # _SOCK_LOCK (exact cazul "dshell sh din Debian"), shared() atarna la infinit.
+        # Preferam sa raportam eroare clara decat sa blocam bridge-ul pe vecie.
+        raise RuntimeError("conexiune ADB dedicata indisponibila (shared() ar bloca)")
+
+
 def _dshell_handle(req):
     """Executa o cerere venita din Debian. Returneaza dict {ok, out|err}."""
     import json as _j
@@ -4026,7 +4057,13 @@ def _dshell_handle(req):
     if cmd_ == "ping":
         return {"ok": True, "out": "pong"}
     if cmd_ == "sh":
-        return {"ok": True, "out": _adb().shell(arg, timeout=tmo) or ""}
+        # conexiune DEDICATA: fara deadlock pe _SOCK_LOCK (vezi _dshell_adb)
+        try:
+            # ★ shell_unlocked (NU shell()): shell() ia _SOCK_LOCK GLOBAL, pe care
+            # shell-ul Debian parinte il tine pe toata durata -> deadlock (rc=124).
+            return {"ok": True, "out": _dshell_adb().shell_unlocked(arg, timeout=tmo) or ""}
+        except Exception as e:
+            return {"ok": False, "err": "sh: %s: %s" % (type(e).__name__, e)}
     if cmd_ == "debian":
         return {"ok": True, "out": run_in_debian(arg, timeout=tmo) or ""}
     if cmd_ == "eval":
