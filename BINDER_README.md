@@ -89,6 +89,11 @@ binder action=list                        -> 469 servicii
 binder action=call name=display code=1    -> status=0, 1736 bytes
 
 # in Debian
-android-binder list | wc -l               -> 468+
+android-binder selftest                   -> "getService REUSIT: 213 / 469", CONCLUZIE explicita
+android-binder iface package              -> android.content.pm.IPackageManager
 android-binder iface display              -> android.hardware.display.IDisplayManager
 ```
+
+ATENTIE (eroare reala, 2026-10-21): NU testati cu `activity`, `window`, `stats`,
+`surfaceflinger`, `media.*` - sunt lazy (ENOENT) sau refuzate de SELinux si un
+esantion din ele da "0/N" desi binder-ul merge perfect. Folositi `selftest`.

@@ -1159,7 +1159,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"bash","description":"Run a shell command (bash -lc), returns stdout+stderr. For TEXT STREAMS: grep/awk/sed/sort/uniq/wc/find/du/cut, line-by-line filtering, xargs -P. ~1.3-1.6x faster than python on big streams, far less memory. NOT for parsing/logic.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
-   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"binder","description":"BINDER NATIV IN-PROCESS: apeleaza serviciile Android direct din procesul aplicatiei (deschide /dev/binder, fara adb si fara bridge). Action: list (toate cele 468 servicii), check name=, handle name=, iface name= (descriptorul AIDL - OBLIGATORIU inainte de un apel), call name= code= args=[..] (apel AIDL real; intoarce status + stringuri + hex), raw name= code=. Foloseste-l cand adbsh nu ajunge (nu ai nevoie de shell) sau cand vrei un apel direct pe un serviciu de sistem. Serviciile AIDL cer descriptorul in parcel, altfel dau \"Binder invocation to an incorrect interface\"; obtine-l cu iface. Serviciile lazy (activity, window, notification) nu pot fi obtinute (handle null). EX_SECURITY pe media/stats/surfaceflinger (SELinux pe untrusted_app).","parameters":{"type":"object","properties":{"action":{"type":"string","description":"list|check|handle|iface|call|raw"},"params":{"type":"object","description":"name= (serviciu), code= (codul metodei AIDL), args= (lista de int32), descriptor= (optional, altfel dedus cu iface)"}},"required":["action"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"binder","description":"BINDER NATIV IN-PROCESS: apeleaza serviciile Android direct din procesul aplicatiei (deschide /dev/binder, fara adb si fara bridge). Action: list (toate serviciile, ~466), check name=, handle name=, iface name= (descriptorul AIDL), call name= code= args=[..] (apel AIDL real; intoarce status + stringuri + hex), raw name= code=. ★ CIFRE MASURATE PE ACEST DEVICE (SM-A366B, Android 16): list() = 466 servicii; ~113 au handle direct; ~353 intorc null la getService si sunt LAZY (activity, window, notification, SurfaceFlinger, connectivity, stats, media.*) - se inregistreaza in servicemanager abia cand le cere un client din framework. LAZY NU INSEAMNA BLOCAT si NU e o eroare de binder: NU concluziona ca binder-ul nu merge dintr-un esantion de servicii lazy. Apeluri dovedite: display(code 1)=1736 B, input(code 1)=8 B, batteryproperties(code 1)=24 B; power(code 5) intoarce eroarea reala de permisiune DEVICE_POWER. Serviciile AIDL cer descriptorul in parcel, altfel dau \"Binder invocation to an incorrect interface\"; obtine-l cu iface. Pentru binder din Debian foloseste android-binder selftest, NU scrie un client nou.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"list|check|handle|iface|call|raw"},"params":{"type":"object","description":"name= (serviciu), code= (codul metodei AIDL), args= (lista de int32), descriptor= (optional, altfel dedus cu iface)"}},"required":["action"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) OR a local path/.tar.gz/URL on the device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
 {"type": "function", "function": {"name": "terminal", "description": "LINUX TERMINAL real in aplicatie (bash in Debian, pty adevarat - nu pipe). Deschide terminal cu sesiuni multiple, culori ANSI, vim/htop/nano functionale. Actions: open (deschide terminalul; uid2000=true pentru shell Android uid 2000), run (cmd=: executa in Debian si intoarce output), list (sesiuni), kill (inchide toate).", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["open", "run", "list", "kill"]}, "cmd": {"type": "string", "description": "pentru run: comanda de executat"}, "uid2000": {"type": "boolean", "description": "true = shell Android uid 2000 (pm/dumpsys/settings); false = Debian root"}, "timeout": {"type": "integer", "description": "secunde pentru run (implicit 120)"}}, "required": ["action"]}}},
    {"type":"function","function":{"name":"build_apk","description":"COMPILES AN ANDROID APK ON THE DEVICE, FULLY OFFLINE (no PC). Uses Gradle+AGP+JDK+aapt2+cmake+NDK, all bundled in the APK. Actions: setup (extracts the tools from assets into filesDir, once - run it first; it also self-tests java+aapt2); build (compiles an Android project from <dir> -> APK, runs preflight and automatically PUBLISHES the APK to /sdcard/Download/Agent/workspace/; params: dir=project path, task=assembleDebug default); verify (checks an existing APK: params: apk=path); install (installs the APK WITHOUT a PC: tries publish -> /data/local/tmp -> pm install as shell uid=2000; if adb is not authorised it opens the SYSTEM INSTALLER on the phone (one tap, no adb); params: apk=path OR dir=project); selftest (checks that java+aapt2 really run, heals a missing libX.so.N by itself). Ex: build_apk action=build dir=/path/to/android_project, then build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"the Android project path (for build)"},"apk":{"type":"string","description":"the APK path (for verify/install; for install you may also pass dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
@@ -1263,7 +1263,33 @@ DISCIPLINE=(
  "The index is a MENU, not a summary: never guess a skill's content, open it.\n</skills>"
 )
 
-M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
+def _binder_status_line():
+    """★ Starea binder-ului, injectata in prompt la fiecare pornire (instalare curata inclusiv).
+    Motivul: pe 2026-10-21 agentul a pierdut 4 rapoarte scriind un client binder nou in loc sa
+    foloseasca ce exista deja. O linie de stare la start elimina intrebarea 'oare merge?'."""
+    try:
+        import threading as _th, time as _tm
+        box = {}
+        def _quick():
+            try:
+                b = _binder_client(); box["n"] = len(b.list()); box["h"] = b.handle("package")
+            except Exception as _e:
+                box["err"] = _e
+        t = _th.Thread(target=_quick, daemon=True); t.start(); t.join(8.0)
+        if "n" not in box and "err" not in box:
+            raise RuntimeError("binder nu a raspuns in 8s")
+        if "err" in box:
+            raise box["err"]
+        n, h = box["n"], box["h"]
+        return ("BINDER LA PORNIRE: %d servicii listate; handle(package)=%s. "
+                "Calea corecta: tool-ul `binder` (list/handle/iface/call). Din Debian: `android-binder selftest`. "
+                "~353 servicii sunt LAZY (activity/window/notification/SurfaceFlinger/stats/media.*) = null la getService "
+                "si NU e eroare; nu scrie un client binder nou." % (n, h))
+    except Exception as e:
+        return ("BINDER LA PORNIRE: indisponibil (%s). Nu scrie un client binder nou: verifica intai "
+                "files/binder/ (daca lipseste, porneste aplicatia o data) si ruleaza android-binder selftest din Debian." % e)
+
+M=[{"role":"system","content":TOOLGUIDE+" "+FMT+" "+_binder_status_line()+" "+ANDROID_GUIDE+" You are a minimal autonomous agent. Use stdlib only. Your working directory is "+WORK+" - create every file, script and temporary test THERE, never elsewhere on the disk. Do the task end to end and verify it. "
   "WHILE WORKING (mandatory, never skip): BEFORE EVERY python tool call you MUST put a FULL, COMPLETE sentence in the `content` field, in the operator\u2019s language, telling what you are about to do and why. There is NO word limit and NO character limit: NEVER cut, shorten or abbreviate it with \u201c...\u201d or \u201c\u2026\u201d - the operator must always see the WHOLE sentence he needs to follow you. NEVER send a tool call with empty content. Markdown is NOT allowed in that sentence. "
   "VISION: you have a second tool, `look(path, prompt)` - it sends an IMAGE file to the same model with THINKING ENABLED and returns what is REALLY in it. Use it whenever the operator asks you to see/analyze a screen, a screenshot, a chart or a photo: first capture it (e.g. `xwd -root -out shot.xwd` then convert with ffmpeg to png), then call look on the png. Never guess what an image contains - look at it. "
   "STEP LABELS: the FIRST line of every python/bash tool call is a comment (lowercase) - the terminal prints it as that step’s label. Say WHAT the step does, in the language the operator is currently using (mirror them), never `# step 1` or `# test`. DENSITY RULE (this is billed, the label is part of the context sent on EVERY later request): one short line, the essential verb + object, no trailing explanation, no restating the task, no repeating the previous label. Aim for ~60-90 chars; a label that needs 200 is usually two steps. Completeness of INFORMATION, not of prose. "
@@ -3943,7 +3969,10 @@ def run_in_debian(cmd, timeout=120, uid2000=False, _conn=None):
         _runit = getattr(c, "shell_unlocked", c.shell) if _conn is not None else c.shell
         return _runit("echo " + b + " | base64 -d | /system/bin/sh", timeout=timeout) or ""
     full = (
-        "/data/local/tmp/libproot_exec.so -0 -r /data/local/tmp/debian -w /root "
+        # ★ FIX 2026-10-21: binarul instalat de setup se numeste proot_exec.so.
+        # Terminalul chema numele vechi (libproot_exec.so) -> "inaccessible or not found"
+        # la ORICE comanda din Debian (inclusiv `ls`).
+        "${PT:-/data/local/tmp/proot_exec.so} -0 -r /data/local/tmp/debian -w /root "
         "--link2symlink --sysvipc --kernel-release=6.1.0-debian "
         "--bind=/dev --bind=/proc --bind=/sys "
         "--bind=/sdcard --bind=/storage --bind=/data/local/tmp "
@@ -3968,6 +3997,90 @@ def run_in_debian(cmd, timeout=120, uid2000=False, _conn=None):
 
 
 _TERM_WORKER_STARTED = [False]
+
+
+_SETUP_DONE = [False]
+
+
+def _run_terminal_setup():
+    """First-run provisioning of the Linux environment and the Android binder client.
+
+    Rendering rules (operator requirement, 2026-10-21):
+      - NO ANSI colour codes: the terminal view shows them as raw text
+      - one plain text line per message, English, calm and factual
+      - output goes to the terminal session ONLY, never to the app main window
+    """
+    files = "/data/data/net.sys32.agent/files"
+
+    def emit(line=""):
+        """Append one line to the active terminal session (nothing else)."""
+        try:
+            import glob as _g
+            for p in _g.glob(os.path.join(files, "tmp", "term_out_*.txt")):
+                with open(p, "a", encoding="utf-8", errors="replace") as f:
+                    f.write(line + "\n")
+        except Exception:
+            pass
+
+    emit()
+    emit("Setting up the Linux environment")
+    emit("------------------------------")
+    emit("This is the first run, so the system installs what it needs.")
+    emit("It takes a few minutes. Please wait until you see DONE.")
+    emit("The terminal stays open; each step is listed as it finishes.")
+    emit()
+
+    import threading as _thn
+    done = [False]
+    def _tick():
+        mins = 0
+        while not done[0] and mins < 120:
+            __import__("time").sleep(60)
+            if done[0]:
+                break
+            mins += 1
+            emit("  still working, %d minute(s) elapsed" % mins)
+    _thn.Thread(target=_tick, daemon=True).start()
+
+    LABELS = (
+        ("rootfs", "Linux filesystem"),
+        ("mediul linux", "Linux filesystem"),
+        ("proot", "Linux runtime"),
+        ("gcc", "Compiler toolchain"),
+        ("binder", "Android service access"),
+    )
+    def _label(step):
+        low = step.lower()
+        for key, label in LABELS:
+            if key in low:
+                return label
+        return step.strip()
+
+    ok = False
+    try:
+        import proot_tool as _pt
+        r = _pt.ensure_ready_via_adb(progress=False)
+        ok = isinstance(r, dict) and bool(r.get("ok") or r.get("skipped"))
+        seen = set()
+        for st in (r.get("steps") or []) if isinstance(r, dict) else []:
+            label = _label(st)
+            if label in seen:
+                continue
+            seen.add(label)
+            emit("  [done] " + label)
+    except Exception:
+        ok = False
+    finally:
+        done[0] = True
+
+    emit()
+    if ok:
+        emit("DONE")
+        emit("Everything is ready. You can use the terminal now.")
+    else:
+        emit("DONE with warnings")
+        emit("Setup did not finish. Type setup and press Enter to try again.")
+    emit()
 
 
 def _terminal_file_worker():
@@ -4011,6 +4124,19 @@ def _terminal_file_worker():
             _t.sleep(0.25)
             if not os.path.exists(inn):
                 continue
+            # ★ SETUP LA PRIMA DESCHIDERE A TERMINALULUI (cerut de operator).
+            # Instalarea APK nu poate pregati singura Debianul: aplicatia nu poate
+            # execve din app_data_file (W^X SELinux) si nu poate scrie in
+            # /data/local/tmp. Deci setup-ul ruleaza prin adbd (uid 2000) exact cand
+            # operatorul deschide terminalul prima data, iar progresul apare aici.
+            if not _SETUP_DONE[0] and not os.path.exists(os.path.join(home, ".debian_ready")):
+                _SETUP_DONE[0] = True
+                try:
+                    import threading as _ths
+                    _ths.Thread(target=_run_terminal_setup, daemon=True,
+                                name="term_setup").start()
+                except Exception:
+                    pass
             try:
                 with open(inn, "r", errors="replace") as f:
                     content = f.read()
@@ -4042,6 +4168,16 @@ def _terminal_file_worker():
                 continue
             uid2000 = flag == "1"
             sid = sid or "1"
+            # ★ `setup`: reia configurarea Debian+binder la cerere (idempotent).
+            if cmd.strip().lower() in ("setup", "/setup"):
+                try:
+                    import threading as _ths2
+                    _ths2.Thread(target=_run_terminal_setup, daemon=True,
+                                 name="term_setup_manual").start()
+                except Exception:
+                    pass
+                last = content
+                continue
             # ★ FIX termfix-12 (cerut de operator, dovedit pe device): comenzile care
             # deseneaza o interfata interactiva (htop/top/vim/nano/less...) NU pot
             # functiona intr-un terminal redirectat: nu exista tastatura si nu exista
@@ -4509,6 +4645,10 @@ def _autostart_term_worker():
         import threading as _th
         _th.Thread(target=lambda: (__import__("time").sleep(1.5), _ensure_terminal_worker()),
                    daemon=True, name="term_autostart").start()
+        # ★ SETUP-ul Debian+binder NU se face aici: aplicatia nu poate execve din
+        # app_data_file (W^X SELinux) si nu poate scrie in /data/local/tmp, deci
+        # trebuie rulat prin adbd ca uid 2000. Se declanseaza la PRIMA DESCHIDERE
+        # A TERMINALULUI (vezi _run_terminal_setup / _terminal_file_worker).
     except Exception:
         pass
 

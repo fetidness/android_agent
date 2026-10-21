@@ -20,7 +20,11 @@ Fisierul rămâne doar ca sa nu se sparga importurile vechi din agent.py.
 
 HOME = "/data/data/net.sys32.agent/files"
 ROOTFS = "/data/local/tmp/debian"
-PROOT = "/data/local/tmp/libproot_exec.so"
+# ★ numele binarului instalat de setup-ul automat (ensure_ready_via_adb) este
+# proot_exec.so; acceptam si numele vechi, ca sa nu depinda de ordinea de instalare.
+PROOT = next((p for p in ("/data/local/tmp/proot_exec.so",
+                          "/data/local/tmp/libproot_exec.so") if __import__("os").path.exists(p)),
+             "/data/local/tmp/proot_exec.so")
 
 
 def _adb():

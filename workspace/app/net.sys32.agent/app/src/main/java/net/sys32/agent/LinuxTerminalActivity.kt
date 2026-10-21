@@ -136,7 +136,7 @@ class LinuxTerminalActivity : AppCompatActivity(), TerminalClient.Listener {
         }
         inputRow.addView(prompt, LinearLayout.LayoutParams(-2, -2))
         input = EditText(this).apply {
-            hint = "uid 2000 - scrie o comanda (pm, dumpsys, ls...)"
+            hint = ""
             setHintTextColor(Color.parseColor(FG_DIM))
             setTextColor(Color.parseColor(FG))
             setBackgroundColor(Color.parseColor(BG_FIELD))

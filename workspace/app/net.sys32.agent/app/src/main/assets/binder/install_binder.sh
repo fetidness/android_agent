@@ -10,7 +10,12 @@
 set -e
 
 SRC_DIR="${1:-/opt/android-binder}"
-[ -f "$SRC_DIR/debian_binder.c" ] || SRC_DIR=/root/binder
+# ★ cai de pe device (instalare curata): sursa vine din assets -> files/binder,
+# vizibila in Debian prin --bind=/data/local/tmp sau prin /sdcard dupa copiere.
+for c in /data/local/tmp/binder /sdcard/Download/Agent/workspace/binder /root/binder; do
+  [ -f "$SRC_DIR/debian_binder.c" ] && break
+  [ -f "$c/debian_binder.c" ] && SRC_DIR="$c"
+done
 [ -f "$SRC_DIR/debian_binder.c" ] || { echo "nu gasesc debian_binder.c"; exit 1; }
 
 echo "== sursa: $SRC_DIR"
@@ -37,3 +42,6 @@ fi
 echo "== test:"
 android-binder list | wc -l
 android-binder check package
+# ★ selftest: numara accesibile / lazy / null. NU conchide "binder stricat"
+# dintr-un singur esec pe un serviciu lazy (activity, window, stats...).
+android-binder selftest 2>/dev/null || true

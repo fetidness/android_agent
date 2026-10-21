@@ -164,7 +164,7 @@ class MainActivity : AppCompatActivity() {
             ellipsize = TextUtils.TruncateAt.END
         }
         val bannerHelp = TextView(this).apply {
-            text = "Type /help for all commands"
+            text = "Type /help"
             setTextColor(Color.parseColor("#AFAFD7"))   // G (38;5;146)
             textSize = 11f
             typeface = mono
@@ -868,6 +868,9 @@ class MainActivity : AppCompatActivity() {
             val NRM = "\u001b[0m"
             appendAnsi(BLUE + "[self-heal] in progress, please wait" + GRY +
                 " - checking the environment (launchers, packages, toolchain)" + NRM + "\n")
+            // ★ Provisioning-ul Debian + binder ruleaza la PRIMA DESCHIDERE A TERMINALULUI
+            // si scrie EXCLUSIV in terminal (cerinta operator: fara zgomot in fereastra
+            // principala, sub "AGENT DeepSeek").
         } catch (_: Exception) {}
 
         // ★ daca setup-ul s-a facut deja -> pornesc DIRECT, fara mesaje/countdown
@@ -1032,6 +1035,37 @@ class MainActivity : AppCompatActivity() {
             }
         }
         copyDir("python", dest)
+        // ★ FIX 2026-10-21 (cauza pentru care lectiile despre binder nu ajungeau la o
+        // instalare curata): assets continea DOUA memory.md - unul in radacina assets/
+        // (cel bun) si unul vechi in assets/python/memory.md (copiat de copyDir("python")).
+        // Agentul il lua pe cel vechi (690 B, doar antetul). Aici il fortam pe cel din
+        // radacina assets/memory.md, care e sursa de adevar pentru lectiile livrate in APK.
+        try {
+            assets.open("memory.md").use { i ->
+                File(filesDir, "memory.md").outputStream().use { o -> i.copyTo(o) }
+            }
+        } catch (_: Exception) {}
+        // ★ FIX (2026-10-21, cauza reala a esecului binder la instalare curata):
+        // aici se copia DOAR `assets/python`. `assets/binder` (clientul C + binarul bctl-android
+        // + install_binder.sh) si `assets/skills` (procedurile agentului) NU ajungeau NICIODATA
+        // pe device, deci la o instalare curata agentul nu avea: nici documentatia binder,
+        // nici skill-ul de audit, nici sursa/installer-ul pentru clientul din Debian.
+        // De aceea "repunea la punct" binder-ul de la zero, cu offseturi gresite.
+        try {
+            val bdir = File(filesDir, "binder")
+            bdir.deleteRecursively(); bdir.mkdirs()
+            copyDir("binder", bdir)
+            // aapt pierde bitul de executie la ambalare -> chmod obligatoriu
+            File(bdir, "bctl-android").let { if (it.exists()) it.setExecutable(true, false) }
+            File(bdir, "install_binder.sh").let { if (it.exists()) it.setExecutable(true, false) }
+        } catch (_: Exception) {}
+        // skill-urile: cele livrate in APK se copiaza, dar cele scrise de agent pe device
+        // (invatate) NU se sterg - acelasi principiu ca la memory.md.
+        try {
+            val sdir = File(filesDir, "skills")
+            sdir.mkdirs()
+            copyDir("skills", sdir)
+        } catch (_: Exception) {}
         // ★ FIX CRITIC (gasit 2026-10-01 verificand conversatia agentului): mai sus SALVAM
         // site-packages in keepDir, dar NU-L PUNEM NICIODATA LA LOC -> la fiecare update de APK
         // dispareau TOATE pachetele instalate cu pip (numpy, cbor2, orjson...; supravietuiau doar

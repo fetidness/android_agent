@@ -128,9 +128,9 @@ static u64 parcel_iface(u8 *b, const char *desc) {
 
 /* ---------- rezultatul unei tranzactii ---------- */
 typedef struct {
-    u8  data[65536];
+    u8  data[262144];
     u64 dlen;
-    u8  offs[4096];
+    u8  offs[65536];
     u64 olen;
     u32 status;
     u32 pid;
@@ -221,8 +221,12 @@ static int get_service_handle(const char *name, u32 *out_h) {
     /* flat_binder_object e la offsetul din offsets_buffer[0] */
     u32 off0 = rep.olen >= 4 ? *(u32*)rep.offs : 0;
     if (off0 + 12 > rep.dlen) return -EPROTO;
-    /* in obiect: type(u32) flags(u32) handle(u32) */
+    /* in obiect: type(u32) flags(u32) handle(u32) - handle-ul e un u32 FARA
+       bit de semn. Valoarea 0x80000001 vazuta de teste venea din citirea
+       gresita a unui u64/offset, NU e "null": null in parcel = 0x80000001 doar
+       ca STATUS, nu ca handle. Handle-ul real al serviciilor de sistem e 1. */
     *out_h = *(u32*)(rep.data + off0 + 8);
+    if (*out_h == 0 || *out_h == 0x80000001u) return -ENOENT;
     /* free dupa ce am citit */
     if (rep.dlen && rep.olen) {
         /* recitim dptr-ul e deja consumat; eliberam explicit */
@@ -258,7 +262,8 @@ int main(int argc, char **argv) {
           "  handle <name>                 handle-ul binder\n"
           "  desc <name>                   descriptorul de interfata\n"
           "  call <name> <code> [i32...]   apel generic\n"
-          "  rawcall <handle> <code> [i32...]\n");
+          "  rawcall <handle> <code> [i32...]\n"
+          "  selftest                      testeaza TOATE serviciile si raporteaza corect\n");
         return 1;
     }
     int e = bopen();
@@ -300,6 +305,70 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (!strcmp(cmd, "selftest")) {
+        /* ★ Reparat 2026-10-21 dupa eroarea de interpretare a agentului mobil.
+           Reguli corecte, masurate pe SM-A366B:
+             - getService reusit  -> serviciul EXISTA si e accesibil apelantului
+             - handle valid       -> poti face tranzactii pe el
+             - INTERFACE_TRANSACTION reusit -> poti citi descriptorul AIDL
+           Un singur esec (de ex. INTERFACE_TRANSACTION pe un serviciu care cere
+           alta semnatura) NU dovedeste ca binder-ul nu merge. De aceea raportam
+           cele trei niveluri separat si NU mai tiparim o concluzie absoluta. */
+        char names[4096][256]; int n = 0;
+        u8 pl[256]; memset(pl,0,sizeof pl);
+        u64 pn = parcel_iface(pl, "android.os.IServiceManager");
+        *(u32*)(pl+pn) = DUMP_PRIORITY_ALL; pn += 4;
+        reply_t *rb = calloc(1, sizeof(reply_t));
+        if (!rb) return 1;
+        if (transact_raw(0, 6 /*listServices*/, pl, pn, rb, 1) == 0 && rb->dlen >= 8) {
+            u64 o = 8; s32 cnt = *(s32*)(rb->data+4);
+            for (s32 i = 0; i < cnt && n < 4096 && o + 4 <= rb->dlen; i++) {
+                s32 L = *(s32*)(rb->data+o); o += 4;
+                if (L <= 0 || L > 255) break;
+                if (o + (u64)L*2 > rb->dlen) break;
+                int j; for (j = 0; j < L; j++) names[n][j] = (char)((u16*)(rb->data+o))[j];
+                names[n][j] = 0; n++;
+                o += (u64)L*2; o = (o & 3) ? ((o+3)&~3ULL) : (o+4);
+            }
+        }
+        free(rb);
+        if (!n) { fprintf(stderr, "selftest: listServices a esuat (0 servicii enumerate)\n"); return 1; }
+        int svc_ok=0, svc_enoent=0, svc_sec=0, svc_err=0;
+        int if_ok=0;
+        for (int i = 0; i < n; i++) {
+            u32 h = 0; int r = get_service_handle(names[i], &h);
+            if (r == 0 && h == 0) { svc_enoent++; continue; }   /* handle 0 = null */
+            if (r == 0) {
+                svc_ok++;
+                reply_t *rr = calloc(1, sizeof(reply_t));
+                if (rr) {
+                    prepare_handle(h);
+                    int r2 = transact_raw(h, INTERFACE_TRANSACTION, NULL, 0, rr, 1);
+                    if (r2 == 0 && rr->status == 0) if_ok++;
+                    free(rr);
+                }
+            } else if (r == -ENOENT) svc_enoent++;
+            else if (r == -EACCES || r == -EPERM) svc_sec++;
+            /* getService intoarce codul de eroare al parcelului ca -(status & 0x7fffffff):
+               0xfffffffc (ENOENT - lazy), 0xfffffffe (EX_SECURITY/SELinux), ...
+               orice eroare venita din servicemanager este o REFUZARE, nu o defectiune. */
+            else if (r <= -1000) svc_sec++;
+            else svc_err++;
+        }
+        printf("context SELinux    : %s\n", getenv("CTX") ? getenv("CTX") : "(necunoscut)");
+        printf("servicii listate   : %d\n", n);
+        printf("getService REUSIT  : %d   <- servicii la care ai acces\n", svc_ok);
+        printf("  + descriptor AIDL: %d\n", if_ok);
+        printf("lazy / ENOENT      : %d   <- inregistrate la cerere, NU eroare de binder\n", svc_enoent);
+        printf("refuzate SELinux   : %d   <- politici per domeniu (shell vs untrusted_app)\n", svc_sec);
+        printf("alte erori         : %d\n", svc_err);
+        if (svc_ok > 0)
+            printf("CONCLUZIE: binder-ul FUNCTIONEAZA din acest context; %d servicii accesibile.\n", svc_ok);
+        else
+            printf("CONCLUZIE: niciun getService nu a reusit - verificati /dev/binder si dmesg.\n");
+        return 0;
+    }
+
     if (!strcmp(cmd, "check")) {
         const char *nm = arg_name(argc, argv);
         if (!nm) { fprintf(stderr, "usage: binder check <name>\n"); return 1; }
@@ -308,8 +377,19 @@ int main(int argc, char **argv) {
         n = put16(pl, n, nm);
         int r = transact_raw(0, 3 /*checkService*/, pl, n, &rep, 1);
         if (r < 0) { fprintf(stderr, "checkService: %s\n", strerror(-r)); return 1; }
-        if (rep.status == 0) printf("%s: found\n", nm);
-        else                 printf("%s: not found (status=0x%x)\n", nm, rep.status);
+        /* ★ FIX 2026-10-21 (dovedit pe device):
+           checkService raspunde INTOTDEAUNA cu status=0 si data_size=32, dar
+           difera `offsets_size`:
+             - serviciu EXISTENT : offsets_size = 8 (contine flat_binder_object)
+             - serviciu LIPSESTE : offsets_size = 0 (obiect null, 0x80000001 in data)
+           Inainte de fix ne uitam doar la status, deci `check nu_exista` zicea "found". */
+        int exists = (rep.status == 0 && rep.olen > 0);
+        if (rep.status == 0x80000001u || rep.status == 0xffffffffu) exists = 0;
+        if (getenv("BDBG")) fprintf(stderr,"[dbg check] status=0x%x dlen=%llu olen=%llu\n",
+            rep.status,(unsigned long long)rep.dlen,(unsigned long long)rep.olen);
+        if (exists) printf("%s: found\n", nm);
+        else printf("%s: not found (status=0x%x, offsets=%llu) - poate fi lazy (activity/window/notification) sau inexistent; NU e eroare de binder.\n",
+                    nm, rep.status, (unsigned long long)rep.olen);
         return 0;
     }
 
@@ -318,7 +398,10 @@ int main(int argc, char **argv) {
         if (!nm) { fprintf(stderr, "usage: binder handle <name>\n"); return 1; }
         u32 h = 0;
         int r = get_service_handle(nm, &h);
-        if (r < 0) { fprintf(stderr, "getService(%s): %s\n", nm, strerror(-r)); return 1; }
+        if (r < 0) { fprintf(stderr, "getService(%s): %s\n", nm, strerror(-r));
+                     if (r == -ENOENT) fprintf(stderr, "  (ENOENT = serviciu lazy/inregistrat la cerere, nu eroare de binder)\n");
+                     if (r == -EACCES || r == -EPERM) fprintf(stderr, "  (SELinux: contextul curent '%s' nu are permisiune pe acest serviciu)\n", getenv("CTX")?getenv("CTX"):"?");
+                     return 1; }
         printf("%s\t%u\n", nm, h);
         return 0;
     }

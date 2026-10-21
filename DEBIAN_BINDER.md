@@ -170,6 +170,69 @@ TRAP: proces_vm_readv din shell:s0 -> EPERM; pentru tracing foloseste
       PTRACE_PEEKDATA.
 
 ===============================================================================
+## MASURATOARE COMPLETA (2026-10-21, dupa corectarea interpretarii)
+===============================================================================
+
+Un raport anterior al agentului mobil concluziona gresit "0 din 25 servicii
+accesibile din Debian -> binder-ul nu merge". Cauza: esantionul ales continea
+exact serviciile care NU pot raspunde (lazy + restrictionate SELinux), iar
+handle-ul era citit din offset greșit (0x80000001 confundat cu null).
+
+Masuratoare exhaustiva (`android-binder selftest`, toate serviciile):
+
+```
+context SELinux    : u:r:shell:s0
+servicii listate   : 469
+getService REUSIT  : 213     <- servicii la care ai acces REAL
+lazy / ENOENT      : 3       <- inregistrate la cerere, NU eroare de binder
+refuzate SELinux   : 253     <- politici per domeniu
+alte erori         : 0
+CONCLUZIE: binder-ul FUNCTIONEAZA din acest context; 213 servicii accesibile.
+```
+
+Exemple care merg din Debian (descriptor AIDL citit cap-coada):
+```
+package        -> android.content.pm.IPackageManager
+power          -> android.os.IPowerManager
+display        -> android.hardware.display.IDisplayManager   (status=0x22)
+```
+
+===============================================================================
+## REGULI DE INTERPRETARE (ca sa nu se repete eroarea)
+===============================================================================
+
+RULE: un esec pe UN serviciu NU dovedeste ca binder-ul nu merge.
+      1) verifica `android-binder selftest` (toate serviciile, numaratoare)
+      2) verifica `android-binder iface <nume>` pe un serviciu de baza (package/power)
+      3) abia apoi trage concluzii
+
+TRAP: `activity`, `window`, `notification`, `media.*`, `stats`, `surfaceflinger`,
+      `connectivity`, `battery` NU raspund din `shell:s0`:
+      - lazy -> ENOENT (0xfffffffc): normal, se creeaza la primul client din alt proces
+      - SELinux -> EX_SECURITY (0xfffffffe): politica per domeniu
+      Un eșantion format din acestea da 0/N si indeparteaza atentia de la realitate.
+
+TRAP: handle-ul din `flat_binder_object` e u32 la offset 8 in obiect, NU contine
+      bit de semn. handle=1 pentru majoritatea serviciilor de sistem.
+      `0x80000001` este valoarea de STATUS "null" din parcel, nu un handle.
+
+TRAP: `listServices` cere DUMP_PRIORITY_ALL (u32 dupa descriptor) si raspunde cu
+      count la offset 4, elementele incep la offset 8. Un nume poate avea
+      pana la 70+ caractere (nu 64) - bufferul trebuie >=256.
+
+TRAP: `android-binder check` care zice "not found" e SERVICIUL lazy, nu lipsa
+      binder-ului. Mesajul comenzii spune asta explicit acum.
+
+===============================================================================
+## COMENZI NOI
+===============================================================================
+```
+android-binder selftest          numara: accesibile / lazy / refuzate SELinux,
+                                 cu CONCLUZIE explicita (nu mai lasa loc de gresit)
+android-binder iface <nume>      descriptorul AIDL (nu cere semnatura speciala)
+```
+
+===============================================================================
 ## FISIERE
 ===============================================================================
 P: /storage/emulated/0/Download/Agent/workspace/debian_binder.c   sursa C

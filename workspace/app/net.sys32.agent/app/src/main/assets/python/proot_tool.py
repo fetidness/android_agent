@@ -27,7 +27,12 @@ import subprocess
 import time
 
 HOME = "/data/data/net.sys32.agent/files"
-ROOTFS = HOME + "/debian"
+# ★ /data/data este montat NOEXEC: nimic din files/debian nu poate fi executat de proot.
+# Rootfs-ul de LUCRU sta deci in /data/local/tmp (calea dovedita, accesibila uid-ului 2000).
+ROOTFS = HOME + "/debian"                 # copia din APK (surse, nu se executa)
+EXEC_ROOTFS = "/data/local/tmp/debian"    # rootfs-ul REAL, executabil
+READY_FLAG = HOME + "/.debian_ready"      # setup complet, nu se mai repeta
+WORKAREA = "/sdcard/Download/Agent/setup"  # zona citibila si de adbd (FUSE)
 TMP = HOME + "/tmp"
 PORT = 5901
 DISPLAY = ":1"
@@ -74,7 +79,7 @@ def _proot_cmd(rootfs=None, extra_binds=()):
     exe = _launcher()
     if not exe:
         return None
-    rf = rootfs or ROOTFS
+    rf = rootfs or EXEC_ROOTFS
     cmd = [
         exe, "-r", rf, "-w", "/root",
         "--kill-on-exit", "--link2symlink", "--sysvipc",
@@ -122,15 +127,367 @@ def _size_mb(path):
         return -1
 
 
+# ------------------------------------------------------------------ bootstrap 1x
+def _log(msg):
+    """Progress trace to files/tmp/setup.log only (never stdout).
+
+    stdout of the agent process is shown in the app's main window; the operator
+    asked for provisioning output in the TERMINAL only.
+    """
+    try:
+        os.makedirs(os.path.dirname(ADB_LOG), exist_ok=True)
+        with open(ADB_LOG, "a") as f:
+            f.write("[setup] " + msg + "\n")
+    except Exception:
+        pass
+
+
+def _proot_exe_exec():
+    """Copiaza libproot_exec.so intr-un loc EXECUTABIL din /data/local/tmp.
+
+    files/tmp/proot e un symlink catre lib/arm64/libproot_exec.so: merge cand e lansat
+    de aplicatie, dar NU e vizibil/executabil pentru adbd. /data/local/tmp e calea
+    dovedita pentru exec din afara app-ului.
+    """
+    nd = _native_dir()
+    if not nd:
+        return None
+    dst = "/data/local/tmp/proot_exec.so"
+    src = os.path.join(nd, "libproot_exec.so")
+    try:
+        if (not os.path.exists(dst)) or os.path.getsize(dst) != os.path.getsize(src):
+            import shutil as _sh
+            _sh.copyfile(src, dst)
+            os.chmod(dst, 0o755)
+    except Exception:
+        return None
+    return dst if os.path.exists(dst) else None
+
+
+def _copy_tree(src, dst):
+    """Copiaza rootfs-ul din files/ in /data/local/tmp (dir -> dir)."""
+    import shutil as _sh
+    _sh.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+
+
+def _extract_rootfs(src_archive, dest):
+    """Extrage arhiva rootfs in `dest`, detectand formatul dupa magic bytes.
+
+    ★ AGP dezactiveaza compresia la ambalare: pe device ajunge trixie-arm64.tar
+    NECOMPRIMAT, desi in sursa e .tar.gz. `tar -xzf` pe el da "zcat: not gzip".
+    Erorile pe nodurile din /dev (mknod fara root) si pe hardlink-uri sunt tolerate:
+    /dev e oricum legat de la gazda prin --bind=/dev.
+    """
+    os.makedirs(dest, exist_ok=True)
+    try:
+        with open(src_archive, "rb") as f:
+            magic = f.read(4)
+    except Exception:
+        magic = b""
+    if magic[:2] == b"\x1f\x8b":
+        argv = ["tar", "-xzf", src_archive, "-C", dest]
+    elif magic[:4] == b"\x28\xb5\x2f\xfd":
+        dec = _which("unzstd") or _which("zstd")
+        if not dec:
+            return -4, "no zstd decompressor"
+        argv = ["sh", "-c", "%s -dc %s | tar -xf - -C %s" % (dec, src_archive, dest)]
+    else:
+        argv = ["tar", "-xf", src_archive, "-C", dest]
+    rc, out = _run(argv, timeout=3600)
+    ok_struct = all(os.path.isdir(os.path.join(dest, d)) for d in ("bin", "etc", "usr"))
+    if rc != 0 and not ok_struct:
+        return rc, out[-600:]
+    return 0, out[-300:]
+
+
+def ensure_ready(progress=True):
+    """★ SETUP COMPLET, o singura data, la prima pornire dupa instalare.
+
+    Face tot ce e nevoie ca binder-ul (si Debianul) sa functioneze imediat:
+      1. copiaza rootfs-ul din assets in /data/local/tmp (executabil, nu in files/)
+      2. copiaza proot intr-un loc executabil (/data/local/tmp/proot_exec.so)
+      3. instaleaza gcc in Debian (necesar pentru clientul binder nativ)
+      4. compileaza si instaleaza android-binder (sursa livrata in APK)
+      5. verifica: android-binder selftest
+    Idempotent: dupa reusita scrie READY_FLAG si iese imediat la urmatoarele porniri.
+    """
+    steps = []
+    def L(m):
+        steps.append(m)
+        if progress:
+            _log(m)
+
+    # rootfs-ul deja pregatit? -> nimic de facut
+    _ab = os.path.join(EXEC_ROOTFS, "usr/local/bin/android-binder")
+    if os.path.exists(READY_FLAG) and os.path.isdir(os.path.join(EXEC_ROOTFS, "etc")) and os.path.exists(_ab):
+        return {"ok": True, "skipped": True, "steps": ["already ready"]}
+
+    # 1) rootfs in /data/local/tmp
+    if os.path.isdir(os.path.join(EXEC_ROOTFS, "etc")):
+        L("rootfs Debian: deja in /data/local/tmp")
+    else:
+        L("rootfs Debian: extragere in /data/local/tmp (poate dura 1-2 minute)...")
+        archive = None
+        for c in (HOME + "/proot/trixie-arm64.tar", HOME + "/proot/trixie-arm64.tar.gz",
+                  HOME + "/proot/trixie-arm64.tar.zst", HOME + "/proot/trixie-arm64.tar.xz"):
+            if os.path.exists(c):
+                archive = c
+                break
+        if not archive:
+            return {"ok": False, "error": "rootfs archive missing", "steps": steps}
+        rc, out = _extract_rootfs(archive, EXEC_ROOTFS)
+        if rc != 0:
+            return {"ok": False, "error": "extract failed", "out": out, "steps": steps}
+        L("rootfs Debian: extras (%s MB)" % _size_mb(EXEC_ROOTFS))
+
+    # 2) proot executabil in /data/local/tmp
+    exe = _proot_exe_exec()
+    if not exe:
+        return {"ok": False, "error": "cannot install proot to /data/local/tmp", "steps": steps}
+    L("proot: %s" % exe)
+
+    def _deb(cmd, timeout=1800):
+        argv = [exe, "-0", "-r", EXEC_ROOTFS, "-w", "/root", "--link2symlink", "--sysvipc",
+                "--kernel-release=6.1.0-debian", "--bind=/dev", "--bind=/proc", "--bind=/sys",
+                "--bind=/data/local/tmp",
+                "/usr/bin/env", "-i",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME=/root", "DEBIAN_FRONTEND=noninteractive", "/bin/sh", "-c", cmd]
+        return _run(argv, timeout=timeout)
+
+    # 3) gcc (o singura data)
+    rc, out = _deb("command -v gcc >/dev/null && echo HAVE || echo MISSING", timeout=120)
+    if "HAVE" not in out:
+        L("Debian: instalez gcc + libc6-dev (apt, o singura data)...")
+        rc, out = _deb("apt-get update -qq && apt-get install -y -qq gcc libc6-dev", timeout=3600)
+        if rc != 0:
+            return {"ok": False, "error": "apt install gcc failed", "out": out[-500:], "steps": steps}
+        L("Debian: gcc instalat")
+
+    # 4) clientul binder, compilat din sursa livrata in APK
+    binder_src = HOME + "/binder"
+    if not os.path.exists(binder_src + "/debian_binder.c"):
+        return {"ok": False, "error": "assets/binder missing (files/binder)", "steps": steps}
+    # ★ sursa trebuie sa fie VIZIBILA in Debian: files/ nu e legat in guest, deci o
+    # copiem in /data/local/tmp/binder (legat prin --bind=/data/local/tmp).
+    try:
+        import shutil as _sh
+        _dst = "/data/local/tmp/binder"
+        _sh.copytree(binder_src, _dst, dirs_exist_ok=True)
+        os.chmod(os.path.join(_dst, "install_binder.sh"), 0o755)
+    except Exception as _e:
+        return {"ok": False, "error": "cannot stage binder sources: %s" % _e, "steps": steps}
+    L("binder: sursa pregatita in /data/local/tmp/binder")
+    L("binder: compilez clientul nativ din sursa din APK...")
+    rc, out = _deb("sh /data/local/tmp/binder/install_binder.sh /data/local/tmp/binder", timeout=900)
+    if rc != 0 and "selftest" not in out:
+        return {"ok": False, "error": "binder install failed", "out": out[-600:], "steps": steps}
+    L("binder: android-binder instalat")
+
+    # 5) verificare
+    rc, out = _deb("android-binder selftest", timeout=900)
+    summary = ""
+    for line in out.splitlines():
+        if line.startswith(("servicii listate", "getService REUSIT", "CONCLUZIE")):
+            summary += line.strip() + " | "
+    if "FUNCTIONEAZA" in out:
+        try:
+            open(READY_FLAG, "w").write("ok")
+        except Exception:
+            pass
+        L("binder: " + summary.rstrip(" |"))
+        return {"ok": True, "steps": steps, "summary": summary}
+    return {"ok": False, "error": "selftest failed", "out": out[-500:], "steps": steps}
+
+
+# --------------------------------------------------- bootstrap prin ADB (uid 2000)
+# ★ DE CE PRIN ADB SI NU DIRECT (dovedit pe device 2026-10-21):
+#   - aplicatia (uid 10xxx) NU poate scrie in /data/local/tmp (drwxrwx--x shell shell)
+#   - aplicatia NU poate execve nimic din app_data_file (W^X SELinux): un `cp` al lui
+#     `echo` din rootfs in files/tmp da "No such file or directory" la exec
+#   Deci rootfs-ul executabil + proot TREBUIE instalate de adbd (uid 2000, ctx shell:s0).
+#   Progresul e scris intr-un fisier pe care aplicatia il citeste si il afiseaza.
+
+ADB_LOG = HOME + "/tmp/setup.log"
+
+
+def _adb_shell(cmd, timeout=1800):
+    """Ruleaza o comanda ca uid 2000 prin adbd (calea dovedita)."""
+    import adb_client as _ac
+    c = _ac.shared()
+    try:
+        if not _ac.is_socket_healthy():
+            _ac.close_shared()
+            c = _ac.shared()
+    except Exception:
+        pass
+    out = c.shell(cmd, timeout=timeout)
+    if isinstance(out, bytes):
+        out = out.decode("utf-8", "replace")
+    return out or ""
+
+
+def _logline(msg):
+    """Progress trace for diagnostics ONLY (files/tmp/setup.log).
+
+    ★ Nu scrie in stdout: stdout-ul procesului agentului ajunge in fereastra
+    principala a aplicatiei, iar operatorul a cerut ca instalarea sa apara
+    EXCLUSIV in terminal (vezi _run_terminal_setup din agent.py).
+    """
+    try:
+        os.makedirs(HOME + "/tmp", exist_ok=True)
+        with open(ADB_LOG, "a") as f:
+            f.write("[setup] " + msg + "\n")
+    except Exception:
+        pass
+
+
+def ensure_ready_via_adb(progress=True):
+    """★ SETUP COMPLET la prima deschidere a TERMINALULUI.
+
+    Toate operatiile grele ruleaza ca uid 2000 prin adbd (singura cale care poate
+    executa din /data/local/tmp). Idempotent prin flag-ul files/.debian_ready.
+
+    Ordinea:
+      1. rootfs -> /data/local/tmp/debian (extras din tar-ul livrat in APK)
+      2. proot  -> /data/local/tmp/proot_exec.so (din lib/arm64, cale citibila de adbd)
+      3. sursa binder -> /data/local/tmp/binder (din files/binder)
+      4. apt-get install gcc (o singura data)
+      5. compilare + instalare android-binder
+      6. android-binder selftest
+    """
+    steps = []
+    def L(m):
+        steps.append(m)
+        if progress:
+            _logline(m)
+
+    try:
+        os.remove(ADB_LOG)
+    except Exception:
+        pass
+
+    # 0) deja pregatit?
+    chk = _adb_shell("ls /data/local/tmp/debian/etc >/dev/null 2>&1 && "
+                     "ls /data/local/tmp/debian/usr/local/bin/android-binder >/dev/null 2>&1 && echo READY || echo NO")
+    if "READY" in chk and os.path.exists(READY_FLAG):
+        return {"ok": True, "skipped": True, "steps": ["already ready"]}
+
+    # 1) rootfs
+    if "READY" in chk:
+        L("rootfs Debian: deja instalat in /data/local/tmp")
+    else:
+        L("rootfs Debian: extragere in /data/local/tmp (1-2 minute)...")
+        archive = None
+        for c in (HOME + "/proot/trixie-arm64.tar", HOME + "/proot/trixie-arm64.tar.gz",
+                  HOME + "/proot/trixie-arm64.tar.zst"):
+            if os.path.exists(c):
+                archive = c
+                break
+        if not archive:
+            return {"ok": False, "error": "rootfs archive missing (files/proot)", "steps": steps}
+        # tar-ul e in app_data_file: adbd NU poate citi de acolo (SELinux) -> il copiem
+        # intai in /data/local/tmp cu o comanda care citeste prin aplicatie.
+        # Metoda: scriem arhiva in bucati prin `cat` peste adb shell (stdin) nu e posibil;
+        # de aceea o copiem in files/tmp si o facem citibila, apoi adbd o citeste dupa
+        # ce o mutam in /sdcard (FUSE, citibil de orice context).
+        try:
+            import shutil as _sh
+            dst = WORKAREA + "/trixie.tar"
+            os.makedirs(WORKAREA, exist_ok=True)
+            if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(archive):
+                _sh.copyfile(archive, dst)
+        except Exception as e:
+            return {"ok": False, "error": "cannot stage rootfs archive: %s" % e, "steps": steps}
+        L("rootfs: arhiva pregatita pentru adbd")
+        r = _adb_shell("mkdir -p /data/local/tmp/debian && "
+                       "tar -xf %s -C /data/local/tmp/debian 2>&1 | tail -3; "
+                       "ls /data/local/tmp/debian/etc >/dev/null 2>&1 && echo EXTRACT_OK || echo EXTRACT_FAIL"
+                       % dst, timeout=3600)
+        if "EXTRACT_OK" not in r:
+            return {"ok": False, "error": "extract failed", "out": r[-500:], "steps": steps}
+        L("rootfs Debian: extras")
+
+    # 2) proot executabil
+    nd = _native_dir()
+    if not nd:
+        return {"ok": False, "error": "lib/arm64 not found", "steps": steps}
+    src = os.path.join(nd, "libproot_exec.so")
+    r = _adb_shell("cp -f %s /data/local/tmp/proot_exec.so && chmod 755 /data/local/tmp/proot_exec.so && "
+                   "ls /data/local/tmp/proot_exec.so" % src)
+    if "proot_exec.so" not in r:
+        return {"ok": False, "error": "cannot install proot: %s" % r[-200:], "steps": steps}
+    L("proot: /data/local/tmp/proot_exec.so")
+
+    # 3) sursa binder -> /data/local/tmp/binder
+    bsrc = HOME + "/binder"
+    if not os.path.exists(os.path.join(bsrc, "debian_binder.c")):
+        return {"ok": False, "error": "files/binder missing", "steps": steps}
+    try:
+        import shutil as _sh2
+        _sh2.copytree(bsrc, WORKAREA + "/binder", dirs_exist_ok=True)
+    except Exception as e:
+        return {"ok": False, "error": "stage binder: %s" % e, "steps": steps}
+    src_binder = WORKAREA + "/binder"
+    _adb_shell("mkdir -p /data/local/tmp/binder")
+    for fn in ("debian_binder.c", "binder.py", "install_binder.sh"):
+        _adb_shell("cp -f %s/%s /data/local/tmp/binder/%s 2>/dev/null" % (src_binder, fn, fn))
+    r = _adb_shell("chmod 755 /data/local/tmp/binder/install_binder.sh; "
+                   "ls /data/local/tmp/binder/debian_binder.c")
+    if "debian_binder.c" not in r:
+        return {"ok": False, "error": "cannot stage binder sources: %s" % r[-200:], "steps": steps}
+    L("binder: sursa in /data/local/tmp/binder")
+
+    def deb(cmd, timeout=3600):
+        return _adb_shell("/data/local/tmp/proot_exec.so -0 -r /data/local/tmp/debian -w /root "
+                          "--link2symlink --sysvipc --kernel-release=6.1.0-debian "
+                          "--bind=/dev --bind=/proc --bind=/sys --bind=/data/local/tmp "
+                          "/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
+                          "HOME=/root DEBIAN_FRONTEND=noninteractive "
+                          "/bin/bash -c " + repr(cmd), timeout=timeout)
+
+    # 4) gcc
+    if "HAVE" not in deb("command -v gcc >/dev/null && echo HAVE || echo MISSING", timeout=180):
+        L("Debian: apt-get install gcc (o singura data)...")
+        out = deb("apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq gcc libc6-dev >/dev/null 2>&1; "
+                  "command -v gcc >/dev/null && echo GCC_OK || echo GCC_FAIL")
+        if "GCC_OK" not in out:
+            return {"ok": False, "error": "gcc install failed", "out": out[-400:], "steps": steps}
+        L("Debian: gcc instalat")
+
+    # 5) binder
+    L("binder: compilez din sursa din APK...")
+    out = deb("sh /data/local/tmp/binder/install_binder.sh /data/local/tmp/binder 2>&1 | tail -12")
+    # ★ FIX: install_binder.sh se termina cu `selftest`, deci output-ul nu contine
+    # neaparat "android-binder"; verificam binarul PE DISC si rezultatul selftest.
+    _chk = deb("ls /usr/local/bin/android-binder >/dev/null 2>&1 && echo BIN_OK || echo BIN_NO")
+    if "BIN_OK" not in _chk and "package: found" not in out and "FUNCTIONEAZA" not in out:
+        return {"ok": False, "error": "binder install failed", "out": out[-500:], "steps": steps}
+    L("binder: android-binder instalat")
+
+    # 6) selftest
+    out = deb("android-binder selftest 2>&1 | tail -8", timeout=900)
+    summary = " | ".join(l.strip() for l in out.splitlines()
+                         if l.startswith(("servicii listate", "getService REUSIT", "CONCLUZIE")))
+    if "FUNCTIONEAZA" in out:
+        try:
+            open(READY_FLAG, "w").write("ok")
+        except Exception:
+            pass
+        L("binder: " + summary)
+        return {"ok": True, "steps": steps, "summary": summary}
+    return {"ok": False, "error": "selftest failed", "out": out[-400:], "steps": steps}
+
+
 # ------------------------------------------------------------------ actiuni
 def status():
     exe = _launcher()
     nd = _native_dir()
-    rootfs_ok = os.path.isdir(os.path.join(ROOTFS, "etc")) and os.path.exists(os.path.join(ROOTFS, "bin", "bash"))
+    rootfs_ok = os.path.isdir(os.path.join(EXEC_ROOTFS, "etc")) and os.path.exists(os.path.join(EXEC_ROOTFS, "bin", "bash"))
     r = {
         "proot_binary": exe or "MISSING",
         "native_dir": nd or "not found",
-        "rootfs": ROOTFS if rootfs_ok else "not installed",
+        "rootfs": EXEC_ROOTFS if rootfs_ok else "not installed",
     }
     if rootfs_ok:
         rc, out = _run(_proot_cmd() + _env("/bin/sh", "-c", "uname -s; cat /etc/debian_version; dpkg -l | grep -c ^ii"), timeout=90)
@@ -153,7 +510,8 @@ def install(asset_zip=None):
         # asset-urile extrase de MainActivity stau in files/proot/
         cands = [asset_zip] if asset_zip else []
         cands += [
-            HOME + "/proot/trixie-arm64.tar.zst",
+            HOME + "/proot/trixie-arm64.tar",       # ★ AGP DEZARHIVEAZA .gz la ambalare:
+            HOME + "/proot/trixie-arm64.tar.zst",   # pe device ajunge .tar NEcomprimat
             HOME + "/proot/trixie-arm64.tar.gz",
             HOME + "/proot/trixie-arm64.tar.xz",
         ]
@@ -174,10 +532,35 @@ def install(asset_zip=None):
                         "hint": "use trixie-arm64.tar.gz instead (.tar.zst needs zstd)"}
             rc, out = _run(["sh", "-c", "%s -dc %s | tar -xf - -C %s" % (dec, src, ROOTFS)], timeout=1800)
         else:
-            rc, out = _run(["tar", "-xzf", src, "-C", ROOTFS], timeout=1800)
+            # ★ FIX 2026-10-21: AGP DEZARHIVEAZA assets-urile `.gz` la ambalare, deci pe
+            # device ajunge `trixie-arm64.tar` NECOMPRIMAT. `tar -xzf` pe el da
+            # "zcat: not gzip / tar: had errors". Detectam formatul dupa magic bytes.
+            try:
+                with open(src, "rb") as _f:
+                    _magic = _f.read(4)
+            except Exception:
+                _magic = b""
+            if _magic[:2] == b"\x1f\x8b":          # gzip
+                _tf = ["tar", "-xzf", src, "-C", ROOTFS]
+            elif _magic[:4] == b"\x28\xb5\x2f\xfd":  # zstd
+                _dec = _which("unzstd") or _which("zstd")
+                if not _dec:
+                    return {"ok": False, "error": "no zstd decompressor",
+                            "hint": "use trixie-arm64.tar.gz instead"}
+                _tf = ["sh", "-c", "%s -dc %s | tar -xf - -C %s" % (_dec, src, ROOTFS)]
+            else:                                    # tar necomprimat
+                _tf = ["tar", "-xf", src, "-C", ROOTFS]
+            rc, out = _run(_tf, timeout=1800)
         steps.append("extract rc=%s" % rc)
-        if rc != 0:
+        # ★ FIX 2026-10-21: tar iese cu eroare pe nodurile din /dev (mknod fara root) si pe
+        # link-urile hard in /usr/bin (uid diferit in tar). Astea NU invalideaza rootfs-ul:
+        # /dev e oricum legat de la gazda (--bind=/dev), iar hardlink-ul are copie.
+        # Acceptam extractia daca a aparut structura de baza (bin/ + etc/ + usr/).
+        _rf_ok = all(os.path.isdir(os.path.join(ROOTFS, d)) for d in ("bin", "etc", "usr"))
+        if rc != 0 and not _rf_ok:
             return {"ok": False, "error": "extract failed", "out": out[-800:]}
+        if rc != 0:
+            steps.append("extract: erori ignorate (doar noduri /dev si hardlink)")
     exe = _launcher()
     steps.append("launcher=%s" % exe)
     return {"ok": bool(exe), "steps": steps}
