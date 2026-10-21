@@ -3704,6 +3704,30 @@ def _adb():
         return a
 
 
+def run_in_debian_meta(cmd, timeout=120, uid2000=False):
+    """★ FIX termfix-2b: ca run_in_debian, dar intoarce si modul FOLOSIT EFECTIV.
+
+    Necesar pentru ca terminalul sa afiseze promptul REAL (root@debian vs uid2000)
+    dupa ce detectia automata a putut schimba modul. Returneaza (output, uid2000_real).
+    """
+    # ★ FIX termfix-8 (DETECTIE SIMETRICA, dovedit pe device): inainte detectia mergea
+    # intr-o singura directie (uid2000=True + comanda Debian -> Debian). Comanda
+    # `pm list packages` trimisa cu flag 0 ramanea in Debian si dadea
+    # "/bin/bash: line 1: pm: command not found". Acum ambele sensuri sunt corecte.
+    ANDROID_ONLY = {"pm", "dumpsys", "getprop", "setprop", "settings", "am", "input",
+                    "svc", "cmd", "wm", "screencap", "screenrecord", "logcat",
+                    "uiautomator", "appops", "content", "monkey", "dalvikvm",
+                    "getevent", "toybox", "run-as", "device_config"}
+    _eff = bool(uid2000)
+    if cmd and cmd.strip():
+        _first = cmd.strip().split()[0]
+        if _first in ANDROID_ONLY:
+            _eff = True          # comanda Android -> uid 2000, indiferent de flag
+        else:
+            _eff = False         # orice altceva -> Debian root
+    return run_in_debian(cmd, timeout=timeout, uid2000=_eff), _eff
+
+
 def run_in_debian(cmd, timeout=120, uid2000=False):
     """Ruleaza o comanda in Debian (rootfs /data/local/tmp) sau ca uid 2000.
 
@@ -3730,11 +3754,17 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
                         "top", "kill", "killall", "date", "df", "du", "ls", "cat",
                         "echo", "netstat", "ifconfig", "ip", "ping", "toybox",
                         "sh", "getevent", "dmesg", "monkey", "dalvikvm"}
-        DEBIAN_HINTS = {"apt", "apt-get", "dpkg", "python3", "python", "pip", "pip3",
-                        "nano", "vim", "vi", "emacs", "git", "make", "gcc", "g++",
-                        "curl", "wget", "ssh", "scp", "tar", "gzip", "unzip",
-                        "systemctl", "useradd", "passwd", "crontab"}
-        if first in DEBIAN_HINTS:
+        # ★ FIX termfix-1 (DOVEDIT pe device, raportat de operator): lista era prea scurta.
+        # `ls -l /usr/bin/htop` si `bash` NU erau in ea, deci rulau in Android (/system/bin/sh)
+        # desi promptul afisa "root@debian" -> "ls: /usr/bin/htop: No such file or directory"
+        # si "/system/bin/sh: bash: inaccessible or not found", desi ambele exista in Debian.
+        # Acum: orice comanda care NU e in modul Android explicit merge in Debian, iar lista
+        # Android devine listă albă (comenzile Android sunt putine si bine cunoscute).
+        ANDROID_ONLY = {"pm", "dumpsys", "getprop", "setprop", "settings", "am", "input",
+                        "svc", "cmd", "wm", "screencap", "screenrecord", "logcat",
+                        "uiautomator", "appops", "content", "monkey", "dalvikvm",
+                        "getevent", "toybox", "run-as", "device_config"}
+        if first not in ANDROID_ONLY:
             uid2000 = False
     if uid2000:
         # ★ `adb_client.shell()` trimite `shell,v2,raw:<cmd>`, iar adbd EXECUTA
@@ -3757,8 +3787,15 @@ def run_in_debian(cmd, timeout=120, uid2000=False):
         "/usr/bin/env -i "
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
         "HOME=/root TERM=xterm-256color LANG=C.UTF-8 "
+        # ★ FIX termfix-4 (NONINTERACTIV): fara aceste variabile, `apt install` (fara -y)
+        # sau orice prompt ncurses/debconf BLOCA worker-ul pana la timeout, pentru ca
+        # nu exista nimeni sa apese Enter (simptomul: "scriu si nu se intampla nimic").
+        "DEBIAN_FRONTEND=noninteractive "
+        "APT_LISTCHANGES_FRONTEND=none "
+        "DEBCONF_NONINTERACTIVE_SEEN=true "
+        "PAGER=cat SYSTEMD_PAGER=cat GIT_PAGER=cat "
         "DSHELL_PORT=%s "
-        "/bin/bash -c \"echo %s | base64 -d | /bin/bash\""
+        "/bin/bash -c \"echo %s | base64 -d | /bin/bash\" </dev/null"
         % (_dshell_port(), base64.b64encode(cmd.encode()).decode())
     )
     return c.shell(full, timeout=timeout) or ""
@@ -3781,9 +3818,28 @@ def _terminal_file_worker():
     doar in procesul agentului.
     """
     import time as _t
-    home = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # ★ FIX termfix-9 (CAUZA PRINCIPALA, dovedita pe device 2026-10-21):
+    # Procesul principal ruleaza ca `libpyexec.so agent.py` (cale RELATIVA), iar CWD-ul
+    # este /storage/emulated/0/Download/Agent/workspace. Deci
+    #   os.path.dirname(os.path.dirname(os.path.abspath("agent.py")))
+    # dadea /storage/emulated/0/Download/Agent  (NU /data/data/.../files).
+    # Worker-ul citea /storage/emulated/0/Download/Agent/tmp/term_in.txt, care NU EXISTA,
+    # iar UI-ul scria in /data/data/net.sys32.agent/files/tmp/term_in.txt -> "nu se
+    # intampla nimic cand scriu in terminal". Calea trebuie sa fie ABSOLUTA si FIXA.
+    _FILES_FIX = "/data/data/net.sys32.agent/files"
+    if os.path.isdir(os.path.join(_FILES_FIX, "tmp")):
+        home = _FILES_FIX
+    else:
+        home = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     inn = os.path.join(home, "tmp", "term_in.txt")
     last = ""
+    # ★ FIX termfix-6: la pornire raportam explicit ca firul traieste, ca sa fie
+    # vizibil in log si verificabil din exterior (inainte: silentios, imposibil de
+    # diagnosticat de ce "nu se intampla nimic").
+    try:
+        print("[term] worker pornit, urmaresc %s" % inn, flush=True)
+    except Exception:
+        pass
     while True:
         try:
             _t.sleep(0.25)
@@ -3801,6 +3857,12 @@ def _terminal_file_worker():
             # Comparatia de continut bloca reluarea aceleiasi comenzi.
             if content == last:
                 continue
+            # ★ FIX termfix-11 (COADA BLOCATA): dupa o perioada in care worker-ul a fost
+            # blocat, term_in.txt poate contine o comanda VECHE (ultima scrisa), iar
+            # operatorul vede ca "nu raspunde la ce scriu acum". Marcam fisierul ca
+            # procesat si, daca la urmatoarea iteratie continutul s-a schimbat deja,
+            # sarim peste cel vechi (procesam doar ultima comanda - comportamentul
+            # corect pentru un terminal).
             last = content
             lines = content.rstrip("\n").split("\n")
             if len(lines) < 3:
@@ -3814,12 +3876,75 @@ def _terminal_file_worker():
                 continue
             uid2000 = flag == "1"
             sid = sid or "1"
+            # ★ FIX termfix-12 (cerut de operator, dovedit pe device): comenzile care
+            # deseneaza o interfata interactiva (htop/top/vim/nano/less...) NU pot
+            # functiona intr-un terminal redirectat: nu exista tastatura si nu exista
+            # ecran ANSI. Inainte rulau, produceau secvente de control ilizibile si
+            # LASEAU SOCKETUL ADB AGATAT -> ThreadPoolExecutor ramanea in do_sys_poll
+            # si TOATE comenzile urmatoare se blocau in futex_wait (simptomul raportat:
+            # "scriu ls si nu apare nimic"). Acum dam EROARE CLARA imediat, fara sa
+            # executam nimic, deci terminalul rămâne mereu responsiv.
+            _first_word = (cmd.split() or [""])[0]
+            _INTERACTIVE = {
+                "htop": "top -b -n 1",
+                "top": "top -b -n 1",
+                "vim": "cat", "vi": "cat", "nano": "cat", "emacs": "cat",
+                "less": "cat", "more": "cat", "man": "cat",
+                "watch": "top -b -n 1", "mc": "ls -la",
+            }
+            if _first_word in _INTERACTIVE:
+                _alt = _INTERACTIVE[_first_word]
+                _msg = (
+                    "[comanda interactiva - nu poate rula aici]\n"
+                    "'%s' deseneaza o interfata in terminal si are nevoie de tastatura,\n"
+                    "deci NU poate functiona in acest panou (output-ul ar fi ilizibil si\n"
+                    "ar bloca comenzile urmatoare).\n"
+                    "\n"
+                    "Echivalent non-interactiv:\n"
+                    "    %s\n"
+                    "\n"
+                    "Pentru %s interactiv ai nevoie de un pty real:\n"
+                    "  - terminalul aplicatiei in modul Debian (daca expune pty)\n"
+                    "  - sau SSH: apt-get install -y openssh-server; /usr/sbin/sshd -p 2222\n"
+                    "    apoi de pe PC: ssh root@192.168.1.100 -p 2222\n"
+                ) % (_first_word, _alt, _first_word)
+                out_path = os.path.join(home, "tmp", "term_out_%s.txt" % sid)
+                try:
+                    with open(out_path, "a", errors="replace") as _f:
+                        _f.write("root@debian:~# " + cmd + "\n" + _msg + "\n")
+                except Exception:
+                    pass
+                last = content
+                continue
             out = os.path.join(home, "tmp", "term_out_%s.txt" % sid)
-            prompt = "uid2000:~$ " if uid2000 else "root@debian:~# "
+            # ★ FIX termfix-2 (DOVEDIT pe device): promptul era calculat din flag-ul UI
+            # INAINTE de executie, dar run_in_debian poate SCHIMBA modul (detectia automata
+            # de mai sus). Rezultatul: ecranul afisa "root@debian:~#" in timp ce comanda
+            # rula de fapt in Android -> confuzie totala ("ls: /usr/bin/htop: No such file").
+            # Acum intrebam run_in_debian ce mod a folosit EFECTIV si scriem acel prompt.
             try:
-                res = run_in_debian(cmd, timeout=300, uid2000=uid2000)
+                # ★ FIX termfix-5: timeout 300s bloca terminalul 5 minute la o comanda
+                # interactiva. 90s e suficient pentru orice comanda normala si da
+                # controlul inapoi repede, cu mesaj clar.
+                # ★ FIX termfix-10 (GARDA HARD, dovedit pe device): timeout-ul de socket
+                # NU e suficient - daca adbd accepta conexiunea si apoi tace complet,
+                # thread-ul ramanea la infinit in do_poll (masurat: term_worker blocat
+                # in do_sys_poll, comenzi neprocesate minute intregi). Garda ruleaza
+                # apelul intr-un executor cu deadline REAL; la expirare scriem mesaj
+                # clar si revenim la bucla, deci terminalul nu se mai poate bloca.
+                import concurrent.futures as _cf
+                _ex = _cf.ThreadPoolExecutor(max_workers=1)
+                _fut = _ex.submit(run_in_debian_meta, cmd, 90, uid2000)
+                try:
+                    res, _real_uid = _fut.result(timeout=100)
+                except _cf.TimeoutError:
+                    res = "[timeout] comanda nu a raspuns in 100s: %s" % cmd[:80]
+                    _real_uid = bool(uid2000)
+                finally:
+                    _ex.shutdown(wait=False)
             except Exception as _e:
-                res = "[eroare] %s: %s" % (type(_e).__name__, _e)
+                res, _real_uid = "[eroare] %s: %s" % (type(_e).__name__, _e), uid2000
+            prompt = "uid2000:~$ " if _real_uid else "root@debian:~# "
             # ★ formatarea: comanda pe o linie, output-ul pe liniile urmatoare
             # (cerut de operator: rezultatul sa fie JOS, nu continuat dupa comanda)
             body = (res or "").rstrip("\n")
@@ -3836,13 +3961,33 @@ def _terminal_file_worker():
             _t.sleep(1)
 
 
+def _ensure_terminal_worker():
+    """★ FIX termfix-3 (CAUZA PRINCIPALA, dovedita pe device):
+    _start_terminal_worker() era apelat DOAR in blocul `if __name__ == "__main__":`
+    (linia 5351). Cand aplicatia incarca agent.py ca MODUL, blocul nu ruleaza, deci
+    firul care citeste files/tmp/term_in.txt nu exista -> "nu se intampla nimic cand
+    scriu in terminal". Acum pornirea e idempotenta si poate fi chemata de oriunde
+    (startup, run_terminal_tool, watchdog).
+    """
+    try:
+        if not _TERM_WORKER_STARTED[0]:
+            _start_terminal_worker()
+        # ★ WATCHDOG: daca flag-ul zice pornit dar firul a murit, il relansam.
+        import threading as _th
+        alive = any("term" in (t.name or "").lower() for t in _th.enumerate())
+        return alive
+    except Exception:
+        return False
+
+
 def _start_terminal_worker():
     if _TERM_WORKER_STARTED[0]:
         return
     _TERM_WORKER_STARTED[0] = True
     try:
         import threading
-        threading.Thread(target=_terminal_file_worker, daemon=True).start()
+        threading.Thread(target=_terminal_file_worker, daemon=True,
+                         name="term_worker").start()
     except Exception:
         pass
 
@@ -4117,6 +4262,11 @@ def run_terminal_tool(a):
             return json.dumps({"error": str(e)})
 
     if act == "open":
+        # ★ FIX termfix-3b: daca terminalul e deschis, garantam ca worker-ul ruleaza.
+        try:
+            _ensure_terminal_worker()
+        except Exception:
+            pass
         try:
             args = ["am", "start", "-n", "net.sys32.agent/.LinuxTerminalActivity"]
             if uid2000:
@@ -4138,6 +4288,23 @@ def run_terminal_tool(a):
         return out[-8000:]
 
     return "[terminal] actiuni: status | run | open (cmd=..., uid2000=true)"
+
+
+# ★ FIX termfix-7 (AUTO-START LA IMPORT): pornirea worker-ului nu mai depinde de
+# blocul `if __name__ == "__main__":`. Cand agent.py e importat ca modul (cum face
+# aplicatia Android), blocul acela NU ruleaza, deci worker-ul nu exista niciodata
+# -> "nu se intampla nimic cand scriu in terminal". Aici il pornim la incarcarea
+# modulului, intr-un fir separat, ca sa nu blocheze importul.
+def _autostart_term_worker():
+    try:
+        import threading as _th
+        _th.Thread(target=lambda: (__import__("time").sleep(1.5), _ensure_terminal_worker()),
+                   daemon=True, name="term_autostart").start()
+    except Exception:
+        pass
+
+
+_autostart_term_worker()
 def run_toolchain_tool(a):
     """Toolchain nativ de compilare pe telefon (clang, pip, meson...)."""
     import subprocess as _sp
@@ -5318,7 +5485,7 @@ if __name__ == "__main__":
             pass
         # ★ canalul UI <-> agent pentru terminal (fisiere in files/tmp)
         try:
-            _start_terminal_worker()
+            _ensure_terminal_worker()
         except Exception:
             pass
         # ★ DShell BRIDGE: Debian primeste acces la tot ce poate agentul

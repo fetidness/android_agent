@@ -492,6 +492,19 @@ class Adb:
         # infinit, desi cheia era perfect valida. Reset obligatoriu pe fiecare connect().
         self._auth_tries = 0
         self.s = socket.create_connection((self.host,self.port), timeout=8)
+        # ★ FIX adbfix-9 (BLOCAJ IMPOSIBIL DE OCOLIT, dovedit pe device): un `recv()`
+        # blocant NU poate fi intrerupt din Python (settimeout se poate reseta, iar
+        # ThreadPoolExecutor.shutdown(wait=False) lasa thread-ul agatat in do_poll).
+        # Cand o comanda ca `htop` lasa sesiunea adbd deschisa, TOATE comenzile
+        # urmatoare se blocau in futex_wait. SO_RCVTIMEO e aplicat de KERNEL, deci
+        # recv() ridica socket.timeout garantat, indiferent de settimeout() ulterior.
+        try:
+            import struct as _st
+            _tv = _st.pack("ll", 120, 0)   # 120s limita absoluta de citire
+            self.s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, _tv)
+            self.s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, _tv)
+        except Exception:
+            pass
         # ★ KEEPALIVE: tine socket-ul viu intre comenzi (fara el, adbd inchide
         # conexiunea idle si urmatorul apel face reconnect -> dialog nou "Allow")
         try:
