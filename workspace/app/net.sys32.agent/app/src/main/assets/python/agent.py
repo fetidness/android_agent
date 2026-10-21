@@ -1159,7 +1159,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"bash","description":"Run a shell command (bash -lc), returns stdout+stderr. For TEXT STREAMS: grep/awk/sed/sort/uniq/wc/find/du/cut, line-by-line filtering, xargs -P. ~1.3-1.6x faster than python on big streams, far less memory. NOT for parsing/logic.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the full shell command line, e.g. grep -c ERROR app.log | sort | uniq -c"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
-   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"binder","description":"BINDER NATIV IN-PROCESS: apeleaza serviciile Android direct din procesul aplicatiei (deschide /dev/binder, fara adb si fara bridge). Action: list (toate cele 468 servicii), check name=, handle name=, iface name= (descriptorul AIDL - OBLIGATORIU inainte de un apel), call name= code= args=[..] (apel AIDL real; intoarce status + stringuri + hex), raw name= code=. Foloseste-l cand adbsh nu ajunge (nu ai nevoie de shell) sau cand vrei un apel direct pe un serviciu de sistem. Serviciile AIDL cer descriptorul in parcel, altfel dau \"Binder invocation to an incorrect interface\"; obtine-l cu iface. Serviciile lazy (activity, window, notification) nu pot fi obtinute (handle null). EX_SECURITY pe media/stats/surfaceflinger (SELinux pe untrusted_app).","parameters":{"type":"object","properties":{"action":{"type":"string","description":"list|check|handle|iface|call|raw"},"params":{"type":"object","description":"name= (serviciu), code= (codul metodei AIDL), args= (lista de int32), descriptor= (optional, altfel dedus cu iface)"}},"required":["action"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) OR a local path/.tar.gz/URL on the device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
 {"type": "function", "function": {"name": "terminal", "description": "LINUX TERMINAL real in aplicatie (bash in Debian, pty adevarat - nu pipe). Deschide terminal cu sesiuni multiple, culori ANSI, vim/htop/nano functionale. Actions: open (deschide terminalul; uid2000=true pentru shell Android uid 2000), run (cmd=: executa in Debian si intoarce output), list (sesiuni), kill (inchide toate).", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["open", "run", "list", "kill"]}, "cmd": {"type": "string", "description": "pentru run: comanda de executat"}, "uid2000": {"type": "boolean", "description": "true = shell Android uid 2000 (pm/dumpsys/settings); false = Debian root"}, "timeout": {"type": "integer", "description": "secunde pentru run (implicit 120)"}}, "required": ["action"]}}},
    {"type":"function","function":{"name":"build_apk","description":"COMPILES AN ANDROID APK ON THE DEVICE, FULLY OFFLINE (no PC). Uses Gradle+AGP+JDK+aapt2+cmake+NDK, all bundled in the APK. Actions: setup (extracts the tools from assets into filesDir, once - run it first; it also self-tests java+aapt2); build (compiles an Android project from <dir> -> APK, runs preflight and automatically PUBLISHES the APK to /sdcard/Download/Agent/workspace/; params: dir=project path, task=assembleDebug default); verify (checks an existing APK: params: apk=path); install (installs the APK WITHOUT a PC: tries publish -> /data/local/tmp -> pm install as shell uid=2000; if adb is not authorised it opens the SYSTEM INSTALLER on the phone (one tap, no adb); params: apk=path OR dir=project); selftest (checks that java+aapt2 really run, heals a missing libX.so.N by itself). Ex: build_apk action=build dir=/path/to/android_project, then build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"the Android project path (for build)"},"apk":{"type":"string","description":"the APK path (for verify/install; for install you may also pass dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
@@ -2294,6 +2294,112 @@ def run_adbsh_tool(cmd, timeout=20):
     _show_step(dsc, o, TASK["steps"])
     return o
 
+# ---------------------------------------------------------------------------
+# BINDER NATIV IN-PROCESS (2026-10-21)
+# ---------------------------------------------------------------------------
+_BINDER = [None]
+
+def _binder_client():
+    """Client Binder lazy, refolosit intre apeluri (fd + mmap raman deschise)."""
+    if _BINDER[0] is not None:
+        return _BINDER[0]
+    import importlib.util as _iu
+    here = os.path.dirname(os.path.abspath(__file__))
+    sp = _iu.spec_from_file_location("android_binder", os.path.join(here, "android_binder.py"))
+    mod = _iu.module_from_spec(sp); sp.loader.exec_module(mod)
+    _BINDER[0] = mod.Binder()
+    return _BINDER[0]
+
+
+def run_binder_tool(action, params=None):
+    """BINDER NATIV: apeleaza serviciile Android direct din procesul aplicatiei.
+
+    Deschide /dev/binder in-process (fara adb, fara bridge) si vorbeste cu
+    servicemanager ca orice proces Android. Functioneaza din untrusted_app.
+
+    Action:
+      list                      - toate serviciile (468)
+      check   name=             - exista serviciul?
+      handle  name=             - handle-ul binder local
+      iface   name=             - descriptorul AIDL (obligatoriu inainte de call)
+      call    name=, code=, args=[...], descriptor=(optional)
+                                - apel AIDL; intoarce status + hex + stringuri
+      raw     name=, code=     - la fel ca call, dar fara descriptor
+    """
+    p = params or {}
+    try:
+        b = _binder_client()
+    except Exception as e:
+        return "binder unavailable: %s" % e
+
+    a = (action or "list").strip().lower()
+    name = p.get("name") or p.get("service") or ""
+
+    try:
+        if a == "list":
+            svcs = b.list()
+            return "%d servicii:\n%s" % (len(svcs), "\n".join(
+                "%d\t%s" % (i, s) for i, s in enumerate(svcs)))
+
+        if a == "check":
+            if not name:
+                return "lipseste name="
+            return "%s: %s" % (name, "found" if b.check(name) else "not found")
+
+        if a == "handle":
+            if not name:
+                return "lipseste name="
+            h = b.handle(name)
+            return "%s: %s" % (name, "null (serviciu lazy sau inexistent)"
+                               if h is None else "handle=%d" % h)
+
+        if a == "iface":
+            if not name:
+                return "lipseste name="
+            d = b.iface(name)
+            return "%s: %s" % (name, d or "(fara descriptor - nu e AIDL)")
+
+        if a in ("call", "raw"):
+            if not name:
+                return "lipseste name="
+            code = int(p.get("code", 0) or 0)
+            cargs = p.get("args") or []
+            if isinstance(cargs, (int, str)):
+                cargs = [cargs]
+            cargs = [int(x) & 0xFFFFFFFF for x in cargs]
+            desc = p.get("descriptor")
+            if a == "raw":
+                desc = desc if desc is not None else ""
+            st, data = b.call(name, code, desc, *cargs)
+            # extrage stringurile UTF-16 (util pentru inspectie)
+            try:
+                from android_binder import strings as _strings
+            except Exception:
+                def _strings(x): return []
+            txt = _strings(data)[:8]
+            hexs = data[:256].hex()
+            out = ["%s code=%d -> status=%s len=%d" % (name, code, st, len(data))]
+            if txt:
+                out.append("stringuri: " + " | ".join(s[:80] for s in txt))
+            if hexs:
+                out.append("hex: " + hexs + ("..." if len(data) > 256 else ""))
+            return "\n".join(out)
+
+        return ("actiune necunoscuta: %s (foloseste list|check|handle|iface|call|raw)" % a)
+    except Exception as e:
+        # clientul poate fi intr-o stare moarta (fd inchis, mmap invalid) -> reincercam o data
+        try:
+            _BINDER[0] = None
+            b = _binder_client()
+            if a == "list":
+                svcs = b.list()
+                return "%d servicii:\n%s" % (len(svcs), "\n".join(
+                    "%d\t%s" % (i, x) for i, x in enumerate(svcs)))
+        except Exception:
+            pass
+        return "binder error: %s: %s" % (type(e).__name__, e)
+
+
 def run_android_tool(tool, action, params):
     """Ruleaza un tool nativ Android prin bridge-ul Kotlin (socket local).
     Intoarce textul (JSON compact) trimis modelului, cu acelasi contor de pasi."""
@@ -2449,6 +2555,8 @@ def _call_tool_inner(c):
         return bg_tool(a)
     if fn=="adbsh":
         return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
+    if fn=="binder":
+        return run_binder_tool(a.get("action","list"), a.get("params",{}) or {})
     if fn=="terminal":
         return run_terminal_tool(a)
     if fn=="toolchain":
@@ -2829,7 +2937,7 @@ def detect_elision(text):
     if not isinstance(text,str) or len(text)<_ELISION_MIN: return False
     return any(rx.search(text[:_ELISION_MAX]) for rx in _ELISION_RX)
 
-_UNTRUSTED=("bash","python","smart","read","multi","look","android","adbsh","bg","help","skill")
+_UNTRUSTED=("bash","python","smart","read","multi","look","android","adbsh","binder","bg","help","skill")
 def wrap_untrusted(name,content):
     """Wrap external/echoed tool content in delimiters so the model treats it as DATA, not orders."""
     if not isinstance(content,str) or len(content)<1000: return content
@@ -3219,6 +3327,7 @@ def ptc_run(code, max_tool_calls=None, timeout=300):
         "todo": _wrap("todo", lambda a: run_todo_tool(a if isinstance(a,dict) else {})),
         "android": _wrap("android", lambda a: run_android_tool(a.get("tool",""),a.get("action",""),a.get("params",{}) or {})),
         "adbsh": _wrap("adbsh", lambda a: run_adbsh_tool(a.get("cmd","") if isinstance(a,dict) else str(a), 20)),
+        "binder": _wrap("binder", lambda a: run_binder_tool(a.get("action","list") if isinstance(a,dict) else "list", (a.get("params",{}) if isinstance(a,dict) else {}))),
         "print": print, "json": json, "os": os, "re": re,
     }
     import io,contextlib

@@ -8,6 +8,10 @@
 > "TERMINAL LINUX (2026-10-20)" si `CHANGELOG.md` 2026-10-20.
 
 
+> **Stare 2026-10-21 (d):** agentul are acum tool-ul **`binder`** - apeleaza
+> serviciile Android NATIV din procesul aplicatiei (`/dev/binder` direct, fara adb,
+> fara bridge): 468 servicii, descriptori AIDL si apeluri reale.
+>
 > **Stare 2026-10-21 (c):** Debian-ul are acum si **BINDER NATIV** - apeleaza direct
 > serviciile Android prin `/dev/binder`, fara bridge. `android-binder list` da 468 de
 > servicii (identic cu `service list`), iar `android-binder aidlcall ...` face apeluri AIDL
@@ -266,6 +270,64 @@ workspace/app/.../assets/binder/install_binder.sh  instalare
 workspace/app/.../assets/binder/binder_android.c   clientul Android (referinta)
 DEBIAN_BINDER.md                                   protocol complet
 ```
+
+---
+
+## 🔌 BINDER IN-PROCESS (2026-10-21) - AGENTUL APELEAZA SERVICIILE DIRECT
+
+Agentul din aplicatie are acum acces Binder **nativ**, fara adb, fara bridge si
+fara proot: deschide `/dev/binder` direct in procesul aplicatiei.
+
+### Tool nou: `binder`
+
+```
+binder  action=list
+binder  action=check    params={name: "package"}
+binder  action=iface    params={name: "display"}
+binder  action=handle   params={name: "power"}
+binder  action=call     params={name: "display", code: 1}
+```
+
+Rezultate reale (u:r:untrusted_app):
+```
+list            -> 468 servicii
+check package   -> found
+iface display   -> android.hardware.display.IDisplayManager
+handle power    -> handle=2
+call display 1  -> status=0, 1736 bytes (QCM, DisplayAddress$Physical, ...)
+```
+
+### Modul Python: `android_binder.py`
+
+```python
+import sys; sys.path.insert(0, "/data/data/net.sys32.agent/files/python")
+from android_binder import Binder, strings
+b = Binder()
+b.list(); b.handle("display"); b.iface("display")
+st, data = b.call("display", 1)
+strings(data)          # stringurile UTF-16 din raspuns
+```
+
+### De ce merge din untrusted_app
+
+`/dev/binder` se deschide, `mmap` merge pana la **1 MB** cu PROT_READ, iar
+servicemanager (pid 1000) raspunde la `getService`/`checkService`/`listServices`.
+Spre deosebire de Debian (unde era nevoie de `setuid(2000)` pentru SELinux),
+aplicatia are deja contextul ei si merge direct.
+
+### Capcane dovedite
+
+- `errno=11` (EAGAIN) la `BINDER_WRITE_READ` **nu e eroare** - inseamna "nimic de
+  citit inca"; trebuie tratat ca `(0,0)` si reincercat, altfel pica tot
+- bufferele trimise trebuie tinute vii (lista `_keep`) pana la sfarsitul
+  tranzactiei; altfel GC-ul le colecteaza si kernelul citeste gunoi
+- `checkService` intoarce status=0 si pentru servicii inexistente; diferenta e
+  `offsets_size == 0`
+- ordinea `ACQUIRE -> INCREFS -> FREE_BUFFER` ramane obligatorie
+- descriptorul AIDL e obligatoriu in parcel (obtine-l cu `iface`)
+
+Documentatie completa: `BINDER_INPROCESS.md` (in-process, acest tool) si
+`DEBIAN_BINDER.md` (protocolul Binder, offseturi verificate prin ptrace).
 
 ---
 

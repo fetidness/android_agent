@@ -5,6 +5,50 @@
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
 > Ultimul commit inclus: `6f72ee5` (2026-10-16).
 
+### 2026-10-21 (d) - BINDER IN-PROCESS: agentul apeleaza serviciile Android direct
+
+> **Cerut de operator:** "vreau sa implementam binder si tie direct ca agent pe
+> android. sa fii la fel de capabil precum debian."
+
+#### Rezultat
+
+Agentul din aplicatie are acum acces Binder **nativ**, fara adb, fara bridge si
+fara proot: deschide `/dev/binder` direct in procesul aplicatiei.
+
+```
+list            -> 468 servicii
+check package   -> found
+iface display   -> android.hardware.display.IDisplayManager
+handle power    -> handle=2
+call display 1  -> status=0, 1736 bytes (QCM, DisplayAddress$Physical, ...)
+```
+
+#### Ce s-a adaugat
+
+- `assets/python/android_binder.py` - client Binder in-process (clasa `Binder`)
+- `agent.py`: tool nou **`binder`** (list/check/handle/iface/call/raw), in schema,
+  in dispatch, in `run_code` si in lista `_UNTRUSTED`
+- `BINDER_INPROCESS.md` - documentatia modulului
+
+#### Descoperiri (dovedite in aplicatie, u:r:untrusted_app)
+
+- `untrusted_app` POATE deschide `/dev/binder`, `mmap` pana la 1 MB si vorbi cu
+  servicemanager (pid 1000) - nu are nevoie de uid 2000
+- `errno=11` (EAGAIN) la `BINDER_WRITE_READ` NU e eroare: inseamna "nimic de citit
+  inca" si trebuie tratat ca `(0,0)` cu reincercare (altfel pica tot)
+- bufferele trimise trebuie tinute vii (lista `_keep`) pana la sfarsitul
+  tranzactiei, altfel GC-ul le colecteaza si kernelul citeste gunoi
+- `checkService` intoarce status=0 si pentru servicii inexistente; diferenta e
+  `offsets_size == 0`
+- ordinea `ACQUIRE -> INCREFS -> FREE_BUFFER` ramane obligatorie
+
+#### Fisiere modificate
+
+`workspace/app/.../assets/python/agent.py` (adaugat tool `binder`),
+`workspace/app/.../assets/python/android_binder.py` (nou).
+
+---
+
 ### 2026-10-21 (c) - BINDER nativ: Debian vorbeste direct cu serviciile Android
 
 > **Cerut de operator:** "implementeaza la nivel de debian ca el sa comunice cu
