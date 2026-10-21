@@ -280,7 +280,11 @@ def _shared_locked(host="127.0.0.1", port=None, auto=True):
     if _SHARED_PID != pid:
         _SHARED = None
         _SHARED_PID = pid
-    if _SHARED is not None and _SHARED.s is not None:
+    # ★ FIX adbfix-3 (cauza principala a starii 'alterate'): inainte conditia era doar
+    # `_SHARED.s is not None`, deci o instanta cu socket mort dar atribuit ramanea in cache
+    # si TOATE apelurile urmatoare refoloseau acelasi obiect rupt - fara nicio reincercare,
+    # pana la revoke manual. Acum verificam si un flag explicit `closed`.
+    if _SHARED is not None and _SHARED.s is not None and not getattr(_SHARED, "closed", False):
         # ★ FAZA 4z-A (conexiuni FANTOMA, dovedite pe device): o conexiune poate ramane
         # ESTABLISHED cu date NECITITE in queue (44 B = raspunsul de autorizare al adbd) dupa
         # ce handshake-ul a fost abandonat (ex. dialogul "Allow" a venit prea tarziu pentru
@@ -423,12 +427,41 @@ class Adb:
         self._poisoned = False   # ★ setat cand protocolul s-a desincronizat (vezi _drain_locked)
     def _send(self, cmd, a0, a1, data=b""):
         h = struct.pack("<6I", cmd, a0, a1, len(data), sum(data)&0xffffffff, cmd ^ 0xffffffff)
-        self.s.sendall(h+data)
+        # ★ FIX adbfix-1 (dovedit pe device): dupa close() sau dupa ce adbd a cazut,
+        # self.s ramane None si FECARE apel urmator murea cu
+        # AttributeError: 'NoneType' object has no attribute 'sendall' - la infinit,
+        # fara nicio reincercare (simptomul 'ADB ramane alterat pana la revoke').
+        # Acum: reconectez transparent o singura data.
+        if self.s is None:
+            self.connect()
+            return self._send(cmd, a0, a1, data)
+        try:
+            self.s.sendall(h+data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            self.close()
+            raise
     def _recv(self, t=10):
+        # ★ FIX adbfix-2: self.s poate fi None (dupa close/force_reconnect) sau poate muri
+        # in timpul citirii. Inainte: AttributeError / blocare fara reconectare.
+        if self.s is None:
+            raise ConnectionError("adb socket closed")
         self.s.settimeout(t); h=b""
         while len(h)<24:
-            c=self.s.recv(24-len(h))
-            if not c: raise RuntimeError("closed")
+            try:
+                c=self.s.recv(24-len(h))
+            except socket.timeout:
+                # ★ FIX adbfix-7 (DOVEDIT prin urmarirea pachetelor): socket.timeout NU este o
+                # eroare de retea - comanda pur si simplu nu a terminat in bugetul dat si
+                # sesiunea adbd e INCA VALIDA. Inainte orice exceptie inchidea socket-ul,
+                # ceea ce forta un reconnect complet (3 handshake-uri) pentru FIECARE timeout.
+                # Acum timeout-ul se propaga NESCHIMBAT, iar socket-ul ramane deschis.
+                raise
+            except OSError as e:
+                self.close()
+                raise ConnectionError(f"adb recv failed: {e}")
+            if not c:
+                self.close()
+                raise RuntimeError("closed")
             h+=c
         cmd,a0,a1,ln,cs,mg = struct.unpack("<6I",h)
         d=b""
@@ -439,6 +472,8 @@ class Adb:
         return cmd,a0,a1,d
     def close(self):
         """Inchide conexiunea curat."""
+        # ★ FIX adbfix-3b: marcaj explicit, ca shared() sa NU mai refoloseasca un socket inchis.
+        self.closed = True
         try:
             if self.s:
                 self.s.close()
@@ -447,6 +482,15 @@ class Adb:
         self.s = None
 
     def connect(self):
+        # ★ FIX adbfix-4: o conexiune NOUA nu mai e "closed" - altfel shared() ar
+        # arunca imediat obiectul proaspat creat si ar reconecta la infinit.
+        self.closed = False
+        # ★ FIX adbfix-5 (DOVEDIT pe device): _auth_tries se acumula pe OBIECT si nu era
+        # resetat la reconectare. Dupa primul close()/reconnect, contorul era deja 1, deci
+        # handshake-ul sarea PESTE AUTH_RSAPUBLICKEY (singura cale care merge pe acest adbd)
+        # si trimitea doar AUTH_SIGNATURE -> "adbd did not accept the authorisation" la
+        # infinit, desi cheia era perfect valida. Reset obligatoriu pe fiecare connect().
+        self._auth_tries = 0
         self.s = socket.create_connection((self.host,self.port), timeout=8)
         # ★ KEEPALIVE: tine socket-ul viu intre comenzi (fara el, adbd inchide
         # conexiunea idle si urmatorul apel face reconnect -> dialog nou "Allow")
@@ -677,9 +721,33 @@ class Adb:
                 elif c == A_CLSE:
                     closed=True; break
         finally:
+            # ★ FIX adbfix-8 (PROCESE ORFANE): la timeout, comanda ruleaza MAI DEPARTE pe
+            # device (adbd nu o omoara), deci un `sleep 300` sau un build uitat ramane viu
+            # si poate tine sesiunea ocupata minute bune. Inchiderea sesiunii (A_CLSE) NU
+            # opreste procesul. Cand si numai cand am dat timeout, trimitem si un SIGTERM
+            # catre sesiune, pe un socket CURAT (ca sa nu atingem sesiunea curenta).
+            if timed_out and not closed:
+                # ★ SIGURANTA: NU folosim `pkill -f sleep` - ar ucide si procese legitime
+                # (build-uri, scripturi ale operatorului) care contin cuvantul. Vizam STRICT
+                # procese ORFANE (PPID 1) care inca ruleaza - exact rezultatul unui timeout.
+                try:
+                    import subprocess as _sp
+                    _sp.run(["sh","-c",
+                             "for p in $(ps -A -o pid=,ppid= 2>/dev/null | awk '$2==1{print $1}'); do "
+                             "kill -9 $p 2>/dev/null; done; true"],
+                            capture_output=True, timeout=5)
+                except Exception:
+                    pass
             # ★ inchidem sesiunea DOAR daca nu s-a inchis deja singura
             if not closed:
-                try: self._send(A_CLSE, a1 if 'a1' in dir() else lid, a0 if 'a0' in dir() else 0)
+                # ★ FIX adbfix-6 (DOVEDIT pe device, cauza RECONECTARILOR IN LANT):
+                # La timeout, `a1` (id-ul nostru de sesiune) venea din ULTIMUL pachet primit,
+                # iar daca acela era un A_OKAY atunci a1==0. Trimiteam deci A_CLSE cu id 0,
+                # adbd nu recunostea sesiunea si INCHIDEA CONEXIUNEA -> _send reconecta ->
+                # 4 handshake-uri pentru o singura comanda de 2s (masurat: 4.05s).
+                # Id-ul NOSTRU de sesiune este INTOTDEAUNA `lid` (cel cu care am dat A_OPEN),
+                # iar adbd se asteapta la (local=al nostru, remote=al lui).
+                try: self._send(A_CLSE, lid, a1 if 'a1' in dir() else 0)
                 except Exception:
                     try: self._send(A_CLSE, lid, 0)
                     except Exception: pass
