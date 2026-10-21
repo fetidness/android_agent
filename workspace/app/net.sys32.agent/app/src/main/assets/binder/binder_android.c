@@ -88,7 +88,7 @@ static u64 mkparcel_ex(u8*b,const char*desc,const char*arg,int pad){
     int dl=(int)strlen(desc);
     *(u32*)(b+o)=(u32)dl; o+=4;
     for(int i=0;i<dl;i++){ *(u16*)(b+o)=(u16)(unsigned char)desc[i]; o+=2; }
-    if(pad) o+=4;                          /* padding dupa descriptor (IServiceManager) */
+    if(pad) o+=4;      /* DOVEDIT: mereu +4, atat IServiceManager cat si AIDL */
     if(arg){
         int al=(int)strlen(arg);
         *(u32*)(b+o)=(u32)al; o+=4;
@@ -198,6 +198,8 @@ int main(int argc,char**argv){
 
     if(!strcmp(what,"handle")){          /* handle <nume> -> afiseaza handle-ul */
         u64 n=mkparcel(pl,"android.os.IServiceManager",argc>2?argv[2]:"package");
+        if(getenv("DBG")){ fprintf(stderr,"[parcel n=%llu] ",(unsigned long long)n);
+            for(u64 q=0;q<n;q++) fprintf(stderr,"%02x",pl[q]); fprintf(stderr,"\n"); }
         r=transact(0,1,pl,n,out,&ol,&pid,&st,&os);
         printf("getService(%s): r=%d pid=%u len=%llu status=0x%x offsz=%llu\n",
                argc>2?argv[2]:"package",r,pid,(unsigned long long)ol,st,(unsigned long long)os);
@@ -224,14 +226,16 @@ int main(int argc,char**argv){
         r=transact(0,1,pl,n1,out,&ol,&pid,&st,&os);
         unsetenv("NOFREE");
         if(r<0||ol<8||st!=0){ printf("getService(%s) a esuat: r=%d st=0x%x\n",argv[2],r,st); return 1; }
-        u32 h=*(u32*)(out+4);
-        if(getenv("H1")) h=1;   /* handle-ul real extras din flat_binder_object */
+        u32 h=*(u32*)(out+12);
+        if(getenv("H1")) h=1;
         /* 2. construieste parcel-ul cu descriptorul serviciului */
+        memset(pl,0,sizeof(pl));   /* BUG FIX: pl continea parcelul de getService */
         u64 n=mkparcel_ex(pl,argv[3],NULL,1);
         /* elimina padding-ul de dupa descriptor si adauga argumentele int */
         for(int i=5;i<argc;i++){ *(u32*)(pl+n)=(u32)strtoul(argv[i],0,0); n+=4; }
         u32 c2=(u32)strtoul(argv[4],0,0);
-        printf("call %s (handle=0x%x) code=%u\n",argv[2],h,c2);
+        printf("call %s (handle=0x%x) code=%u n=%llu pl[0..11]=%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+               argv[2],h,c2,(unsigned long long)n,pl[0],pl[1],pl[2],pl[3],pl[4],pl[5],pl[6],pl[7],pl[8],pl[9],pl[10],pl[11]);
         /* libbinder face o tranzactie goala la inceput (cf. capturii) */
 
         /* secventa EXACTA din libbinder:
@@ -246,9 +250,7 @@ int main(int argc,char**argv){
           u8 fb[12]; u32 fc=0x40086303; memcpy(fb,&fc,4);
           memcpy(fb+4,&g_lastdptr,8); bwr(fb,12,NULL);
           if(getenv("DBG")) fprintf(stderr,"[dbg] FREE_BUFFER 0x%llx\n",(unsigned long long)g_lastdptr); }
-        { u8 o2[512]; u64 l2=0; u32 p2=0,s2=0,os2=0;
-          int rr=transact(h,0x5f4e5446,NULL,0,o2,&l2,&p2,&s2,&os2);
-          if(getenv("DBG")) fprintf(stderr,"[dbg] INTERFACE h=%u -> r=%d len=%llu\n",h,rr,(unsigned long long)l2); }
+        /* NU facem INTERFACE_TRANSACTION aici: consuma un reply si strica apelul */
         r=transact(h,c2,pl,n,out,&ol,&pid,&st,&os);
         printf("call(h=%u,code=%u): r=%d pid=%u len=%llu status=0x%x\n",h,c2,r,pid,(unsigned long long)ol,st);
         if(r==0&&ol){
@@ -294,5 +296,102 @@ int main(int argc,char**argv){
             }
         }
     }
+
+    if(!strcmp(what,"bindall")){         /* bindall [--quiet] : leaga TOATE serviciile */
+        int quiet = argc>2 && !strcmp(argv[2],"--quiet");
+        u64 n=mkparcel(pl,DESC,NULL);
+        *(u32*)(pl+n)=0x0F; n+=4;
+        r=transact(0,6,pl,n,out,&ol,&pid,&st,&os);
+        if(r<0||st!=0){ fprintf(stderr,"listServices: r=%d st=0x%x\n",r,st); return 1; }
+        u32 cnt=*(u32*)(out+4);
+        u64 lstlen=ol; u8 *lst=malloc(lstlen?lstlen:1); memcpy(lst,out,lstlen);
+        if(getenv("DBG")) fprintf(stderr,"[p] lstlen=%llu cnt=%u\n",(unsigned long long)lstlen,cnt);
+        typedef struct{char nm[192];char ds[192];u32 h;int ok;} B;
+        B *arr=malloc(sizeof(B)*(cnt+4)); int nb=0,ok=0,lazy=0,refu=0;
+        u64 o=8;
+        for(u32 i=0;i<cnt&&o+4<=lstlen;i++){
+            s32 L=*(s32*)(lst+o); o+=4;
+            if(L<0||L>191||o+(u64)L*2>lstlen) break;
+            char nm[192]; u32 j;
+            for(j=0;j<(u32)L&&j<191;j++) nm[j]=(char)((u16*)(lst+o))[j];
+            nm[j]=0; o+=(u64)L*2; while(o&3) o++;
+            if(getenv("DBG") && i<4) fprintf(stderr,"[p] i=%u L=%d o=%llu nm=%s\n",i,L,(unsigned long long)o,nm);
+            if(!nm[0]) continue;
+            /* getService pentru fiecare */
+            u8 p2[1024]; memset(p2,0,sizeof p2);
+            u64 n2=mkparcel(p2,DESC,nm);
+            u8 o2[16384]; u64 l2=0,os2=0; u32 pd2=0,s2=0;
+            setenv("NOFREE","1",1);
+            int r2=transact(0,1,p2,n2,o2,&l2,&pd2,&s2,&os2);
+            unsetenv("NOFREE");
+            if(getenv("DBG")) fprintf(stderr,"[b] %s r2=%d l2=%llu s2=0x%x\n",nm,r2,(unsigned long long)l2,s2);
+            if(getenv("DBG")) fprintf(stderr,"[b] %s r2=%d l2=%llu s2=0x%x\n",nm,r2,(unsigned long long)l2,s2);
+            if(r2<0||l2<8||s2!=0){
+                if(s2==0xfffffffc) lazy++;
+                else { refu++; if(getenv("DBG")) fprintf(stderr,"[f] %s r2=%d l2=%llu s2=0x%x\n",nm,r2,(unsigned long long)l2,s2); }
+                continue; }
+            u32 h=*(u32*)(o2+12);
+            if(getenv("DBG")) fprintf(stderr,"[b] h=%u\n",h);
+            if(h==0||h==0x80000001u){ lazy++; continue; }
+            /* ACQUIRE + INCREFS + FREE_BUFFER (ordinea libbinder) */
+            { u8 aq[8]; u32 ac=0x40046304; memcpy(aq,&ac,4); memcpy(aq+4,&h,4); u64 ar=0; bwr(aq,8,&ar); }
+            { u8 aq[8]; u32 ic=0x40046305; memcpy(aq,&ic,4); memcpy(aq+4,&h,4); u64 ar=0; bwr(aq,8,&ar); }
+            { u8 fb[12]; u32 fc=0x40086303; memcpy(fb,&fc,4); memcpy(fb+4,&g_lastdptr,8); bwr(fb,12,NULL); }
+            /* INTERFACE_TRANSACTION -> descriptor AIDL */
+            u8 o3[1024]; u64 l3=0,os3=0; u32 p3=0,s3=0;
+            int r3=transact(h,0x5f4e5446,NULL,0,o3,&l3,&p3,&s3,&os3);
+            char ds[192]=""; 
+            if(r3==0 && s3!=0xffffffffu && l3>=4){
+                s32 DL=*(s32*)o3;
+                if(DL>0 && DL<191 && (u64)DL*2+4<=l3){
+                    for(s32 k=0;k<DL;k++) ds[k]=(char)((u16*)(o3+4))[k];
+                    ds[DL]=0;
+                }
+            }
+            if(getenv("DBG") && i<8) fprintf(stderr,"[d] %s r3=%d l3=%llu s3=0x%x ds='%s'\n",nm,r3,(unsigned long long)l3,s3,ds);
+            if(ds[0]){ snprintf(arr[nb].nm,192,"%s",nm); snprintf(arr[nb].ds,192,"%s",ds);
+                       arr[nb].h=h; arr[nb].ok=1; nb++; ok++; }
+            else refu++;
+        }
+        printf("=== BINDALL ===\n");
+        printf("listate     : %u\n",cnt);
+        printf("legate OK   : %d\n",ok);
+        printf("lazy/ENOENT : %d\n",lazy);
+        printf("refuzate    : %d\n",refu);
+        if(!quiet) for(int i=0;i<nb;i++)
+            printf("BOUND\t%s\th=%u\t%s\n",arr[i].nm,arr[i].h,arr[i].ds);
+        free(arr);
+        return 0;
+    }
+
+    if(!strcmp(what,"probe")){           /* probe: apeluri AIDL reale pe servicii de baza */
+        struct{const char*n;const char*d;u32 c;} T[]={
+            {"android.hardware.thermal.IThermal/default","android.hardware.thermal.IThermal",1},
+            {"android.hardware.vibrator.IVibrator/default","android.hardware.vibrator.IVibrator",2},
+            {"batteryproperties","android.os.IBatteryPropertiesRegistrar",1},
+            {"display","android.hardware.display.IDisplayManager",1},
+            {"input","android.hardware.input.IInputManager",1},
+            {NULL,NULL,0}};
+        for(int i=0;T[i].n;i++){
+            u8 p2[1024]; memset(p2,0,sizeof p2);
+            u64 n2=mkparcel(p2,DESC,T[i].n);
+            u8 o2[16384]; u64 l2=0,os2=0; u32 pd2=0,s2=0;
+            setenv("NOFREE","1",1);
+            int r2=transact(0,1,p2,n2,o2,&l2,&pd2,&s2,&os2);
+            unsetenv("NOFREE");
+            if(r2<0||l2<8||s2!=0){ printf("%-52s BIND FAIL r=%d l=%llu s=0x%x\n",T[i].n,r2,(unsigned long long)l2,s2); continue; }
+            u32 h=*(u32*)(o2+12);
+            { u8 aq[8]; u32 ac=0x40046304; memcpy(aq,&ac,4); memcpy(aq+4,&h,4); u64 ar=0; bwr(aq,8,&ar); }
+            { u8 aq[8]; u32 ic=0x40046305; memcpy(aq,&ic,4); memcpy(aq+4,&h,4); u64 ar=0; bwr(aq,8,&ar); }
+            { u8 fb[12]; u32 fc=0x40086303; memcpy(fb,&fc,4); memcpy(fb+4,&g_lastdptr,8); bwr(fb,12,NULL); }
+            u8 p3[1024]; memset(p3,0,sizeof p3);
+            u64 n3=mkparcel_ex(p3,T[i].d,NULL,1);
+            u8 o4[16384]; u64 l4=0,os4=0; u32 p4=0,s4=0;
+            int r4=transact(h,T[i].c,p3,n3,o4,&l4,&p4,&s4,&os4);
+            printf("%-52s status=0x%-10x len=%llu\n",T[i].n,r4<0?0xdead:s4,(unsigned long long)l4);
+        }
+        return 0;
+    }
+
     return 0;
 }
