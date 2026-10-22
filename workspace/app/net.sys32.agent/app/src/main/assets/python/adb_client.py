@@ -662,8 +662,13 @@ class Adb:
                 except Exception:
                     pass
             r = self._shell_locked(cmd, timeout)
-            # daca rezultatul e gol si nu era de asteptat gol, incercam O reconectare
-            if r == "" and cmd.strip() and not cmd.strip().startswith("echo __MK"):
+            # ★ FIX (masurat pe SM-A366B): o comanda care se termina CU SUCCES si nu
+            # produce output (true, cd, mkdir, git commit -q, touch...) NU inseamna
+            # socket stricat. Vechiul cod reconecta + re-executa => 485-1226 ms in loc
+            # de ~45 ms (12-27x) pentru FIECARE comanda tacuta din Debian.
+            # Reconectam doar daca avem motiv REAL: socket mort sau flag _poisoned.
+            if r == "" and cmd.strip() and not cmd.strip().startswith("echo __MK") \
+                    and not getattr(self, "_last_rc_ok", False):
                 try:
                     self.close(); self.connect()
                     r2 = self._shell_locked(cmd, timeout)
@@ -818,6 +823,13 @@ class Adb:
         txt = out.decode(errors="replace")
         if timed_out and not txt.strip():
             txt = "[adb] command exceeded %ss (the process may still run in the background)" % int(timeout)
+        # ★ FLAG pentru shell(): comanda s-a terminat NORMAL (fara timeout) => un output
+        # gol e REZULTAT VALID, nu semn de socket stricat. Fara asta, shell() reconecta
+        # la fiecare comanda tacuta (true/cd/mkdir/touch) = 485-1226 ms in loc de ~45 ms.
+        try:
+            self._last_rc_ok = (not timed_out)
+        except Exception:
+            pass
         return txt
 
     # ---------------------------------------------------------------- STREAMING
