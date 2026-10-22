@@ -5,6 +5,7 @@ ROOTFS="${1:-/data/local/tmp/proot/rootfs}"
 PROOT="${2:-/data/local/tmp/libproot_exec.so}"
 GEOM="${3:-1080x2340}"
 ACTION="${4:-start}"
+export PROOT_NO_SECCOMP=1
 PP="$PROOT -r $ROOTFS -w /root --kill-on-exit --link2symlink --sysvipc --kernel-release=6.1.0-debian --bind=/dev --bind=/proc --bind=/sys"
 E="/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM=xterm DISPLAY=:1"
 

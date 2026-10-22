@@ -96,14 +96,27 @@ def _proot_cmd(rootfs=None, extra_binds=()):
 def _env(*extra):
     e = ["/usr/bin/env", "-i",
          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-         "HOME=/root", "TERM=xterm", "LANG=C.UTF-8", "DISPLAY=" + DISPLAY]
+         "HOME=/root", "TERM=xterm", "LANG=C.UTF-8", "DISPLAY=" + DISPLAY,
+         "PROOT_NO_SECCOMP=1", "PYTHONDONTWRITEBYTECODE=1"]
     e.extend(extra)
+    return e
+
+
+def _proot_env():
+    """PROOT_NO_SECCOMP=1 dezactiveaza acceleratorul seccomp al proot.
+    Masurat pe SM-A366B: efect NUL la exec (zgomot +/-50%), dar opreste
+    acceleratorul (dovedit cu PROOT_VERBOSE=1) - pastrat pentru predictibilitate."""
+    e = dict(os.environ)
+    e["PROOT_NO_SECCOMP"] = "1"
+    e.setdefault("PROOT_TMP_DIR", TMP)
+    e.setdefault("TMPDIR", TMP)
     return e
 
 
 def _run(argv, timeout=600, cwd=None):
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd,
+                           env=_proot_env() if argv and "proot" in str(argv[0]).lower() else None)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return -9, "timeout after %ss" % timeout
@@ -439,7 +452,8 @@ def ensure_ready_via_adb(progress=True):
     L("binder: sursa in /data/local/tmp/binder")
 
     def deb(cmd, timeout=3600):
-        return _adb_shell("/data/local/tmp/proot_exec.so -0 -r /data/local/tmp/debian -w /root "
+        return _adb_shell("PROOT_NO_SECCOMP=1 TMPDIR=/data/local/tmp "
+                          "/data/local/tmp/proot_exec.so -0 -r /data/local/tmp/debian -w /root "
                           "--link2symlink --sysvipc --kernel-release=6.1.0-debian "
                           "--bind=/dev --bind=/proc --bind=/sys --bind=/data/local/tmp "
                           "/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
