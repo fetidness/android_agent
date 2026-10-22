@@ -3,7 +3,7 @@
 android_build.py - COMPILARE APK PE DEVICE, COMPLET OFFLINE.
 Toate uneltele vin cu APK-ul (assets/android_build/ + jniLibs/*.so). ZERO descarcari.
 
-Arhitectura (vezi BUILD_ANDROID_ON_DEVICE.md):
+Arhitectura (vezi secțiunea BUILD ȘI RESTORE din docs/repo readme):
   - Binararele EXECUTABILE (java, aapt2) sunt in APK lib/arm64 ca lib*_exec.so
     (SELinux permite exec doar de acolo).
   - Restul (modulele JDK, Gradle, SDK, NDK, sqlite) se extrag din assets in filesDir.

@@ -3,7 +3,88 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `815fa1d` (2026-10-21).
+> Ultimul commit inclus: `81f5875` (2026-10-22).
+
+### 2026-10-22 - PERFORMANTA: adb_client, proot batching, aliniere terminal_server
+
+> **Context:** sesiune de optimizare pornita din intrebarea "ce mai putem optimiza?".
+> Rezultatul principal NU a fost o optimizare de flag-uri, ci un BUG gasit prin masurare.
+
+#### 1. `adb_client.py` - comenzi tacute (CASTIG 30x)
+
+**Bug:** `shell()` presupunea ca `r == ""` = socket desincronizat si facea
+`close() + connect() + re-executie`. Dar o comanda care se termina CU SUCCES si nu
+produce output returneaza legitim "".
+
+**Cost real (inainte):**
+- `true` : 485 - 1963 ms
+- `cat /dev/null` : 609 ms
+- `printf ''` : 721 ms
+- `echo x` (are output) : 42 - 54 ms
+=> fiecare comanda tacuta declansa reconectare TCP + AUTH RSAPUBLICKEY.
+
+**Fix:** `_shell_locked()` seteaza `self._last_rc_ok = (not timed_out)`, iar `shell()`
+reconecta DOAR daca `not _last_rc_ok`.
+
+**Rezultat (dupa):** `true` = 41 ms (de la 1226 ms = **30x**), `cat /dev/null` = 43 ms,
+comenzi reale (mkdir/touch/ls/id/rm) = 47-87 ms, proot /bin/true = 127 ms (de la 616 ms).
+
+#### 2. `terminal_server.run_batch()` - mai multe comenzi intr-un proot (23x)
+
+**Descoperire:** costul unei comenzi NU e proot si NU e exec-ul, ci pornirea procesului
++ un round-trip adb (~110 ms). Toate flag-urile proot sunt irelevante:
+`-0`/fara (542 vs 597 ms), `--kill-on-exit` (592), `--sysvipc`/fara (571 vs 582),
+`--link2symlink` (582), bind-uri zero vs toate (689 vs 625), minimal doar `-r` (615).
+
+**Masuratori (1 proot cu N comenzi):** n=1 -> 114 ms/cmd, n=20 -> 4.2 ms/cmd,
+n=50 -> 2.8 ms/cmd, n=100 -> **1.7 ms/cmd**.
+
+**Comparativ cu un proot per comanda:**
+- n=2  : 186 vs 440 ms   => **2.4x**
+- n=5  : 224 vs 1031 ms  => **4.6x**
+- n=10 : 164 vs 1792 ms  => **11.0x**
+- n=20 : 167 vs 3901 ms  => **23.4x**
+Output verificat IDENTIC la fiecare rulare.
+
+**API:** `run_batch(["cmd1","cmd2",...])` -> lista de stringuri. Delimitare cu nonce
+uuid. Robust la comenzi care esueaza, output cu newline, comenzi goale, exit codes.
+
+#### 3. `terminal_server.run_in_debian` - aliniat cu `agent.py`
+
+Functia exista in DOUA locuri, divergente. Varianta slaba avea 3 lipsuri reale:
+1. fara `--bind=/storage` -> `/sdcard` si `/storage` dadeau "No such file" (fisierul
+   exista pentru uid 2000)
+2. fara `DEBIAN_FRONTEND=noninteractive` -> `apt install` fara -y bloca pana la timeout
+3. fara transmitere base64 -> adbd sparge comanda pe spatii, argv iese greșit
+
+Fix: aceleasi bind-uri, aceleasi variabile, comanda prin base64
+(`echo <b64> | base64 -d | /bin/bash`). `run_batch` primeste aceleasi setari.
+
+#### 4. PROOT_NO_SECCOMP - corectie de documentatie
+
+Prima versiune a raportului afirma "+21% la exec". **FALS** - compara doua COMENZI
+diferite, nu doua valori ale variabilei. Remasurat corect (200x /bin/true, 4 rulari,
+mediane): 8654 ms cu vs 8620 ms fara = **zgomot** (controale identice variate
+1501-2266 ms). Variabila TOTUSI opreste acceleratorul (dovada: cu ea dispare
+`proot info: ptrace acceleration (seccomp mode 2) enabled` din PROOT_VERBOSE=1),
+dar castigul masurabil e ZERO. Lasata setata (inofensiva), documentata ca inutila.
+
+#### Ce NU a mers
+
+- `mkfifo` in /data/local/tmp -> "Permission denied" (SELinux). Imposibil.
+- Sesiune proot persistenta cu polling pe fisier -> functioneaza, dar adauga 40-110 ms
+  latenta de polling, deci NU bate batch-ul nativ.
+- Fisiere in /data/local/tmp ca canal -> procesul app NU poate scrie acolo (SELinux);
+  canalul trebuie sa fie /storage (FUSE).
+- proot NU vede /storage fara `--bind=/storage` explicit.
+
+#### Lectii
+
+- O functie duplicata in doua fisiere DIVERGHEAZA. Verifica intotdeauna care e cea
+  folosita efectiv, inainte de a o repara pe cea aparenta.
+- Nu declara o optimizare pe baza unei singure masuratori: compara ACEEASI comanda,
+  cu controale, si verifica varianta intre ele.
+
 
 ### 2026-10-21 (e) - SETUP AUTOMAT: instalarea APK = mediu complet functional
 

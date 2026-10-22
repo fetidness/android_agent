@@ -15,7 +15,18 @@
 > **Stare 2026-10-21 (c):** Debian-ul are acum si **BINDER NATIV** - apeleaza direct
 > serviciile Android prin `/dev/binder`, fara bridge. `android-binder list` da 468 de
 > servicii (identic cu `service list`), iar `android-binder aidlcall ...` face apeluri AIDL
-> reale. Vezi sectiunea "BINDER NATIV" si `DEBIAN_BINDER.md`.
+> reale. Vezi secțiunea "BINDER — ACCES NATIV" din acest fișier.
+
+
+> **Stare 2026-10-22 (PERFORMANȚĂ + CONSOLIDARE DOCUMENTAȚIE):**
+> Două optimizări măsurate: `adb_client` nu mai reconectează la comenzile cu output gol
+> (**30x** pe comenzi tăcute: 1226 ms -> 41 ms) și `terminal_server.run_batch()` rulează
+> mai multe comenzi într-un singur proot (**23x** la 20 de comenzi). Toată documentația
+> separată (BINDER_README, BINDER_BINDALL, BINDER_INPROCESS, DEBIAN_BINDER,
+> BUILD_ANDROID_ON_DEVICE, PROOT_PERF, PROOT_BATCH, ADB_CLIENT_PERF,
+> TERMINAL_SERVER_ALIGN, dist/RESTORE, tools/DEVICE_BACKUP_MANIFEST) a fost
+> **absorbită în acest fișier** și ștearsă. Repo-ul are acum un singur README
+> și un singur CHANGELOG. Cifrele complete: secțiunea "PERFORMANȚĂ" și `CHANGELOG.md` 2026-10-22.
 
 ## 🚀 SETUP AUTOMAT (2026-10-21) - INSTALAREA APK = MEDIU COMPLET FUNCTIONAL
 
@@ -346,7 +357,7 @@ workspace/app/.../assets/binder/debian_binder.c    client nativ glibc
 workspace/app/.../assets/binder/binder.py          modul Python
 workspace/app/.../assets/binder/install_binder.sh  instalare
 workspace/app/.../assets/binder/binder_android.c   clientul Android (referinta)
-DEBIAN_BINDER.md                                   protocol complet
+secțiunea PERFORMANȚĂ/BINDER din acest fișier      protocol complet
 ```
 
 ---
@@ -404,10 +415,812 @@ aplicatia are deja contextul ei si merge direct.
 - ordinea `ACQUIRE -> INCREFS -> FREE_BUFFER` ramane obligatorie
 - descriptorul AIDL e obligatoriu in parcel (obtine-l cu `iface`)
 
-Documentatie completa: `BINDER_INPROCESS.md` (in-process, acest tool) si
-`DEBIAN_BINDER.md` (protocolul Binder, offseturi verificate prin ptrace).
+Documentatie completa: secțiunea "Binder in-process" din acest fișier (acest tool) si
+secțiunea "Binder din Debian" din acest fișier (offseturi verificate prin ptrace).
 
 ---
+
+## 🔌 BINDER — ACCES NATIV LA SERVICIILE ANDROID (consolidat 2026-10-22)
+
+> Aceasta secțiune absoarbe documentele care existau separat:
+> `BINDER_README.md`, `BINDER_BINDALL.md`, `BINDER_INPROCESS.md`, `DEBIAN_BINDER.md`.
+> Acelea au fost șterse; conținutul lor e integral mai jos.
+
+### Pe scurt
+
+Aplicația și Debianul pot apela **direct** serviciile Android prin `/dev/binder`,
+fără adb și fără bridge. Sunt trei clienți, pentru trei contexte:
+
+- **in-process** (din aplicație, `untrusted_app`) — `android_binder.py`
+- **Debian** (compilat nativ glibc) — `/usr/local/bin/android-binder`
+- **Android/adbsh** (referință) — clientul C din `files/binder/`
+
+
+### Binder in-process — din aplicație
+
+Agentul din aplicatie are acum acces Binder **nativ**, la fel ca Debian-ul,
+dar **fara adb, fara bridge, fara proot**: deschide `/dev/binder` direct in
+procesul aplicatiei.
+
+===============================================================================
+### CE FUNCTIONEAZA (verificat in aplicatie, u:r:untrusted_app)
+===============================================================================
+```
+list            -> 468 servicii
+check package   -> found
+check nu_exista -> not found
+iface display   -> android.hardware.display.IDisplayManager
+handle power    -> handle=2
+call display 1  -> status=0, 1736 bytes (date reale: QCM, DisplayAddress...)
+call input 1    -> status=0, 8 bytes
+call power 5    -> status=-1 (raspuns real de la serviciu)
+```
+
+Deci: `untrusted_app` POATE vorbi cu servicemanager si POATE apela servicii.
+
+===============================================================================
+### TOOL NOU: `binder`
+===============================================================================
+```json
+{"action":"list"}
+{"action":"check","params":{"name":"package"}}
+{"action":"handle","params":{"name":"display"}}
+{"action":"iface","params":{"name":"display"}}
+{"action":"call","params":{"name":"display","code":1}}
+{"action":"call","params":{"name":"power","code":5,"args":[]}}
+{"action":"raw","params":{"name":"display","code":1,"descriptor":""}}
+```
+
+In `run_code` e disponibil ca `binder({...})`.
+
+===============================================================================
+### MODUL: android_binder.py
+===============================================================================
+```python
+import sys; sys.path.insert(0,"/data/data/net.sys32.agent/files/python")
+from android_binder import Binder, strings
+b = Binder()                       # deschide /dev/binder (o singura data)
+b.list()                           # 468 servicii
+b.handle("display")                # handle local
+b.iface("display")                 # descriptor AIDL
+st, data = b.call("display", 1)    # apel AIDL real
+strings(data)                      # extrage stringurile UTF-16
+```
+
+===============================================================================
+### DE CE MERGE DIN untrusted_app
+===============================================================================
+- `/dev/binder` se deschide (SELinux permite binder_device pentru untrusted_app)
+- `mmap` pana la **1 MB** cu PROT_READ (nu doar 4096)
+- servicemanager (pid 1000) raspunde la getService/checkService/listServices
+- apelurile pe servicii functioneaza daca descriptorul e corect
+
+Diferenta fata de Debian: acolo trebuia `setuid(2000)` ca sa treaca SELinux.
+Aici aplicatia are deja contextul ei si merge direct.
+
+===============================================================================
+### CAPCANE (dovedite)
+===============================================================================
+TRAP: errno=11 (EAGAIN) la BINDER_WRITE_READ NU e eroare - inseamna "nimic de
+      citit inca". Trebuie tratat ca (0,0) si reincercat, altfel pica tot.
+TRAP: buffer-urile trimise trebuie PASTRATE vii (lista _keep) pana la sfarsitul
+      tranzactiei; daca sunt colectate de GC, kernelul citeste gunoi.
+TRAP: `checkService` intoarce status=0 si pentru servicii INEXISTENTE.
+      Diferenta: `offsets_size == 0` (niciun obiect binder) => nu exista.
+TRAP: `getService` nu elibereaza bufferul; eliberarea se face in _prepare()
+      DUPA ACQUIRE/INCREFS (ordinea libbinder).
+TRAP: descriptorul AIDL e obligatoriu in parcel pentru apelurile AIDL,
+      altfel "Binder invocation to an incorrect interface" (status -1).
+
+Offseturile protocolului: vezi secțiunea "Binder din Debian" (identice).
+
+===============================================================================
+### FISIERE
+===============================================================================
+P: /data/data/net.sys32.agent/files/python/android_binder.py   modulul (live)
+P: /data/data/net.sys32.agent/files/python/agent.py            tool-ul integrat
+P: /storage/emulated/0/Download/Agent/workspace/android_binder.py
+P: workspace/app/.../assets/python/android_binder.py            (in repo)
+
+===============================================================================
+### LECTII DUROASE (2026-10-21, dupa testul in-productie)
+===============================================================================
+
+TRAP: NICIODATA sa nu inchizi fd-uri binder care nu iti apartin. Procesul
+      aplicatiei are propriul binder (fd ~8, folosit de runtime-ul Android).
+      Daca il inchizi, ORICE ioctl binder din proces da errno=13 (EACCES) si
+      aplicatia ramane instabila PANA LA RESTART.
+      Simptom: `binder error: send esuat (errno=13)` / `errno=9 (EBADF)`.
+      Fix: restart aplicatie. In cod: un singur os.close, pe self.fd.
+
+TRAP: NU pastra mai multi clienti Binder simultan in acelasi proces. Al doilea
+      client (fd nou) primeste "reply prea mic" pentru ca primul are tranzactii
+      in curs. Un singur client viu, refolosit (`_binder_client()` din agent.py).
+
+TRAP: dupa un esec de comunicatie, clientul poate ramane cu buffere in coada.
+      Tool-ul face UN reset (close + instanta noua) si reincearca o data.
+      Daca tot esueaza, e semn de stare compromisa -> restart.
+
+OK:  secventa dovedita in productie (10/10 apeluri consecutive):
+       list(468) -> handle -> iface -> call, fara crestere de fd-uri.
+
+OK:  apelul pe `power` code 5 intoarce mesajul REAL de permisiuni:
+       "Neither user 10408 nor current process has
+        android.permission.DEVICE_POWER."
+     Deci binder-ul spune exact ce lipseste - foloseste-l ca diagnostic.
+
+### Ce e nevoie pentru rebuild complet
+
+Tot codul Binder e in repo, sub trei locuri. Un rebuild al APK-ului foloseste
+automat tot ce e in `assets/`.
+
+### 1. Client Binder IN-PROCESS (ruleaza in aplicatie)
+
+```
+assets/python/android_binder.py        client Binder (clasa Binder, strings)
+assets/python/agent.py                 tool-ul `binder` + _binder_client/_binder_mod
+```
+
+Aceste doua fisiere sunt COPIA EXACTA a codului care ruleaza live in aplicatie
+(verificat prin sha256). Dupa modificari:
+
+```
+cp /data/data/net.sys32.agent/files/python/android_binder.py \\
+   workspace/app/net.sys32.agent/app/src/main/assets/python/
+cp /data/data/net.sys32.agent/files/python/agent.py \\
+   workspace/app/net.sys32.agent/app/src/main/assets/python/
+```
+
+### 2. Client Binder pentru DEBIAN (compilat nativ glibc)
+
+```
+assets/binder/debian_binder.c          sursa C (gcc din Debian)
+assets/binder/binder.py                modul Python pentru Debian
+assets/binder/install_binder.sh        instalare in /opt/android-binder
+```
+
+Recompilare in Debian:
+```
+cd /root/binder && gcc -O2 -o binder debian_binder.c
+cp binder /opt/android-binder/android-binder
+```
+
+### 3. Client Binder pentru ANDROID (referinta / adbsh)
+
+```
+assets/binder/binder_android.c         sursa C (compilat cu clang din APK)
+assets/binder/bctl-android             binarul compilat (armeabi arm64)
+```
+
+Ruleaza din `adbsh` (uid 2000), NU din Debian (libc incompatibil).
+
+### 4. Teste
+
+```
+assets/binder/test_binder_inprocess.py  test extrem pentru tool-ul din aplicatie
+assets/binder/test_binder_debian.py     test extrem pentru clientul din Debian
+```
+
+Ruleaza:
+```
+# in aplicatie
+python3 assets/binder/test_binder_inprocess.py
+
+# in Debian
+python3 /root/test_binder_debian.py
+```
+
+### 5. Documentatie
+
+```
+secțiunea Binder        protocol complet: offseturi verificate prin ptrace,
+                        secventa ACQUIRE/INCREFS/FREE_BUFFER, capcane
+secțiunea Binder       modulul in-process + lectii duroase (fd-uri)
+```
+
+### Compilare APK
+
+Assets-ul e inclus automat (`src/main/assets/`). Nu exista pas suplimentar:
+
+```
+build_apk action=build dir=/root/work/android_agent/workspace/app/net.sys32.agent
+```
+
+### Instalare pe device (de la 0) - automat
+
+Dupa `adb install`, **deschide TERMINALUL o singura data**. Setup-ul ruleaza
+singur (~3-5 minute) si isi instaleaza tot ce lipseste:
+
+| Pas | Rezultat |
+|---|---|
+| Linux filesystem | `/data/local/tmp/debian` |
+| Linux runtime | `/data/local/tmp/proot_exec.so` |
+| Compiler toolchain | `gcc` in rootfs (apt) |
+| Android service access | `/usr/local/bin/android-binder` |
+| Verificare | `android-binder selftest` + flag `files/.debian_ready` |
+
+Reincercare manuala: scrie `setup` in terminal.
+
+DE CE NU SE POATE LA PORNIREA APLICATIEI (dovedit pe device):
+- aplicatia nu poate execve din `app_data_file` (W^X SELinux): o copie a lui
+  `echo` in `files/tmp` da "No such file or directory" la exec
+- aplicatia nu poate scrie in `/data/local/tmp` (`drwxrwx--x shell shell`)
+-> instalarea trebuie facuta de adbd (uid 2000), deci la deschiderea terminalului.
+
+### Ce NU e in repo (si de ce)
+
+- rootfs-ul Debian (`/data/local/tmp/debian`) — 25 MB+, se reinstaleaza
+- binarul Debian compilat — se face cu `gcc` din sursa (2 secunde)
+- `bctl` pentru alte ABI — doar arm64 e necesar (device real)
+
+### Verificare rapida dupa rebuild
+
+```
+# in aplicatie (agentul)
+binder action=list                        -> ~467 servicii
+binder action=handle name=package         -> 1
+binder action=call name=display code=1    -> status=0, 1736 bytes
+
+# in Debian
+android-binder selftest                   -> 212/467 accesibile + CONCLUZIE explicita
+android-binder iface package              -> android.content.pm.IPackageManager
+android-binder iface display              -> android.hardware.display.IDisplayManager
+```
+
+ATENTIE (eroare reala, 2026-10-21): NU testati cu `activity`, `window`, `stats`,
+`surfaceflinger`, `media.*` - sunt lazy (ENOENT) sau refuzate de SELinux si un
+esantion din ele da "0/N" desi binder-ul merge perfect. Folositi `selftest`.
+
+### Bindall — legarea tuturor serviciilor
+
+Documenteaza implementarea `bindall` (legarea masiva a serviciilor AIDL) si cele
+7 bug-uri reale gasite pe SM-A366B / Android 16, in AMBELE contexte: aplicatie
+(untrusted_app) si Debian (shell:s0).
+
+### Ce face bindall
+
+Enumeră toate serviciile din servicemanager, obtine handle pentru fiecare,
+executa secventa libbinder (ACQUIRE + INCREFS + FREE_BUFFER), citeste
+descriptorul AIDL prin INTERFACE_TRANSACTION si raporteaza ce e legat.
+
+Comenzi disponibile:
+- `bindall [--quiet]` - leaga toate, printeaza `BOUND<TAB>nume<TAB>h=N<TAB>descriptor`
+- `probe` - apeluri AIDL reale de demonstratie
+- `call <svc> <descriptor> <code> [i32...]`
+- `list` - toate serviciile (code 6 + DUMP_PRIORITY_ALL)
+- `handle <nume>`, `check <nume>`, `iface <nume>`
+
+### Rulare
+
+Aplicatie (exec direct din filesDir NU merge, foloseste linker64):
+```
+/apex/com.android.runtime/bin/linker64 \
+  /data/data/net.sys32.agent/files/tmp/binder_android bindall
+```
+
+Debian (binar glibc):
+```
+cd /opt/android-binder && ./android-binder bindall
+```
+
+### CIFRE MASURATE
+
+- servicii in servicemanager: **467**
+- APP (untrusted_app): 88 legate / 222 lazy / 1 refuzat
+- DEBIAN (shell:s0): 140 legate / 2 lazy / 169 refuzat
+- ACELASI binar nu da aceleasi rezultate: SELinux filtreaza per context.
+
+### Apeluri AIDL reale verificate (identice in ambele medii)
+
+- batteryproperties (IBatteryPropertiesRegistrar, code 1) -> status 0, **24 B**
+- display (IDisplayManager, code 1) -> status 0, **1736 B**
+- input (IInputManager, code 1) -> status 0, **8 B**
+
+Cross-check byte cu byte pe batteryproperties:
+`00 00 00 00 | 00 00 00 00 | 01 00 00 00` (AC powered = 1).
+
+### CELE 7 BUG-URI (fiecare a costat pasi)
+
+1. **Handle la offset 12, nu 4.** La 4 se citeste `0x73682a85` (gunoi).
+   Handle-ul real vine din flat_binder_object: `offsets_buffer[0]` = offset in
+   data, iar handle-ul e la `data[off+8]`.
+
+2. **`rep.status` la INTERFACE_TRANSACTION NU e cod de eroare.**
+   0x23 / 0x24 = **lungimea descriptorului**. Se respinge doar `0xFFFFFFFF`.
+   Tratarea lui ca eroare respinge toate serviciile bune.
+
+3. **listServices = code 6**, nu 3, si cere `DUMP_PRIORITY_ALL (0x0F)` in parcel.
+   Cu code 3 se primeste "Unknown error 2147483644".
+
+4. **Aliniere String16 lipsa.** Dupa fiecare nume din lista:
+   `o += L*2; while(o&3) o++;` Fara asta bucla se opreste la i=0.
+
+5. **Buffer refolosit fara memset.** Comanda `call` folosea `pl` (parcelul de la
+   getService) ca parcel AIDL, fara curatare -> "Binder invocation to an
+   incorrect interface". FIX: `memset(pl,0,sizeof pl)`.
+
+6. **INTERFACE_TRANSACTION suplimentar in `call`** consuma un reply si strica
+   apelul urmator. Nu se face: doar prepare_handle.
+
+7. **Padding dupa descriptor = +4 FIX** (dovedit, atat IServiceManager cat si
+   AIDL). Alinierea `while(o%4)` rupe apelurile.
+
+Suplimentar: `prepare_handle` trebuie sa elibereze bufferul din getService
+(do_free=0 la getService, FREE in prepare_handle), altfel toate handlurile sunt 1.
+
+### DE CE UNELE SERVICII MERG DOAR DIN DEBIAN
+
+Cauza e **SELinux `service_manager find`**, nu binder-ul si nu codul.
+
+- app:   `u:r:untrusted_app:s0:c163,c257,c512,c768`
+- shell: `u:r:shell:s0`
+
+Cand permisiunea lipseste, servicemanager **nu intoarce eroare**: intoarce un
+flat_binder_object null, deci `offsets_size` devine **0** (nu 8). De aceea e
+inselator - nu primesti "permission denied", primesti tacere.
+
+Refuzate din app (sensibile): adb, nfc, gnss, usb, AODManagerService,
+vendor.qti.hardware.perf2.IPerf.
+
+Permise din ambele: package, mount, power, display, input, statusbar,
+sensorservice, activity_task, HqmManagerService, ImsBase,
+android.frameworks.stats.IStats/default.
+
+### Fisiere
+
+- `binder_android.c` - sursa pentru aplicatie (are bindall + probe)
+- `bindall.c` - sursa variantă Debian (bindall + probe)
+- `debian_binder.c` - sursa originala Debian (aidlcall, paginated)
+- `bound_services_app.txt` - cele 88 legate din app
+- `bound_services_debian.txt` - cele 140 legate din Debian
+- `../skills/binder-app-binding/SKILL.md` - lectii pentru sesiuni viitoare
+
+### Compilare (aplicatie, toolchain din APK)
+
+```
+TC=/data/data/net.sys32.agent/files/toolchain
+$TC/bin/clang -fPIC -O2 --target=aarch64-linux-android35 \
+  --sysroot=$TC/sysroot -resource-dir=$TC/lib/clang/21 \
+  -I$TC/sysroot/usr/include \
+  binder_android.c -o /data/data/net.sys32.agent/files/tmp/binder_android \
+  -L$TC/sysroot/usr/lib/aarch64-linux-android/35 \
+  -L$TC/lib/clang/21/lib/linux -lm -ldl -latomic -Wl,--no-undefined
+```
+
+### Compilare (Debian, gcc glibc)
+
+```
+gcc -O2 -o bindall bindall.c
+```
+
+### Binder din Debian — acces nativ complet
+
+Data: 2026-10-21
+Device: Samsung SM-A366B, Android 16, kernel 6.6.77-android15
+Debian: 13 trixie aarch64, proot, rootfs /data/local/tmp/debian
+
+===============================================================================
+### REZULTAT: Debian vorbeste NATIV cu orice serviciu Android prin /dev/binder
+===============================================================================
+
+```
+$ android-binder list | wc -l
+468                                   <- identic cu /system/bin/service list
+
+$ android-binder check package
+package: found
+
+$ android-binder iface display
+status=0x24 len=80
+descriptor: android.hardware.display.IDisplayManager
+
+$ android-binder aidlcall display android.hardware.display.IDisplayManager 1
+status=0x0 len=1736
+  ... android.view.DisplayAddress$Physical
+  ... android.hardware.display.DeviceProductInfo  ... QCM ...
+```
+
+Din Python:
+```python
+import binder
+b = binder.Binder()
+print(len(b.list()))                              # 468
+print(b.handle("display"))                        # 1
+print(b.interface_descriptor("display"))          # android.hardware.display.IDisplayManager
+st, data = b.call("display", 1)                   # status=0, date reale
+print(b.strings(data)[:4])
+```
+
+===============================================================================
+### DE CE MERGE (zidurile reale, masurate)
+===============================================================================
+OK: /dev/binder se deschide din proot -> fd valid
+OK: mmap(4096, PROT_READ, MAP_SHARED) -> OK
+OK: ioctl BINDER_VERSION -> version 8
+OK: BINDER_WRITE_READ complet functional
+OK: servicemanager raspunde (pid 1000)
+NICIODATA binarul Android (bctl) - nu are libc Android, deci NU se poate
+  executa din Debian ("required file not found"). Trebuie compilat NATIV
+  glibc cu gcc-ul din Debian.
+
+LIMITARI SELinux (context shell:s0, uid 2000):
+  EX_SECURITY pe: media.*, stats, surfaceflinger, connectivity
+  Serviciile "lazy" (activity, window, notification, SurfaceFlingerAIDL)
+  NU pot fi obtinute cu getService - intorc ENOENT (null).
+  getService merge pe: package, power, display, input, mount, alarm,
+  clipboard, battery, device_policy, dropbox, bluetooth_manager...
+
+===============================================================================
+### INSTALARE (deja facuta pe acest device)
+===============================================================================
+```
+/opt/android-binder/android-binder        binar nativ glibc
+/opt/android-binder/binder.py             modul Python
+/opt/android-binder/debian_binder.c       sursa
+/usr/local/bin/android-binder             symlink -> binar
+<bilsitepackages>/binder.py               modul importabil global
+```
+
+Recompilare dupa modificari:
+```
+cp /sdcard/Download/Agent/workspace/debian_binder.c /root/binder/
+cd /root/binder && gcc -O2 -o binder debian_binder.c
+cp binder /opt/android-binder/android-binder
+```
+
+===============================================================================
+### COMENZI
+===============================================================================
+```
+android-binder list                        toate serviciile (468)
+android-binder check <name>                exista?
+android-binder handle <name>               handle-ul binder (int)
+android-binder iface <name>                descriptorul AIDL
+android-binder desc <name>                 (idem, varianta veche)
+android-binder call <name> <code> [i32..]  apel generic
+android-binder aidlcall <name> <desc> <code> [i32..]   apel cu descriptor
+android-binder rawcall <handle> <code> [i32..]
+```
+
+===============================================================================
+### PROTOCOLUL (toate offseturile verificate prin ptrace pe libbinder)
+===============================================================================
+
+#### PARCEL AIDL (96 bytes pentru checkService)
+```
+off  0 : 0x80000000   strict policy
+off  4 : 0xFFFFFFFF
+off  8 : 0x53595354   'TSYS'
+off 12 : len(descriptor)
+off 16 : UTF-16 descriptor + 4 B padding
+off 72 : int32 len(arg)  (String16)
+off 76 : UTF-16 arg + padding
+```
+
+#### TRANZACTIE (binder_transaction_data, 64 B)
+```
+off  0 : target.handle  u32
+off 16 : code           u32      <- NU 12
+off 20 : flags          u32      <- 0x10 (TF_ACCEPT_FDS) OBLIGATORIU
+off 32 : data_size      u64      <- NU 20
+off 40 : offsets_size   u64
+off 48 : data.ptr       u64
+off 56 : data.offsets.ptr u64
+```
+
+#### REPLY (76 bytes)
+```
+off  0 : 0x720c BR_NOOP
+off  4 : 0x7206 BR_REPLY
+off  8 : 0x80407203 (header separat)
+off 12 : binder_transaction_data
+         off 40 : sender_pid  u32    = 1000
+         off 44 : data_size   u64
+         off 52 : offsets_size u64
+         off 60 : data.ptr     u64   in zona mmap
+         off 68 : offsets.ptr  u64
+```
+
+#### SECVENTA OBLIGATORIE INAINTE DE PRIMUL APEL
+```
+1. BC_TRANSACTION getService (handle 0)
+2. BC_ACQUIRE  (0x40046304) + u32 handle
+3. BC_INCREFS  (0x40046305) + u32 handle
+4. BC_FREE_BUFFER (0x40086303) + u64 dptr   <- DUPA acquire/increfs!
+5. INTERFACE_TRANSACTION (0x5f4e5446) pe handle
+6. apelul real
+```
+Daca FREE_BUFFER se face INAINTE de ACQUIRE/INCREFS -> NU mai vine niciun
+reply (doar BR_TRANSACTION_COMPLETE, apoi timeout).
+
+#### OPȚIONAL: obtine handle-ul
+`getService` intoarce un parcel cu `flat_binder_object` la offsetul dat de
+`offsets_buffer[0]`; handle-ul e la `obiect + 8` (u32).
+
+#### VECTORUL String16 din listServices
+```
+off 0 : int32 (0)
+off 4 : int32 count (468)
+off 8+: elemente: int32 len + UTF-16
+        padding dupa fiecare element: la multiplu de 4, dar STRICT mai mare
+        daca e deja aliniat (dedus din 468 elemente reale)
+```
+
+===============================================================================
+### CAPCANE (toate dovedite)
+===============================================================================
+TRAP: binarul Android (bctl) NU ruleaza din Debian -> compileaza nativ glibc.
+TRAP: setgid INAINTE de setuid, altfel EPERM (proot).
+TRAP: proot da uid 0; SELinux ramane shell:s0 -> trebuie setuid(2000).
+TRAP: getService NU elibereaza singur buffer-ul; ordinea ACQUIRE/INCREFS/FREE
+      conteaza (vezi mai sus).
+TRAP: serviciile AIDL cer descriptorul in parcel, altfel "Binder invocation
+      to an incorrect interface" (status -1).
+TRAP: descriptorii NU se ghiceste - obtine-i cu `android-binder iface <name>`.
+      Exemplu: serviciul "mount" are descriptorul
+      android.os.storage.IStorageManager (NU IMountService).
+TRAP: serviciile lazy (activity, window) intorc ENOENT la getService.
+TRAP: mmap pe /dev/binder accepta pana la 1 MB (nu doar 4096).
+TRAP: proces_vm_readv din shell:s0 -> EPERM; pentru tracing foloseste
+      PTRACE_PEEKDATA.
+
+===============================================================================
+### MASURATOARE COMPLETA (2026-10-21, dupa corectarea interpretarii)
+===============================================================================
+
+Un raport anterior al agentului mobil concluziona gresit "0 din 25 servicii
+accesibile din Debian -> binder-ul nu merge". Cauza: esantionul ales continea
+exact serviciile care NU pot raspunde (lazy + restrictionate SELinux), iar
+handle-ul era citit din offset greșit (0x80000001 confundat cu null).
+
+Masuratoare exhaustiva (`android-binder selftest`, toate serviciile):
+
+```
+context SELinux    : u:r:shell:s0
+servicii listate   : 469
+getService REUSIT  : 213     <- servicii la care ai acces REAL
+lazy / ENOENT      : 3       <- inregistrate la cerere, NU eroare de binder
+refuzate SELinux   : 253     <- politici per domeniu
+alte erori         : 0
+CONCLUZIE: binder-ul FUNCTIONEAZA din acest context; 213 servicii accesibile.
+```
+
+Exemple care merg din Debian (descriptor AIDL citit cap-coada):
+```
+package        -> android.content.pm.IPackageManager
+power          -> android.os.IPowerManager
+display        -> android.hardware.display.IDisplayManager   (status=0x22)
+```
+
+===============================================================================
+### REGULI DE INTERPRETARE (ca sa nu se repete eroarea)
+===============================================================================
+
+RULE: un esec pe UN serviciu NU dovedeste ca binder-ul nu merge.
+      1) verifica `android-binder selftest` (toate serviciile, numaratoare)
+      2) verifica `android-binder iface <nume>` pe un serviciu de baza (package/power)
+      3) abia apoi trage concluzii
+
+TRAP: `activity`, `window`, `notification`, `media.*`, `stats`, `surfaceflinger`,
+      `connectivity`, `battery` NU raspund din `shell:s0`:
+      - lazy -> ENOENT (0xfffffffc): normal, se creeaza la primul client din alt proces
+      - SELinux -> EX_SECURITY (0xfffffffe): politica per domeniu
+      Un eșantion format din acestea da 0/N si indeparteaza atentia de la realitate.
+
+TRAP: handle-ul din `flat_binder_object` e u32 la offset 8 in obiect, NU contine
+      bit de semn. handle=1 pentru majoritatea serviciilor de sistem.
+      `0x80000001` este valoarea de STATUS "null" din parcel, nu un handle.
+
+TRAP: `listServices` cere DUMP_PRIORITY_ALL (u32 dupa descriptor) si raspunde cu
+      count la offset 4, elementele incep la offset 8. Un nume poate avea
+      pana la 70+ caractere (nu 64) - bufferul trebuie >=256.
+
+TRAP: `android-binder check` care zice "not found" e SERVICIUL lazy, nu lipsa
+      binder-ului. Mesajul comenzii spune asta explicit acum.
+
+===============================================================================
+### COMENZI NOI
+===============================================================================
+```
+android-binder selftest          numara: accesibile / lazy / refuzate SELinux,
+                                 cu CONCLUZIE explicita (nu mai lasa loc de gresit)
+android-binder iface <nume>      descriptorul AIDL (nu cere semnatura speciala)
+```
+
+### UNDE STA BINARUL (dupa setup-ul automat, 2026-10-21)
+===============================================================================
+```
+/data/local/tmp/debian                          rootfs-ul REAL (executabil;
+                                                files/debian NU poate fi executat)
+/data/local/tmp/proot_exec.so                   proot copiat executabil
+/data/local/tmp/binder/                         sursa clientului (din assets/binder)
+/opt/android-binder/android-binder              binarul compilat
+/usr/local/bin/android-binder  (in guest)       symlink -> binar
+files/.debian_ready                             flag: setup complet
+
+DE CE: aplicatia (uid 10xxx) nu poate execve din app_data_file (W^X SELinux) si
+nu poate scrie in /data/local/tmp -> setup-ul se face de adbd (uid 2000) la prima
+deschidere a terminalului. Detalii in readme.md -> "SETUP AUTOMAT".
+```
+
+===============================================================================
+### FISIERE
+===============================================================================
+P: /storage/emulated/0/Download/Agent/workspace/debian_binder.c   sursa C
+P: /storage/emulated/0/Download/Agent/workspace/binder.py         modul Python
+P: /storage/emulated/0/Download/Agent/workspace/bctl              client Android
+P: /data/data/net.sys32.agent/files/tmp/binder_final.c            client Android src
+P: /opt/android-binder/                                           instalare Debian
+
+## ⚡ PERFORMANȚĂ — MĂSURĂTORI REALE (consolidat 2026-10-22)
+
+> Absoarbe `PROOT_PERF.md`, `PROOT_BATCH.md`, `ADB_CLIENT_PERF.md`,
+> `TERMINAL_SERVER_ALIGN.md` (șterse). Toate cifrele sunt măsurate pe SM-A366B,
+> Android 16, prin `adb_client.shared().shell()` cronometrat din Python.
+
+### Regula de aur
+
+Costul unei comenzi în Debian **nu** e proot și **nu** e exec-ul: e pornirea
+procesului + un round-trip adb (~110 ms). Toate flag-urile proot sunt irelevante:
+
+- `-0` vs fără `-0` → 542 vs 597 ms
+- `--kill-on-exit` → 592 ms
+- `--sysvipc` vs fără → 571 vs 582 ms
+- `--link2symlink` vs fără → 582 ms
+- bind-uri zero vs toate → 689 vs 625 ms
+- minimal (doar `-r`) → 615 ms
+
+=> identice în limita zgomotului. **Optimizarea reală e să nu pornești proot-ul de N ori.**
+
+
+### Detalii: PROOT_NO_SECCOMP (corecție)
+
+### IMPORTANT: corectie fata de prima versiune a acestui document
+Prima versiune afirma "+21% la exec cu PROOT_NO_SECCOMP=1". **Era FALS.**
+Comparatia initiala masura doua COMENZI diferite, nu doua valori ale variabilei.
+
+### Masuratoare corecta (200x /bin/true, 4 rulari, median)
+- PROOT_NO_SECCOMP=1 : 8654 ms
+- PROOT_NO_SECCOMP=0 : 8620 ms
+- diferenta 0.4% = zgomot (varianta intre controale identice: 1501-2266 ms)
+
+### Ce face totusi variabila (dovedit cu PROOT_VERBOSE=1)
+- fara variabila -> "proot info: ptrace acceleration (seccomp mode 2) enabled"
+- cu variabila    -> linia DISPARE, acceleratorul e oprit
+Deci variabila functioneaza, dar pe acest device nu produce castig masurabil.
+
+### Optimizari care RAMAN valide
+- apt: fara Recommends/Suggests, fara pty, fara periodic (in /etc/apt/apt.conf.d/)
+- dpkg: force-unsafe-io (elimina fsync prin ptrace)
+- locale C.UTF-8 + TZ fixate
+- PYTHONDONTWRITEBYTECODE=1 (fara scrieri .pyc prin ptrace)
+- git: fsmonitor/untrackedCache off, gc.auto 0, pack.threads 1
+
+### Limita structurala (netrecuta)
+- 5000x stat: proot 781 ms vs nativ 17 ms = 46x
+- overhead-ul e ptrace per syscall; NU se rezolva cu proot-rs
+- exec e deja aproape de nativ (1035 ms vs 947 ms la 100x)
+
+### Integrare in APK
+Patch-ul e in SURSA din repo:
+  workspace/app/net.sys32.agent/app/src/main/assets/python/proot_tool.py
+  workspace/app/net.sys32.agent/app/src/main/assets/proot/debian_x.sh
+Gradle le impacheteaza automat (src/main/assets, fara sourceSets custom).
+
+### adb_client — fix comenzi tăcute (30x)
+
+### Bug
+`shell()` presupunea ca `r == ""` = socket desincronizat -> `close() + connect()` +
+re-executie. Dar o comanda care se termina CU SUCCES si nu produce output
+(true, cd, mkdir, touch, git commit -q, cat /dev/null) returneaza legitim "".
+
+### Cost real (inainte)
+- `true`              : 485 - 1963 ms
+- `cat /dev/null`     : 609 ms
+- `printf ''`         : 721 ms
+- `echo x` (are output): 42 - 54 ms
+=> orice comanda tacuta = reconectare TCP + AUTH RSAPUBLICKEY de fiecare data.
+
+### Fix
+1. `_shell_locked()` seteaza `self._last_rc_ok = (not timed_out)`
+2. `shell()` reconecta doar daca `not getattr(self,"_last_rc_ok",False)`
+
+### Rezultat (dupa)
+- `true`          : 41 ms  (de la 1226 ms = 30x)
+- `cat /dev/null` : 43 ms
+- comenzi reale (mkdir/touch/ls/id/rm): 47 - 87 ms
+- proot /bin/true : 127 ms (de la 616 ms = 4.8x)
+- proot python -c pass: 184 ms
+
+### Lectie generala
+Costul fix pe acest device NU e proot (flag-urile -0/--kill-on-exit/--sysvipc/
+--link2symlink/bind-urile dau toate 550-620 ms). Costul e un round-trip adb
+(~40 ms) + pornirea procesului. BATCHING-ul e singura optimizare mare:
+1 proot + 50 exec = 1792 ms (36 ms/exec) vs 50 proot = ~28000 ms.
+
+### run_batch — mai multe comenzi într-un proot (23x)
+
+### Descoperirea-cheie
+Costul unei comenzi NU e proot si NU e exec-ul: este pornirea procesului
++ un round-trip adb (~110 ms). Toate flag-urile proot sunt irelevante:
+- `-0` / fara `-0`            : 542 vs 597 ms
+- `--kill-on-exit`            : 592 ms
+- `--sysvipc` / fara          : 571 vs 582 ms
+- `--link2symlink` / fara     : 582 ms
+- bind-uri (niciunul / toate): 689 vs 625 ms
+- minimal (doar `-r`)        : 615 ms
+=> identice in limita zgomotului.
+
+### Masuratori (1 proot cu N comenzi inauntru)
+- n=1  : 114 ms  (113.9 /cmd)
+- n=5  : 159 ms  ( 31.7 /cmd)
+- n=20 :  84 ms  (  4.2 /cmd)
+- n=50 : 141 ms  (  2.8 /cmd)
+- n=100: 175 ms  (  1.7 /cmd)
+
+### Comparativ cu un proot per comanda (run_in_debian xN)
+- n=2  : batch 186 ms vs secvential  440 ms  =>  2.4x
+- n=5  : batch 224 ms vs secvential 1031 ms  =>  4.6x
+- n=10 : batch 164 ms vs secvential 1792 ms  => 11.0x
+- n=20 : batch 167 ms vs secvential 3901 ms  => 23.4x
+Output verificat IDENTIC la fiecare rulare.
+
+### API
+`terminal_server.run_batch(["cmd1","cmd2",...])` -> lista de stringuri,
+unul per comanda. Delimitare cu nonce uuid (nu se ciocneste cu output-ul real).
+Robust la: comenzi care esueaza, output cu newline, comenzi goale, exit codes.
+
+### Ce NU a mers (si de ce)
+- FIFO (`mkfifo`) in /data/local/tmp -> "Permission denied" (SELinux). Nu se poate.
+- Sesiune proot persistenta cu polling pe fisier -> functioneaza, dar adauga
+  ~40-110 ms latenta de polling, deci NU bate batch-ul nativ. Inutil.
+- Fisiere in /data/local/tmp ca canal: procesul app NU poate scrie acolo
+  (SELinux), deci canalul trebuie sa fie /storage (FUSE), accesibil la ambele.
+- proot NU vede /storage fara `--bind=/storage` explicit (da "No such file").
+
+### Regula
+Cand ai >= 2 comenzi pentru Debian, foloseste `run_batch` in loc de
+apeluri repetate la `run_in_debian`. Cu o singura comanda castigul e 0.
+
+### Alinierea terminal_server cu agent.py
+
+### Problema
+`run_in_debian` exista in DOUA locuri, cu implementari DIVERGENTE:
+- `agent.py` (linia ~3917) - varianta completa
+- `terminal_server.py` (linia 40) - varianta slaba
+
+Varianta slaba avea 3 lipsuri reale:
+1. **fara `--bind=/storage`** -> orice acces la `/sdcard` sau `/storage` dadea
+   "No such file or directory", desi fisierul EXISTA pentru uid 2000.
+   (dovedit: m-a costat iteratii la construirea batching-ului)
+2. **fara `DEBIAN_FRONTEND=noninteractive`** -> `apt install` fara `-y` bloca
+   pana la timeout, fara ca nimeni sa poata raspunde la prompt.
+3. **fara transmitere base64** -> adbd despacheteaza `shell,v2,raw:<service>` si
+   SPARGE pe spatii, dand bucatile ca argv separate (`sh -c id -u` -> argv
+   ["id","-u"] -> "sh: -u: inaccessible or not found").
+
+### Fix
+`terminal_server.run_in_debian` aliniat la varianta din `agent.py`:
+- bind-uri: `/dev /proc /sys /sdcard /storage /data/local/tmp`
+- `DEBIAN_FRONTEND=noninteractive`, `APT_LISTCHANGES_FRONTEND=none`,
+  `DEBCONF_NONINTERACTIVE_SEEN=true`, `PAGER=cat`, `GIT_PAGER=cat`
+- comanda trece ca base64: `echo <b64> | base64 -d | /bin/bash`
+- calea uid2000 la fel: `echo <b64> | base64 -d | /system/bin/sh`
+
+`run_batch` primeste aceleasi bind-uri si aceleasi variabile.
+
+### Verificat pe device
+- `run_in_debian("ls /storage/.../workspace")` -> lista reala (inainte: No such file)
+- `run_in_debian("ls /sdcard/.../workspace")` -> lista reala
+- `run_in_debian("uname -m")` -> aarch64
+- `run_in_debian("id -u", uid2000=True)` -> 2000
+- `run_in_debian("getprop ro.product.model", uid2000=True)` -> SM-A366B
+- comenzi cu spatii/ghilimele -> corect (`echo 'a b  c'` merge)
+- `run_batch(["echo A","uname -m","echo B"])` -> ['A','aarch64','B'] in 197 ms
+
+### Lectie
+Cand aceeasi functie exista in doua fisiere, ele DIVERGHEAZA. Verifica intotdeauna
+care e cea folosita efectiv, inainte de a o repara pe cea aparenta.
 
 ## 🖥 TERMINAL LINUX (2026-10-20) - ARHITECTURA
 
@@ -543,13 +1356,607 @@ odc). Intretinerea depasea beneficiul.
 
 ---
 
+## 📦 BUILD ȘI RESTORE (consolidat 2026-10-22)
+
+> Absoarbe `BUILD_ANDROID_ON_DEVICE.md`, `dist/RESTORE.md`,
+> `tools/DEVICE_BACKUP_MANIFEST.md` (șterse).
+
+
+### Build Android pe device — ghid end-to-end
+
+> **Ce este acesta:** rețeta completă, dovedită E2E, pentru a compila aplicații Android
+> (inclusiv cele cu cod nativ C/C++/NDK, Hilt, Room, kapt, Compose, Firebase) **direct pe
+> telefon, fără PC, fără Gradle pe PC, fără Android Studio.**
+>
+> Dovedit pe: **Samsung SM-A366B** (Android 16, arm64-v8a), compilând **VocisHD**
+> (`net.sys32.vocis`, 93 fișiere Kotlin + codec Opus C cu 149 fișiere) → `assembleDebug`
+> COMPLET, APK 38 MB, instalat + rulat. 58 task-uri Android.
+>
+> Autor: agentul autonom (sesiunea 5 oct 2026). Toate cifrele sunt MĂSURATE pe device.
+
+---
+
+### 0. DE CE E GREU (esența problemei)
+
+Pe Android, o aplicație (uid `untrusted_app`, SELinux `untrusted_app`) **NU poate executa
+binarare ELF arbitrare**. Concret:
+
+- Binararele din `filesDir` (`/data/data/<pkg>/files/...`) → **Permission denied** la exec.
+- Binararele din `/data/local/tmp` → executabile doar de shell (uid 2000), nu de app.
+- **Singurul loc de unde app-ul poate executa** = `<APK>/lib/arm64/` (`lib*_exec.so`),
+  directorul `nativeLibraryDir`.
+
+În plus, Android blochează **execuția în lanț** (un `lib*_exec.so` care `execv` altul →
+segfault) și **dlopen-ul libs nespecificate** în namespace (chiar cu `rpath=$ORIGIN`,
+un executabil din `lib/arm64` nu-și încarcă frații din același dir — namespace policy).
+
+De aceea unelte ca `java`, `aapt2`, `cmake` (care nativ ar trebui doar executate) trebuie
+**împachetate ca `lib*_exec.so` într-un APK-gazdă**, iar dependențele lor puse în locații
+care SUNT în `LD_LIBRARY_PATH`-ul procesului care le lansează.
+
+---
+
+### 1. ARHITECTURA SOLUȚIEI
+
+#### 1.1 APK-gazdă (`net.sys32.javahost`)
+
+Un APK mic (~11 MB) care conține binararele JDK + aapt2 ambalate ca lib-uri, plus ~120 libs
+de suport. E gazda de executabile. NU are legătură cu aplicația compilată.
+
+```
+net.sys32.javahost/
+  lib/arm64-v8a/
+    libjava_exec.so        # jdk/bin/java (launcher JLI, ~6 KB)
+    libjlink_exec.so       # jdk/bin/jlink
+    libjmod_exec.so        # jdk/bin/jmod
+    libjimage_exec.so      # jdk/bin/jimage
+    libjavac_exec.so       # jdk/bin/javac
+    libjar_exec.so         # jdk/bin/jar
+    libkeytool_exec.so     # jdk/bin/keytool
+    libjarsigner_exec.so   # jdk/bin/jarsigner
+    libaapt2_exec.so       # aapt2 (Termux 2.20, aarch64)
+    lib*.so                # ~120 libs: libfmt, libprotobuf, libabsl_*, libc++_shared
+```
+
+`android:extractNativeLibs="true"` în manifest este OBLIGATORIU.
+
+#### 1.2 Stack-ul de build (în `filesDir`)
+
+Totul rulează ca APP (uid ~10322), deci căile trebuie să fie în `filesDir` (accesibil).
+`filesDir` = `/data/data/<gazda>/files/`.
+
+```
+<filesDir>/build/
+  jdk/          # JAVA_HOME: bin/java..jarsigner = SYMLINK la javahost lib*_exec.so
+                #           lib/, lib/server/ = modulele JDK (INCARCATE, nu executate)
+  gradle/       # Gradle 9.8 (Termux) + libnative-platform.so extras din jar
+  gradlehome/   # GRADLE_USER_HOME (cache deps, transforms, daemon)
+  sdk/          # SDK Android minimal
+    platforms/android-36/     # COMPLET (11311 fisiere + package.xml)
+    build-tools/36.0.0/       # aapt2 = symlink la javahost; aidl/zipalign/etc.
+    cmake/3.22.1/bin/         # cmake = symlink la toolchain-ul nostru aarch64
+    licenses/                 # android-sdk-license (hash-uri)
+    platform-tools/           # instalat de AGP singur
+  toolchain/    # toolchain-ul nostru (clang 21, sysroot, cmake, ninja, deps/lib)
+    ndk/                            # FAKE NDK (symlink-uri)
+    deps/lib/                       # libs absl/protobuf/fmt + glibc-shim (libm.so.6 etc.)
+  project/      # proiectul copiat (sau symlink)
+  tmp/          # TMPDIR + java.io.tmpdir
+  .android/debug.keystore           # keystore debug (generat cu keytool)
+```
+
+---
+
+### 2. UNELTELE (de unde se iau)
+
+Pachete **Termux aarch64** (`https://packages.termux.dev/apt/termux-main/pool/main/...`),
+fiecare `.deb` = arhivă `ar` → `data.tar.xz` (se extrage cu python: parsezi `ar` manual,
+`tarfile`+`lzma`). Prefix intern: `data/data/com.termux/files/usr`.
+
+| Unealtă | Pachet | Mărime |
+|---|---|---|
+| JDK 21 | `openjdk-21_21.0.12_aarch64.deb` | 106 MB |
+| Gradle 9.8 | `gradle_1:9.8.0_all.deb` | 149 MB |
+| aapt2 | `aapt2_16.0.0.4-2_aarch64.deb` | 1 MB |
+| d8 (dexer) | `d8_37.0.0_all.deb` | 14.7 MB |
+| apksigner | `apksigner_37.0.0_all.deb` | 1.1 MB |
+| kotlinc 2.4.20 | `kotlin_2.4.20_all.deb` | 88 MB |
+| libs C++ | `libc++`, `fmt`, `libprotobuf`, `abseil-cpp`, `libexpat`, `libpng`, `libzopfli`, `zlib` | ~3.6 MB |
+| libs JDK | `libandroid-shmem`, `libandroid-spawn`, `libiconv`, `libjpeg-turbo`, `littlecms`, `alsa-plugins` | ~1.2 MB |
+
+De asemenea:
+- **android.jar API 36**: `https://dl.google.com/android/repository/platform-36_r01.zip`
+  (63 MB → `android-36/android.jar` 27.7 MB + platforma completă). Google îl dă DIRECT.
+- **build-tools**: `https://dl.google.com/android/repository/build-tools_r36_linux.zip` (63 MB).
+- **androidx + AGP + Kotlin plugins**: se descarcă automat de Gradle din `google()`/`mavenCentral()`.
+
+**NDK-ul oficial Google e x86_64 → INUTIL pe ARM.** Se folosește toolchain-ul propriu + fake-NDK.
+
+---
+
+### 3. PAȘII COMPLEȚI (end-to-end)
+
+#### Pasul 0 — Kernel de executabile: Java în APK
+
+1. Ia `jdk/bin/java` (+ jlink/jmod/jimage/javac/jar/keytool/jarsigner), copiază-le ca
+   `lib<name>_exec.so` în `javahost/lib/arm64-v8a/`.
+2. Adaugă libs de suport (din pachetele Termux: libfmt, libprotobuf, libabsl_*, libc++_shared).
+3. Build javahost (vezi §4 — cu `aapt2` + `kotlinc` + `d8` + `apksigner`, sau cu Gradle dacă merge).
+4. Instalează: `pm install -r --bypass-low-target-sdk-block javahost.apk`.
+5. Creează `JAVA_HOME` în `filesDir`: `bin/java` = symlink la
+   `<apk>/lib/arm64/libjava_exec.so`, la fel jlink/jmod/... . Modulele JDK (`lib/`, `lib/server/`)
+   rămân în `filesDir` (sunt `dlopen`-uite, nu executate).
+
+#### Pasul 1 — Gradle
+
+1. Extrage pachetul Termux `gradle`.
+2. `libnative-platform.so` lipsește din pachet → extrage-l din
+   `native-platform-linux-aarch64-0.22-milestone-29.jar` → pune-l în `gradle/lib/`.
+3. Rulează cu:
+   `java -Djava.library.path=<gradle>/lib -cp <gradle>/lib/gradle-launcher-9.8.0.jar org.gradle.launcher.GradleMain ...`
+
+#### Pasul 2 — SDK Android minimal
+
+1. Extrage `platform-36_r01.zip` → `sdk/platforms/android-36/` (COMPLET, 11311 fișiere).
+2. Adaugă `package.xml` valid în platformă (fără el: „Failed to find target android-36").
+3. Extrage `build-tools_r36_linux.zip` → `sdk/build-tools/36.0.0/`.
+4. `sdk/licenses/android-sdk-license` (hash-uri) + `android-sdk-preview-license`.
+5. `local.properties`: `sdk.dir=<filesDir>/sdk`.
+6. AGP își instalează singur `platform-tools` dacă lipsesc (SDK-ul trebuie să fie SCRIIBIL).
+
+#### Pasul 3 — Fake NDK
+
+`toolchain/ndk/` cu structură standard:
+```
+ndk/
+  source.properties            # Pkg.Revision = 27.1.12297006
+  build/cmake/android.toolchain.cmake   # toolchain CMake (vezi toolchain-ul nostru)
+  toolchains/llvm/prebuilt/linux-x86_64/
+    bin/{clang,clang++,ld.lld,ld,ar,ranlib,strip,nm,
+         llvm-strip,llvm-ar,llvm-ranlib,llvm-nm}  # symlink la toolchain-ul nostru
+    sysroot -> <toolchain>/sysroot
+```
+În `build.gradle.kts`: `android { ndkPath = "<filesDir>/toolchain/ndk" }`.
+
+#### Pasul 4 — cmake/aapt2 aarch64 (AGP își descarcă x86_64)
+
+- `sdk/cmake/3.22.1/bin/{cmake,ninja}` → symlink la `toolchain/bin/{cmake,ninja}` (aarch64).
+- `sdk/build-tools/36.0.0/aapt2` → symlink la `javahost/libaapt2_exec.so`.
+- **aapt2 din Maven** (transform-uri AAR): AGP îl descarcă la
+  `gradlehome/caches/9.8.0/transforms/<hash>/transformed/aapt2-9.0.1-<rev>-linux/aapt2`.
+  **Înlocuiește-l cu symlink** la `javahost/libaapt2_exec.so`.
+- `gradle.properties`: `android.aapt2FromMavenOverride=<filesDir>/aapt2bin/aapt2`
+  (symlink FĂRĂ `.so` — AGP respinge `*.so` ca „not an AAPT2 executable").
+
+#### Pasul 5 — Libs pentru aapt2 în LD_LIBRARY_PATH-ul daemonului
+
+Daemonul Gradle are un `LD_LIBRARY_PATH` **propriu** (nu moștenește env-ul clientului!),
+care include `<toolchain>/deps/lib`. Pune acolo libs aapt2 (libfmt, libprotobuf,
+toate libabsl_*, libc++_shared). Verifică: `cat /proc/<daemon_pid>/environ`.
+
+Pentru sqlite/glibc shim (vezi §6): `libm.so.6`, `libpthread.so.0`, `libdl.so.2`,
+`libc.so.6` → symlink la `/system/lib64/lib*.so` (tot în `deps/lib`).
+
+#### Pasul 6 — kapt + SQLite (Room)
+
+`sqlite-jdbc 3.41.2.2` (cerut de Room) **NU are natives Android** (varianta
+`Linux-Android/aarch64` e 0 bytes) → SQLite detectează OS='Linux' și ia varianta glibc
+(cere `libm.so.6`/`libpthread.so.0`) → `ExceptionInInitializerError`.
+
+**Fix:** descarcă **`sqlite-jdbc 3.46.0.0`** (are `Linux-Android/aarch64/libsqlitejdbc.so`
+real, 1.18 MB, depinde doar de libs de system: libm/libc/libandroid/libdl/liblog). Pune-l
+într-un DIRECTOR și în `gradle.properties`:
+```
+org.gradle.jvmargs=... -Dorg.sqlite.lib.path=<dir cu libsqlitejdbc.so> -Dorg.sqlite.tmpdir=<tmp>
+```
+`org.sqlite.lib.path` trebuie să fie **DIRECTOR** (nu fișierul .so).
+
+#### Pasul 7 — Java/Gradle flags (obligatorii)
+
+```
+-Duser.home=<filesDir>                       # build.gradle caută ~/.android/debug.keystore
+-Djdk.lang.Process.launchMechanism=VFORK     # jspawnhelper nu rulează → VFORK
+-Djava.io.tmpdir=<filesDir>/tmp              # altfel java.io.tmpdir = cale Termux inexistentă
+-Djava.library.path=<tmp>:<gradle>/lib
+```
+Plus în mediu: `JAVA_HOME`, `LD_LIBRARY_PATH` (tlib:tmp:gradle/lib:javahost_lib:jdk/lib),
+`JAVA_TOOL_OPTIONS` cu VFORK+tmpdir+user.home (propagă la JVM-urile copil), `ANDROID_HOME`,
+`GRADLE_USER_HOME`, `TMPDIR`.
+
+#### Pasul 8 — Keystore debug
+
+`build.gradle` caută `$user.home/.android/debug.keystore`. Generează-l:
+`keytool -genkeypair -keystore <filesDir>/.android/debug.keystore -alias androiddebugkey
+-storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000`.
+
+#### Pasul 9 — google-services.json (proiecte Firebase)
+
+Repo-urile îl exclud (gitignore). Creează un DUMMY valid în `app/google-services.json`
+(structura corectă, valori fake) — pluginul doar îl validează.
+
+#### Pasul 10 — Build
+
+```
+cd <project>
+java -Duser.home=<filesDir> -Djdk.lang.Process.launchMechanism=VFORK \
+     -Djava.io.tmpdir=<filesDir>/tmp -Djava.library.path=<tmp>:<gradle>/lib \
+     -cp <gradle>/lib/gradle-launcher-9.8.0.jar \
+     org.gradle.launcher.GradleMain assembleDebug
+```
+Rulează ca APP (python subprocess / bg), NU prin adbsh.
+
+---
+
+### 4. CAPCANE (fiecare = un eșec real, cu fix)
+
+| Simptom | Cauză | Fix |
+|---|---|---|
+| `Permission denied` la exec binar | SELinux: filesDir/tmp nu sunt executabile | ambalează în APK ca `lib*_exec.so` |
+| `CANNOT LINK EXECUTABLE ... libX not found` | Android namespace nu dlopen frații | LD_LIBRARY_PATH cu dir-ul libs |
+| Gradle: `Could not initialize native services` | lipsește `libnative-platform.so` | extrage din `native-platform-linux-aarch64-*.jar` |
+| Gradle: `Failed to exec spawn helper` | `jspawnhelper` (JDK) nu rulează | `-Djdk.lang.Process.launchMechanism=VFORK` |
+| Gradle: `Could not start JAVA_HOME/bin/java` | symlink rupt după reinstalare APK | re-creează symlink-urile la calea APK CURENTĂ |
+| `java.io.tmpdir is set to .../com.termux/...` | cale Termux compilată în JDK | `-Djava.io.tmpdir=<filesDir>/tmp` |
+| `[CXX1101] not a valid NDK` | AGP validează NDK strict | adaugă `build/cmake/android.toolchain.cmake` + source.properties |
+| `Failed to find target android-36` | lipsește `package.xml` în platformă | creează package.xml valid |
+| `SDK directory is not writable` | SDK în /data/local/tmp (uid 2000) | mută SDK în filesDir |
+| `AAPT2 Daemon startup failed` | aapt2 Maven x86_64 / fără libs | symlink la javahost libaapt2 + libs în deps/lib |
+| `does not point to an AAPT2 executable` | override cu `*.so` | folosește symlink FĂRĂ `.so` |
+| `kaptDebugKotlin ExceptionInInitializerError` | sqlite-jdbc fără natives Android | sqlite-jdbc 3.46 + `org.sqlite.lib.path` (dir) |
+| `NoSuchFieldError view_tree_lifecycle_owner` | R.java incomplet (aapt2 non-daemon) | pune toate resursele AAR la link |
+| `ClassNotFoundException kotlin.jvm.internal.Intrinsics` | kotlin-stdlib nu e în dex | include stdlib la d8 |
+| `Cannot run program libpyexec.so` | libs native lipsă din APK | ambalează `jniLibs` |
+| `ModuleNotFoundError: encodings` | lipsește stdlib Python | ambalează `assets/python/Lib` |
+| `No native library found for os.name=Linux` | `org.sqlite.lib.path` = fișier, nu dir | dă DIRECTORUL |
+| `chmod` pierdut la copiere sdcard | /sdcard nu păstrează exec bit | `chmod -R 755` după copy |
+
+---
+
+### 5. TIMPI REALI (SM-A366B, măsurați)
+
+- Descărcarea uneltelor: ~700 MB (o singură dată).
+- **VocisHD complet** (93 .kt + Opus 149 .c x 7 ABI + kapt + Hilt + dex + packaging):
+  **BUILD SUCCESSFUL în ~2m 30s** (după ce cache-ul e populat).
+- Configurarea inițială (prima dată, când AGP descarcă tot): 5-15 min.
+- APK rezultat: 38 MB (89 MB despachetat, 545 fișiere).
+
+---
+
+### 6. VERIFICARE FINALĂ (stop criterion)
+
+Build-ul NU e „gata" când un tool zice OK. E gata când:
+1. `BUILD SUCCESSFUL` + `app/build/outputs/apk/debug/app-debug.apk` există (>0).
+2. `aapt2 dump badging app-debug.apk` → package/corect, versiune, permisiuni.
+3. `unzip -l` → conține `classes.dex`, `resources.arsc`, `AndroidManifest.xml`, `lib/*/*.so`.
+4. `pm install -r --bypass-low-target-sdk-block app-debug.apk` → Success.
+5. `am start -n <pkg>/.MainActivity` → fără crash în `logcat -b crash`.
+
+Dovedit pe VocisHD: toate 5 trecute. ✅
+
+---
+
+### 7. REZUMAT ÎN O PROPOZIȚIE
+
+Un app poate compila alt app pe Android dacă: binararele (java, aapt2, cmake) sunt ambalate
+ca `lib*_exec.so` într-un APK-gazdă; libs lor sunt în `LD_LIBRARY_PATH`-ul procesului care
+le lansează (inclusiv `toolchain/deps/lib` al daemonului Gradle); SDK-ul e în filesDir;
+NDK-ul e fake prin symlink-uri; și Gradle rulează cu `VFORK` + `tmpdir` + `user.home` setate.
+
+---
+*Document generat pe device, 5 oct 2026. Reproducibil cu acest ghid + memoria agentului.*
+
+
+---
+
+### 8. AUTOMATIZARE COMPLETĂ (modulul `android_build.py`)
+
+Tot pipeline-ul e împachetat într-un modul Python care vine CU aplicația. La instalare de la
+zero, agentul poate compila APK-uri fără nicio pregătire manuală.
+
+#### Ce conține APK-ul (stare 5 oct 2026 — ambii agenți au ACELAȘI payload)
+
+> Actualizat: între timp sursa s-a unificat (vezi §9). Numerele de mai jos sunt MĂSURATE
+> din APK-urile buildate (`unzip -l`), nu estimări.
+
+```
+assets/android_build/          # uneltele (se extrag la setup in filesDir)
+  openjdk-21.deb     (106 MB)  # JDK module
+  gradle.deb         (149 MB)  # Gradle 9.8
+  platform36.zip     ( 66 MB)  # SDK platform android-36
+  buildtools36.zip   ( 64 MB)  # SDK build-tools 36.0.0
+  aapt2.deb, sqlite-jdbc-3.46.0.0.jar, android.toolchain.cmake
+                               # total: 7 fisiere, 381 MB
+assets/toolchain/              # 1007 MB despachetat / 6077 fisiere: clang/sysroot/deps/perl
+                               #   + rust-libs.tar 801,6 MB (librustc_driver+libLLVM+std)
+assets/python/                 # 54 MB (agent.py, android_build.py, toolchain.py, Lib/...)
+jniLibs/arm64-v8a/*.so         # 146 libs native (405 MB): java/javac/jlink/jmod/jimage/
+                               #   jar/keytool/jarsigner/aapt2/aapt2wrap (lib*_exec.so)
+                               #   + clang/cmake/ninja/rust/perl/python + absl/protobuf/fmt
+```
+
+Rezultat: APK-ul `net.sys32.agent` = **~983 MB** (payload complet, offline-capable). `.deb`-urile și
+`.zip`-urile sunt STORE (deja comprimate), `rust-libs.tar` e deflat (840 MB -> 292 MB).
+
+`net.sys32.javahost` NU mai e necesar: `lib*_exec.so` (java, aapt2) stau acum in `jniLibs`-ul
+fiecărei aplicații, deci fiecare e gazdă pentru propriile executabile.
+
+#### API (3 funcții)
+
+```python
+import android_build
+android_build.setup()                     # extrage toate uneltele in filesDir (~5-10 min, o data)
+apk = android_build.build("/path/project") # compileaza -> calea APK
+android_build.verify(apk)                 # {ok, size_mb, has_dex, has_arsc, has_manifest}
+```
+
+#### Ca tool al agentului
+
+`android tool=... action=...` — de fapt tool-ul se cheamă `build_apk`:
+- `build_apk action=setup`
+- `build_apk action=build dir=/path/to/project`
+- `build_apk action=verify apk=/path/to.apk`
+
+#### Ce face `build()` automat (ca să nu fie nevoie de setup manual al proiectului)
+
+1. Scrie `gradle.properties` în proiect cu VFORK + tmpdir + aapt2 override (dacă lipsesc).
+2. Înlocuiește aapt2-ul x86_64 din Maven transforms cache cu symlink la al nostru.
+3. Rulează Gradle cu `JAVA_TOOL_OPTIONS` (VFORK propagat la daemon + procese copil).
+
+#### Dovedit E2E
+
+Un proiect HelloWorld Android compilat cu `android_build.build()` → APK 0.8 MB
+(classes.dex + resources.arsc + manifest), INSTALAT pe device. Toate task-urile Gradle
+(processDebugResources, dexBuilder, packageDebug, assembleDebug) au rulat.
+
+---
+
+### 9. STAREA ACTUALĂ (5 oct 2026): ambii agenți identici, o singură sursă
+
+Ce s-a schimbat după ce s-a scris restul ghidului:
+
+#### 9.1 O singură sursă de cod
+
+Exista **o singura sursa de cod**: `workspace/app/net.sys32.agent/`.
+
+> **6 oct 2026:** a doua aplicatie (`net.sys32.odc_agent`, generata cu
+> `tools/make_agent_variant.sh`) a fost **eliminata** — duplica ~49% din fisiere si crea confuzie.
+> Detalii in `readme.md` -> **OP.9**.
+
+#### 9.2 APK-ul are payload-ul complet (inclusiv Rust)
+
+Compoziție măsurată (§8): toolchain 1007 MB / 6077 fișiere (cu `rust-libs.tar` 801,6 MB),
+146 libs native (405 MB), `assets/android_build` 381 MB, `assets/python` 54 MB.
+
+#### 9.3 Cum se construiește
+
+```bash
+# pe laptop (Gradle):
+cd workspace/app && ./build_app.sh
+
+# pe DEVICE, fara PC (unealta build_apk; vezi §1-§7):
+#   build_apk setup          (o data)
+#   build_apk build dir=<proiect>
+```
+
+#### 9.4 Capcane noi (fiecare = un eșec real, cu fix)
+
+| Simptom | Cauză | Fix |
+|---|---|---|
+| Gradle: `:app:compressDebugAssets > Java heap space` | task-ul decomprimă `rust-libs.tar.gz` (840 MB) și îl re-comprimă; la build de la zero are nevoie de heap | `org.gradle.jvmargs=-Xmx5120m` în `gradle.properties` |
+| După instalare curată: aplicația NU extrage nimic (`files/` are doar `profileInstalled`), fără Python | `startCore()` (care face `extractAssets`) rulează doar dacă TOATE permisiunile esențiale sunt acordate — la instalare curată lipsea `READ_MEDIA_IMAGES` | `pm grant` pentru CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION, READ_CONTACTS, READ_MEDIA_IMAGES, POST_NOTIFICATIONS + `appops set <pkg> MANAGE_EXTERNAL_STORAGE allow` |
+| După wipe: agentul cere cheia API | cheia stă in `files/` (privat), dispare cu `pm uninstall` | scrie-o inapoi prin `run-as` (ambele aplicații sunt debuggable: build Gradle debug) sau lipește-o in UI |
+| Cei doi agenți văd aceeași conversație / același `adbkey` | `AGENT_HOME` era hardcodat `Download/Agent` pentru amândoi, iar `adb_setup.py` era lansat fără el | `agent_home_dir` per variantă (generat) + `AGENT_HOME` setat pe AMBELE `ProcessBuilder`-uri din `MainActivity.kt` |
+
+#### 9.5 Instalare de la zero (reproductibil)
+
+```bash
+bash tools/wipe_device.sh            # dezinstalează net.sys32.*, golește /data/local/tmp și /sdcard
+bash tools/install_agents_fresh.sh   # push + pm install ambii, start, accessibility
+```
+
+Verificat pe SM-A366B: după wipe total (205 GB liberi) ambii agenți s-au instalat și și-au
+extras singuri payload-ul din propriul APK (`files/toolchain`, `files/python`, marker
+`.assets_v257`), fără `/data/local/tmp` și fără descărcări; au pornit Python (un subproces
+`libpyexec.so` sub fiecare aplicație) și au creat foldere separate pe `/sdcard`
+(`Download/Agent`, cu `adbkey` și `workspace/`).
+
+---
+
+#### 9.6 Sursa unica de cod
+
+Exista o singura aplicatie si o singura sursa: `workspace/app/net.sys32.agent/`.
+Tool-urile (12, inclusiv `build_apk`), payload-ul de build si comportamentul sunt intr-un
+singur loc. A doua aplicatie (`net.sys32.odc_agent`) a fost eliminata pe 6 oct 2026.
+
+### Restore din backup
+
+Acest pachet contine ABSOLUT TOTUL necesar pentru a rula agentul si pentru a-l
+reconstrui de la zero, fara sa depinzi de device-ul original.
+
+Data: 2026-10-07 (pachet #2 — APK actualizat cu fix-ul auto-scroll)
+Commit git: b5544b787d4b7cc39a34153a6f5720851845e408 (branch master)
+Remote: git@github.com:fetidness/android_agent.git
+APK: 946 787 846 bytes (md5 5451774d96bba74e6a242ad63c37a434)
+
+> **Update 2026-10-07:** `APK/agent-full.apk` a fost inlocuit cu build-ul care include
+> fix-ul de auto-scroll (ascunderea tastaturii in timpul generarii nu mai "sare"/goleste
+> conversatia). Diferenta fata de APK-ul anterior este DOAR `classes3.dex`; toate
+> assets-urile si librariile sunt identice. APK-ul vechi e pastrat ca
+> `APK/agent-full-pre-scrollfix.apk` (md5 c89d2b3dfbbb0936c5c0d79791d6b493).
+
+### Ce contine pachetul
+
+    agent-full-backup/
+    |-- APK/agent-full.apk          APK COMPLET compilat (947 MB)
+    |                               - ruleaza direct pe device (pm install)
+    |                               - contine: classes.dex, 146 libs native (lib/arm64-v8a),
+    |                                 assets/toolchain (6077 fisiere), assets/android_build
+    |                                 (JDK+Gradle+SDK), assets/python (cod + Lib/ stdlib + libdynload)
+    |-- repo/android_agent/         CLONA GIT COMPLETA (cu .git, 921 fisiere tracked)
+    |-- RESTORE.md                  acest ghid
+    |-- restore.sh                  script de restaurare pe device
+
+### CE S-A SCHIMBAT FATA DE PACHETUL #1 (aceeasi zi)
+
+Reparatii dovedite pe device (SM-A366B, Android 16):
+
+1. **build_apk fara interventii manuale** — `selftest()` ruleaza REAL `java -version` +
+   `aapt2 version`; `_heal_missing()` reface automat symlink-urile `libX.so.N`
+   (libz.so.1 / libexpat.so.1) pornind de la eroarea linker-ului; `build()` face preflight
+   inainte de a porni Gradle si publica APK-ul in `/sdcard/Download/Agent/workspace/`.
+2. **`repair_links()`** — la fiecare update de APK, `nativeLibraryDir` se schimba
+   (`/data/app/~~x==/net.sys32.agent-y==/lib/arm64`), deci TOATE symlink-urile din
+   `files/android_build` (`jdk/bin/*`, `aapt2bin/aapt2`, `toolchain/bin/*`) rămâneau moarte
+   si build-ul cadea cu `No such file or directory: .../android_build/jdk/bin/java`.
+   Acum se refac automat la fiecare `setup()`/`build()` (marker `.native_dir` logheaza schimbarea).
+3. **Codul python se re-extrage automat la update de APK** — stampila din `MainActivity.kt`
+   e derivata din APK (`versionCode-lastUpdateTime`) in loc de numele hardcodat
+   `.assets_v257`; altfel fix-urile din sursa nu ajungeau niciodata pe device.
+4. **Semnatura tokenului ADB** — `RSA_sign(SHA-1)` din libcrypto de sistem (BoringSSL)
+   esua sau TERMINA PROCESUL (SIGSEGV); acum semnatura PKCS#1 v1.5 SHA-1 se calculeaza
+   manual, cu auto-verificare inainte de trimitere (`openssl dgst -sha1 -verify` → Verified OK).
+   Fara asta adbd afisa dialogul „Allow USB debugging" la fiecare conexiune, la infinit.
+   Extra: `EVP_PKEY_get0_RSA` obligatoriu inainte de `RSA_get0_key` (altfel SIGSEGV).
+5. **Instalare FARA adb** — daca adbd nu autorizeaza cheia aplicatiei (caz real pe acest
+   device: adbd respinge chiar si o semnatura valida si nu mai afiseaza dialogul), `install()`
+   deschide INSTALATORUL DE SISTEM prin FileProvider (`content://` + ACTION_VIEW) → o singura
+   confirmare pe ecran. Android cere o data permisiunea „Install unknown apps" pentru Agent.
+
+### DE CE AI NEVOIE DE AMBELE
+
+- **APK-ul** e produsul final gata de instalat. Nu are nevoie de nimic altceva.
+- **repo git** e sursa: cod + configuratii. DAR `git clone` SINGUR NU produce un
+  APK complet, pentru ca `.gitignore` exclude binarle mari (prea mari pentru git):
+    - `jniLibs/arm64-v8a/`      (146 libs, 405 MB) -> contine libpyexec.so (INTERPRETUL!)
+    - `assets/toolchain/`       (1007 MB, 6077 fisiere: clang, rust, cmake, sysroot, deps)
+    - `assets/android_build/`   (381 MB: JDK 21, Gradle 9.8, SDK 36)
+    - `assets/python/libdynload/` (67 .so: module Python native)
+    - `assets/python/Lib/`      (stdlib CPython desfasurat)
+  Fara ele, APK-ul construit are ~18 MB si CRAPA la pornire cu:
+    `java.io.IOException: Cannot run program ".../lib/arm64/libpyexec.so": error=2`
+
+### CUM REBUILDEZI UN APK COMPLET (daca modifici codul)
+
+Binarle lipsa se extrag DIN APK-UL COMPILAT (acesta e "handoff-ul" dintre APK si surse).
+Pe laptop (x86_64), cu JDK 21 + Android SDK 36 + Gradle 8.9-8.11:
+
+    git clone git@github.com:fetidness/android_agent.git android_agent && cd android_agent
+    APK=../APK/agent-full.apk
+    P=workspace/app/net.sys32.agent/app/src/main
+    mkdir -p $P/jniLibs
+    unzip -o "$APK" 'lib/*'          -d /tmp/x && mv /tmp/x/lib/arm64-v8a $P/jniLibs/ && rm -rf /tmp/x
+    unzip -o "$APK" 'assets/toolchain/*'         -d $P/
+    unzip -o "$APK" 'assets/android_build/*'     -d $P/
+    unzip -o "$APK" 'assets/python/libdynload/*' -d $P/
+    unzip -o "$APK" 'assets/python/Lib/*'        -d $P/    # stdlib desfasurat (nu e in git)
+    cd workspace/app/net.sys32.agent
+    gradle assembleDebug      # NU exista gradlew in repo (wrapper-ul e gitignored)
+
+Atentie la versiuni: AGP 8.7.3 + Kotlin 2.0.21, compileSdk 36 → Gradle 8.9-8.11 (NU 9.x).
+
+### CUM INSTALEZI APK-ul
+
+    adb install -r --bypass-low-target-sdk-block APK/agent-full.apk
+    adb shell am start -n net.sys32.agent/.MainActivity
+
+La prima pornire: extrage assets in filesDir (cateva minute), auto-genereaza
+cheia RSA + certificatul. Vei avea nevoie de:
+  - cheia API DeepSeek (se lipeste in UI)
+  - Accessibility ON (Settings > Accessibility > Agent)
+  - pentru tool-urile privilegiate (adbsh, uid=2000): adbd trebuie sa accepte cheia
+    aplicatiei (`adb tcpip 5555` + dialogul „Allow USB debugging" cu „Always allow").
+    Daca adbd refuza cheia, instalarea APK-urilor construite pe device functioneaza oricum,
+    prin instalatorul de sistem (punctul 5 de mai sus).
+
+### REGENERAREA TOOLCHAIN-ULUI DE LA ZERO (doar daca nu mai ai APK-ul)
+
+`workspace/app/build_toolchain.sh` are nevoie de sursele LLVM + CPython
+(~1h15m build pe laptop). Sursele NU sunt in git. Vezi scriptul pentru detalii.
+
+### ISTORIC
+
+- 2026-10-06 (pachet #2): reactualizat dupa reparatiile din aceeasi zi (vezi „CE S-A
+  SCHIMBAT"); APK recompilat pe laptop din sursa, clona git proaspata de pe GitHub
+  (commit 6fed46d).
+- 2026-10-06 (pachet #1): pachet creat dupa eliminarea celei de-a doua aplicatii (odc_agent).
+  O singura aplicatie: net.sys32.agent. 917 fisiere tracked in git (commit aedefe4).
+
+### Manifest backup device (istoric)
+
+> ⚠️ **ISTORIC (5 oct 2026).** Acest manifest descrie un backup facut INAINTE de eliminarea
+> celei de-a doua aplicatii. Arhiva `odc-build-inputs.tar` nu mai este necesara (era pentru
+> build-ul `net.sys32.odc_agent`, scos pe 6 oct 2026). Pastrat ca referinta istorica.
+
+# MANIFEST — Backup unelte + inputuri de build, Samsung SM-A366B (net.sys32.agent)
+
+Data: 2026-10-05T05:30:56-04:00
+Device: SM-A366B (RZGL102X5AT), Android 16, via adb USB
+Sursa script: /home/gab/Desktop/android_agent/tools/backup_device_tools.sh
+
+### Arhive
+
+FISIER                            BYTES  SHA256
+app-state.tar                 315195392  cee7744e51909f02f727bec186bc266c1baa5b807a7fe73f2f3833da21d92ec6
+app-toolchain.tar            1945982976  af9593b857f3a9d4e046bb47a9e6dabbb4c70b4c04cf3c6d42498974b2ca11e8
+hdbuild-gradle.tar           2752854016  ebe8456081017c13da9e1f51d860b0217f3e0df20eee2589cb20ab11453110ec
+odc-build-inputs.tar         1530110976  bd11e10b3002b39fe759ef1f8a3b2ef3726aa459ac481b3e1e35e3bb39fdbdcf
+sdcard-repo.tar                72322048  d68af2938126588f655c1dd7c1e6950f154768e903f81e842ca4a293c2a4feab
+apkbuild-tools.tar            845754368  5febbeb611fd247feed3ba87c09d46f8dca75f39f524552cb5acddfbe61de082
+
+### Ce e in fiecare (sursa pe device -> arhiva)
+
+apkbuild-tools.tar      /data/local/tmp/apkbuild (doar uneltele, fara proiecte)
+                        .android aapt2 android.jar apksigner aar_res build_apk.sh classpath d8
+                        gradle javahost jdk jrun.sh kotlin release.keystore sdk tlib
+                        NU: odc/ odc_full/ odc*.apk agent2/ work/ work_src/ hdvoice_proj/ a2/
+                            hello/ gradlehome/ tmp/
+
+odc-build-inputs.tar    /data/local/tmp/odcassets/assets + /data/local/tmp/odclibs
+                        = exact inputurile pentru build-ul APK-ului odc_agent (toolchain in
+                          forma de assets + lib/arm64-v8a/*.so extrase din APK)
+
+app-toolchain.tar       files/toolchain  (toolchain-ul nativ de runtime: clang/cmake/ninja,
+                        deps, rust, sysroot, perl, pyinc, rust-libs.tar 803MB)
+
+app-state.tar           files/{python, pyhome, site_packages_keep, wheels, cargo, libs, logs,
+                        home/, memory.md, context.json, ...}  — starea aplicatiei
+                        FARA .ssh si FARA key.txt (secrete)
+
+hdbuild-gradle.tar      files/hdbuild — stack-ul Gradle complet (jdk, gradle, sdk CU platforma
+                        android-36 completa + platform-tools, gradlehome = cache offline,
+                        tlib, aapt2bin, hdvoice_proj, logurile de build)
+                        NU: odc2.apk, odc_java.apk, odc3.apk (iesiri), build.pid, gradle_v.pid,
+                            gradle_run.log, testbin (symlink mort)
+
+sdcard-repo.tar         /sdcard/Download/Agent/workspace/android_agent (clone-ul git de pe telefon)
+
+### Verificari facute
+- tar tf pe fiecare arhiva: rc=0, fara trunchiere
+- set-diff fata de listarea device-ului (find):
+    hdbuild:   device 66778 / arhiva 66770 -> diferenta = EXACT cele 8 excluderi intentionate
+               (".", build.pid, gradle_v.pid, gradle_run.log, odc2.apk, odc3.apk, odc_java.apk, testbin)
+    app-state: device 10361 / arhiva 10361 -> 0 diferente
+    app-toolchain: 9679 = 9679 ; odc-build-inputs: 8214 = 8214 ; repo: 2655 = 2655
+- md5 identic device vs arhiva pe: toolchain/rust-libs.tar, sysroot/.../stdio.h, odclibs/.../
+  libpython3.14.so, hdbuild/jdk/bin/java, sdk/platforms/android-36/android.jar,
+  gradlehome/.../fileHashes.bin, python/agent.py, memory.md, android_agent/readme.md,
+  + apkbuild: android.jar, build_apk.sh, release.keystore, jdk/bin/java, aapt2
+- 0 fisiere de secret in arhive (.ssh / key.txt absente)
+- symlink-uri pastrate: app-toolchain 224, hdbuild 18, app-state 2
+
+### ATENTIE la restaurare
+- Symlink-urile absolute catre /data/app/~~<hash>==/net.sys32.javahost-<hash>==/lib/arm64/*.so
+  (jdk/bin/java, javac, hdbuild/testbin) sunt MOARTE dupa reinstalarea APK-ului javahost.
+  Dupa restore: re-creeaza-le la calea APK curenta (vezi secțiunea BUILD ȘI RESTORE).
+- Restaurare: tar xf <arhiva>.tar -C <dest>
+
 ## 🤖 COMPILARE APK PE DEVICE (autonom, offline)
 
 Agentul poate compila aplicatii Android (APK) direct pe telefon, **offline** — toate uneltele
 vin in APK. Modul: `android_build.py` (tool `build_apk`: `setup` / `build dir=<proiect>` /
 `verify apk=<fisier>` / `install apk=<fisier>|dir=<proiect>` / `selftest`).
 Dovedit E2E: HelloWorld Android compilat -> APK, instalat, rulat. Detalii in
-`BUILD_ANDROID_ON_DEVICE.md`, in `CHANGELOG.md` (capcanele reale) si in memoria agentului.
+secțiunea BUILD ȘI RESTORE din acest fișier, in `CHANGELOG.md` (capcanele reale) si in memoria agentului.
 
 **Robustete (ce nu mai cere intervenție manuala):**
 - `setup()` extrage singur assets-urile din `base.apk` daca nu le gaseste pe disc
@@ -585,7 +1992,7 @@ Dovedit E2E: HelloWorld Android compilat -> APK, instalat, rulat. Detalii in
 > fără PC.** Conține `classes.dex` 43.9 MB (Kotlin+Hilt+Compose), `libopus_jni.so` pentru
 > toate 7 ABI-urile, `libsqlcipher.so`, resurse, manifest.
 > Detalii complete în `CHANGELOG.md` (5 oct 2026) și în memoria agentului.
-> **Ghid complet reproductibil (end-to-end, toți pașii + capcanele): [`BUILD_ANDROID_ON_DEVICE.md`](BUILD_ANDROID_ON_DEVICE.md).**
+> **Ghid complet reproductibil (end-to-end, toți pașii + capcanele): secțiunea "BUILD ȘI RESTORE" din acest fișier.**
 
 ### Ce funcționează dovedit
 - **Gradle 9.8 + AGP 9.0.1 + Kotlin 2.1.21 + Compose + kapt + Hilt + Room** configurează
