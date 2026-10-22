@@ -38,17 +38,38 @@ def _adb():
 
 
 def run_in_debian(cmd, timeout=120, uid2000=False):
-    """Executa o comanda in Debian (sau ca uid 2000) prin ADB intern."""
-    import shlex
+    """Executa o comanda in Debian (rootfs /data/local/tmp) sau ca uid 2000.
+
+    ★ ALINIAT cu agent.py:run_in_debian (2026-10-22). Cele doua erau DUPLICATE si
+    DIVERGENTE - varianta de aici nu avea --bind=/storage (=> orice acces la
+    /sdcard sau /storage dadea "No such file or directory" desi fisierul exista
+    pentru uid 2000), nici DEBIAN_FRONTEND=noninteractive (=> `apt install` fara -y
+    bloca pana la timeout, fara sa poata raspunde nimeni la prompt), nici
+    transmiterea prin base64 (=> adbd sparge comanda pe spatii si argv iese greșit).
+
+    ★ DE CE PRIN ADB: /data/data e montat NOEXEC si untrusted_app nu poate execve
+    din app_data_file (W^X). c.shell() pune adbd (uid 2000, u:r:shell:s0) sa faca
+    execve-ul - singura cale corecta fara root.
+    """
+    import base64
     c = _adb()
     if uid2000:
-        return c.shell(cmd, timeout=timeout) or ""
+        b = base64.b64encode(cmd.encode()).decode()
+        return c.shell("echo " + b + " | base64 -d | /system/bin/sh", timeout=timeout) or ""
     full = (
         "%s -0 -r %s -w /root --link2symlink --sysvipc "
-        "--kernel-release=6.1.0-debian --bind=/dev --bind=/proc --bind=/sys "
-        "/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
+        "--kernel-release=6.1.0-debian "
+        "--bind=/dev --bind=/proc --bind=/sys "
+        "--bind=/sdcard --bind=/storage --bind=/data/local/tmp "
+        "/usr/bin/env -i "
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
         "HOME=/root TERM=xterm-256color LANG=C.UTF-8 "
-        "/bin/bash -c %s" % (PROOT, ROOTFS, shlex.quote(cmd))
+        "DEBIAN_FRONTEND=noninteractive "
+        "APT_LISTCHANGES_FRONTEND=none "
+        "DEBCONF_NONINTERACTIVE_SEEN=true "
+        "PAGER=cat SYSTEMD_PAGER=cat GIT_PAGER=cat "
+        "/bin/bash -c \"echo %s | base64 -d | /bin/bash\" </dev/null"
+        % (PROOT, ROOTFS, base64.b64encode(cmd.encode()).decode())
     )
     return c.shell(full, timeout=timeout) or ""
 
@@ -81,11 +102,17 @@ def run_batch(commands, timeout=600, stop_on_error=False):
             % (nonce, i, cmd, nonce, i)
         )
     script = "\n".join(parts)
+    # aceleasi bind-uri si aceleasi variabile ca run_in_debian (altfel batch-ul
+    # nu vede /sdcard si un `apt install` poate bloca pe un prompt debconf)
     full = (
-        "%s -0 -r %s -w /root --link2symlink --sysvipc --bind=/storage "
-        "--kernel-release=6.1.0-debian --bind=/dev --bind=/proc --bind=/sys "
+        "%s -0 -r %s -w /root --link2symlink --sysvipc "
+        "--kernel-release=6.1.0-debian "
+        "--bind=/dev --bind=/proc --bind=/sys "
+        "--bind=/sdcard --bind=/storage --bind=/data/local/tmp "
         "/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "
         "HOME=/root TERM=xterm-256color LANG=C.UTF-8 "
+        "DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none "
+        "DEBCONF_NONINTERACTIVE_SEEN=true PAGER=cat GIT_PAGER=cat "
         "/bin/bash -c %s" % (PROOT, ROOTFS, shlex.quote(script))
     )
     raw = _adb().shell(full, timeout=timeout) or ""
