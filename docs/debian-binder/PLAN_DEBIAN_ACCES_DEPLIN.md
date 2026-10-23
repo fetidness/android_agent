@@ -1,6 +1,6 @@
 # PLAN: Acces deplin la Android din Debian (egal cu aplicatia)
 
-Document de lucru. Ultima actualizare: cercetare preliminara INCHIATA, plan scris.
+Document de lucru. Ultima actualizare: FAZA 0 INCHIATA - bridge-ul are deja TOT (eval + 35 comenzi)
 
 ## Intrebarea
 
@@ -130,3 +130,38 @@ Astea nu sunt bug-uri de implementare: sunt granite de securitate Android.
 - Cercetare preliminara: app_process blocat pe chown dalvik-cache (CapEff=0).
   Bridge-ul existent (android_bridge.py + AndroidBridge.kt) pare calea cea mai
   ieftina si mai sigura. De confirmat in Faza 0.
+
+
+## FAZA 0 - REZULTAT: infrastructura EXISTA deja (descoperire majora)
+
+Planul presupunea ca trebuie sa CONSTRUIESC un bridge. De fapt exista:
+`AndroidBridge.kt` (1142 linii) + `android_bridge.py` (90 linii), JSON pe linie
+peste TCP loopback, portul in `bridge.port`.
+
+### Dovezi masurate din DEBIAN (nu din app)
+- port citit: 46431 (fisierul bridge.port)
+- `socket.create_connection(("127.0.0.1", 46431))` -> CONECTAT din proot
+- `{"tool":"battery"}` -> ok=True, level=60, voltage=4004
+- `{"tool":"sensors","action":"list"}` -> ok=True, 35 senzori
+- `{"tool":"eval","expr":{"op":"services"}}` -> ok=True, 301 servicii
+- `{"tool":"eval","expr":{"op":"call","target":"ctx","method":"getSystemService","args":["wifi"]}}`
+  -> ok=True, class=android.net.wifi.WifiManager
+
+### Comenzi deja disponibile in bridge (dispatcher AndroidBridge.kt)
+sensors, camera, location, battery, clipboard, notify, vibrate, tts, volume,
+wifi, device, apps, intent, settings, tourl, system, storage, processes,
+network, display, audio, telephony, nfc, usb, appinfo, install,
+**eval** (reflexie completa), services, info, ui, notif, ime, vpn, capture, guard
+
+### Consecinta: Faza 1 si 2 se REDUC drastic
+NU mai trebuie scris un bridge nou. Ramane:
+- un client Python curat in Debian (faza 2), care vorbeste deja protocolul
+- de verificat/ extins doar ce lipseste pentru cazurile concrete
+
+### Sintaxa eval (de invatat, verificata)
+- `{"op":"services"}` -> lista serviciilor
+- `{"op":"info","target":"android.os.Build"}` -> metodele unei clase
+- `{"op":"call","target":"ctx","method":"getSystemService","args":["wifi"]}` -> obiect
+- `{"op":"get","target":"ctx","field":"..."}` 
+- TRAP: `getModel` pe `class:android.os.Build` a dat "method not found" - metodele
+  statice cer alta sintaxa; foloseste `op=info` intai pentru a vedea lista reala
