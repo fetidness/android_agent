@@ -235,6 +235,70 @@ increde in exit code-urile din Debian pentru operații de retea.
 
 ---
 
+## 🧠 AGENT.PY STIE CE POATE DEBIAN (2026-10-23) - TOOL `bridge` + `androidapi`
+
+Pana azi `agent.py` descria Debian-ul ca "bash in Debian" si atat. La intrebarea
+"ce poate Debian?" agentul raspundea corect dar INCOMPLET (dumpsys + senzori),
+pentru ca nu stia de DShell bridge. Doua tool-uri inchid acum golul.
+
+### Tool `androidapi` (uid 2000, dumpsys)
+Intoarce DATE PARSATE, nu text brut: `battery` (level_pct/voltage_mv/temp_c/health),
+`location` (fix GPS real lat/lon/alt_m/accuracy_m + provideri cu fix), `wifi`
+(ssid/bssid/ip/rssi_dbm/band/link_mbps/freq_mhz), `telephony`, `sensors`, `accel`,
+`services`, `all`. Fiecare actiune e O comanda in loc de 4-6 pasi de grep manual.
+Masurat: level_pct 63 / voltage_mv 4029 / temp_c 33.1, GPS 00.000000,00.000000 acc 12.77 m,
+wifi `MyWifi` -51 dBm 5180 MHz, 29 senzori, 470 servicii.
+
+Capcana dovedita: `dumpsys battery | head -12` **trunchiaza** output-ul (pipe-ul se
+inchide inainte de `level:`) si intoarce doar `Max charging voltage: 0`. Nu pune
+`head` mic pe `dumpsys`; filtreaza cu `grep` pe camp sau ruleaza-l intreg (12015 B).
+
+### Tool `bridge` (DShell, reflexie arbitrara)
+`action` = orice comanda DShell (`battery|sensors|camera|location|wifi|device|apps|
+settings|system|storage|processes|network|display|audio|telephony|clipboard|notif|
+ui|services|eval`), iar pentru `eval` trimite `expr` = expresia de reflexie.
+
+```
+bridge action=eval expr={"op":"call","target":"ctx","method":"getSystemService","args":["wifi"]}
+  -> android.net.wifi.WifiManager  (obiect REAL, nu string)
+```
+
+### Ce stie acum agentul despre Debian (TOOLGUIDE + descrierea lui `terminal`)
+
+TOOLGUIDE contine un bloc explicit: Debian-ul din `terminal` **nu e orb la Android**,
+are bridge complet, cu cifrele masurate din proot (35 senzori, 301 servicii,
+`getSystemService(wifi)` -> WifiManager real), plus ce ramane imposibil (datele
+private ale altor pachete, root). Descrierea tool-ului `terminal` spune acelasi lucru,
+ca modelul sa-l vada primul.
+
+### Comparatie onesta: Debian vs tool-ul nativ
+
+| zona | Debian (DShell) | agent nativ |
+|---|---|---|
+| senzori live, camera, clipboard, UI, reflexie | DA (prin bridge) | DA (direct) |
+| `pm install`/`pm grant`, `input`, `settings put`, `screencap` | DA (uid 2000) | NU (SecurityException) |
+| `filesDir` al aplicatiei | NU | DA |
+| callback-uri Kotlin cu closure real | NU | DA |
+| rezista daca aplicatia e oprita | NU (depinde de proces) | - |
+
+Concluzie: **functional ~egal** pentru citit date si apelat API-uri; Debian e chiar
+mai puternic pe administratie (`pm`/`input`/`settings`), agentul e mai puternic pe
+acces la propriile fisiere si pe apeluri native fara TCP. Ambele depind de procesul
+aplicatiei; independienta totala ar cere parcel complet in `debian_binder.c`.
+
+### Client Python (optional, daca vrei sa apelezi din scripturi)
+`android_full.py` (in `assets/python/`, deci extras automat in `files/python/`):
+port auto-detectat din `bridge.port`, reconnectare daca aplicatia s-a repornit pe alt
+port, helpers `call()/ok()/eval_expr()/get_system_service()`.
+
+### Ce NU se poate din Debian (granite de securitate, nu bug-uri)
+- citirea `/data/data/<alta.aplicatie>` (SELinux `shell:s0` vs `app_data_file`)
+- `CapEff = 0` -> fara capabilitati de kernel
+- `app_process` blocat: ART face `chown` pe dalvik-cache la pornire ->
+  `Error changing dalvik-cache ownership: Operation not permitted` (deci cod Java
+  propriu in uid 2000 nu poate porni; nu se rezolva cu `ANDROID_DATA` sau `mkdir`)
+- fara `su` / root (build `user`, `ro.secure=1`)
+
 ## 🔌 BINDER NATIV (2026-10-21) - DEBIAN APELEAZA DIRECT SERVICIILE ANDROID
 
 Peste bridge-ul DShell, Debian-ul are acum acces **nativ** la serviciile Android prin

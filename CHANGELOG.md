@@ -3,7 +3,82 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `7fee2bb` (2026-10-23).
+> Ultimul commit inclus: `6a5af83` (2026-10-23).
+
+### 2026-10-23 - ANDROIDAPI + BRIDGE: AGENTUL STIE CE POATE DEBIAN
+
+> **Context:** operatorul a intrebat daca Debianul are acces deplin la Android "ca
+> agentul". Cercetarea a aratat ca infrastructura exista deja (DShell bridge, 35
+> comenzi + reflexie), dar `agent.py` nu o stia: descria Debianul ca "bash in Debian",
+> deci raspundea incomplet ("doar dumpsys si senzori"). Sesiunea a adaugat doua
+> tool-uri si a corectat documentatia din system prompt.
+
+#### 1. Tool `androidapi` - date parsate peste uid 2000
+
+`android_api(what=...)` cu 7 actiuni + `all`, fiecare intoarce dict, nu text brut:
+`battery` (level_pct/voltage_mv/temp_c/health), `location` (fix GPS real + provideri),
+`wifi` (ssid/bssid/ip/rssi_dbm/band/link_mbps/freq_mhz), `telephony`, `sensors`,
+`accel`, `services`.
+
+**De ce:** pentru o intrebare despre baterie agentul cheltuia 4-6 pasi (`dumpsys` apoi
+`grep` apoi regex manual), iar la WiFi campurile `mWifiInfo` stau pe O singura linie
+lunga, deci regex-ul scris manual greseste des. Acum e un pas, parsare scrisa o data.
+
+**Masurat:** level_pct 63 / voltage_mv 4029 / temp_c 33.1, GPS 00.000000,00.000000
+acc 12.77 m alt 74.93 m, wifi `MyWifi` -51 dBm 5180 MHz 5 GHz 1200 Mbps,
+29 senzori, 470 servicii.
+
+#### 2. Tool `bridge` - acces la reflexia arbitrara prin DShell
+
+`run_bridge_tool(action, expr)`: orice comanda DShell, iar `action=eval` primeste
+`expr` = expresia de reflexie. Verificat:
+`{"op":"call","target":"ctx","method":"getSystemService","args":["wifi"]}` ->
+`android.net.wifi.WifiManager` (obiect real).
+
+Helper nou `bridge_call()` cu port auto-detectat (`ANDROID_BRIDGE`, `filesDir`,
+`filesDir/home`, workspace) si **reconnectare o singura data** daca aplicatia s-a
+repornit pe alt port.
+
+#### 3. `agent.py` stie acum ce poate Debian (TOOLGUIDE + descriere `terminal`)
+
+Bloc nou in TOOLGUIDE si in descrierea tool-ului `terminal`: Debian-ul **nu e orb la
+Android**, are bridge complet, cu cifrele masurate si cu ce ramane imposibil. Fara
+asta agentul subestima mediul si nu folosea bridge-ul.
+
+#### 4. Corectii de integrare (4 puncte, nu unul)
+
+Tool-urile noi au fost inregistrate in **toate** locurile: lista `T` (descrierea pentru
+model), `_call_tool_inner` (dispatcher-ul REAL al apelurilor), `sandbox` (pentru
+`run_code`) si TOOLGUIDE. Descoperit: agentul are **doua** dispatchere; un tool
+inregistrat doar in `sandbox` merge in scripturi dar intoarce GOL la apel direct.
+
+#### 5. Capcane dovedite in aceasta sesiune
+
+- `dumpsys battery | head -12` **trunchiaza** output-ul (pipe inchis inainte de
+  `level:`) -> intoarce doar `Max charging voltage: 0`. Fara `head`: 12015 B, complet.
+- `TOOLGUIDE` e un TUPLU de stringuri care se inchide cu `")` pe ULTIMA linie; o linie
+  adaugata cu `,)` da `TypeError: can only concatenate tuple (not "str") to tuple`.
+- Editarea `agent.py` pe linii (6300+) a produs de 3 ori
+  `SyntaxError: '(' was never closed` -> foloseste `str.replace` cu text verbatim.
+- Procesul agentului tine codul VECHI in memorie: dupa modificare tool-ul da GOL
+  desi `py_compile` trece. Nu depana codul - cere RESTART.
+- `app_process` din uid 2000: `Error changing dalvik-cache ownership: Operation not
+  permitted` (ART face chown, CapEff=0) -> cod Java propriu in shell imposibil.
+
+#### 6. Ce ramane imposibil din Debian (granite, nu bug-uri)
+
+- `/data/data/<alta.aplicatie>` (SELinux `shell:s0` vs `app_data_file`)
+- `CapEff = 0` -> fara capabilitati de kernel
+- root: nu exista `su`, build `user` (`ro.secure=1`)
+
+#### Fisiere
+
+- `assets/python/agent.py` - `android_api()`, `run_androidapi_tool()`, `bridge_call()`,
+  `run_bridge_tool()`, blocuri noi in TOOLGUIDE si in descrierea `terminal`
+- `assets/python/android_full.py` - client Python pentru bridge (nou)
+- `assets/python/memory.md` + `assets/memory.md` - lectiile sesiunii
+- `docs/debian-binder/PLAN_DEBIAN_ACCES_DEPLIN.md` - planul celor 4 cai, cu cercetarea
+  masurata (app_process blocat, bridge deja existent)
 
 ### 2026-10-23 - UI SETUP + FIX-URI CRITICE DE PORNIRE (instalare curata)
 
