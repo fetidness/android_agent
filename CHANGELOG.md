@@ -118,6 +118,18 @@ trimite comanda `setup` in `term_in.txt` dupa 700 ms. Auto-startul din
 Dupa salvarea cheii API, `runSetupStarted` se reseteaza si procesul Python porneste
 direct (inainte, al doilea `runSetup()` iesea imediat din cauza garzii de idempotenta).
 
+#### 11. `agent.py` - setup Debian nu mai rescrie tot fluxul daca mediul e deja configurat
+
+**Raportat de operator:** "dupa ce mediul linux s-a configurat si inchidem terminalul si
+intram iar, apare iar ca ready, everything is ready. ar trebui sa afiseze doar READY".
+
+**Cauza:** `_run_terminal_setup_locked()` scria header-ul (`Setting up the Linux
+environment` + instructiunile de "first run" + `WAIT until you see READY`) la FIECARE
+deschidere a terminalului, indiferent daca `.debian_ready` exista deja.
+
+**Fix:** prima verificare a functiei e acum existența markerului - daca mediul e deja
+configurat, se scrie o singura linie `READY` si se iese imediat.
+
 ---
 
 ### 2026-10-22 - PERFORMANTA: adb_client, proot batching, aliniere terminal_server

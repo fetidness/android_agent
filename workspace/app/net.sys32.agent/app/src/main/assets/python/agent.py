@@ -4049,8 +4049,17 @@ def _run_terminal_setup():
 
 
 def _run_terminal_setup_locked(emit, files):
-    # ★ HEADER-UL se scrie PRIMUL, inainte de orice munca (inainte aparea dupa
-    #   "[done]" pentru ca firele porneau in paralel).
+    # ★ Cerut de operator ("dupa ce mediul linux s-a configurat si inchidem terminalul
+    #   si intram iar, apare iar ca ready... ar trebui sa afiseze doar READY"):
+    #   daca mediul e DEJA configurat, nu mai scriem tot fluxul (header + instructiuni
+    #   de "first run" + lista de pasi) - afisam o singura linie: READY.
+    if os.path.exists(os.path.join(files, ".debian_ready")):
+        emit()
+        emit("READY")
+        emit()
+        return
+
+    # HEADER-UL se scrie PRIMUL, inainte de orice munca.
     emit()
     emit("Setting up the Linux environment")
     emit("------------------------------")
