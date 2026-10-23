@@ -9,6 +9,17 @@ legatura cu telefonul si induc in eroare.
 Format: o lectie pe linie - `TRAP: ce a esuat -> eroare -> cauza -> fix`,
 `OK: ce merge verificat`, `DEAD: ce nu merge -> dovada`, `P: cale -> la ce foloseste`.
 Sectiuni: `## AAAA-LL-ZZ - subiect`.
+
+## REGULA FUNDAMENTALA: OUT OF THE BOX (cerinta operatorului, 2026-10-23)
+RULE: ORICE modificare pe care o facem si o urcam pe git TREBUIE sa functioneze automat dupa REBUILD APK + REINSTALARE, fara niciun pas manual. Nu e suficient sa mearga pe device-ul de acum: trebuie sa porneasca la fel de la o instalare curata.
+CHECKLIST obligatoriu inainte de fiecare push:
+  1. codul care ruleaza trebuie sa fie in `assets/` (python/, binder/, skills/, proot/, memory.md la radacina assets/) - NU doar in filesDir, pentru ca filesDir se re-extrage din assets la fiecare update de APK
+  2. filesDir NU e sursa de adevar: ce pui doar acolo dispare la reinstalare
+  3. fisierele noi sunt urmarite de git: `git check-ignore -v <fisier>` trebuie sa dea gol; regulile globale din .gitignore (memory.md, *.so, *.a, workspace/*.txt) prind usor fisiere care TREBUIE livrate -> negatie `!cale/exacta` la SFARSITUL .gitignore
+  4. scripturile din assets NU au voie sa aiba cai hardcodate: isi detecteaza singure filesDir (AGENT_FILES_DIR / parinte cu pyhome sau python) si directorul de schimb (AGENT_BRIDGE_DIR), ca sa mearga si dupa reinstalare
+  5. `assets/toolchain/` lipseste din repo - NORMAL (257MB, gitignore, se genereaza cu `workspace/app/build_toolchain.sh` la build); nu-l adauga in git
+  6. dupa push: `git status --porcelain` gol + `git rev-parse HEAD` == `git rev-parse origin/master`
+TEST final: simuleaza instalarea curata - ruleaza scriptul din `filesDir` dupa ce l-ai copiat din `assets/`, nu din workspace-ul de lucru.
 ## 2026-10-17 - desktop Linux: Assetto Corsa + Content Manager sub Proton
 OK: masina are GE-Proton11-9 si prefixul jocului la ~/.local/share/Steam/steamapps/compatdata/244210/pfx; jocul in ~/.steam/steam/steamapps/common/assettocorsa
 P: ~/Desktop/CM_latest/Content Manager.exe -> instalarea CM de pe desktop (v0.8.2594.39678)
@@ -66,3 +77,21 @@ OK: compile binar Android care leaga libc++ STATIC: `clang++ --target=aarch64-li
 TRAP: libbinder.so are NEEDED libapexsupport.so + libvndksupport.so + libprocessgroup.so -> fara ele dlopen reuseste dar init crapa -> copiaza-le toate in acelasi dir cu libbinder
 DEAD: /data/local/tmp/<binar> executat direct -> Permission denied (SELinux data_file_type) -> ruleaza via `/apex/com.android.runtime/bin/linker64 /data/local/tmp/x` cu LD_LIBRARY_PATH setat
 DEAD: `linker64 --library-path ... <bin>` -> "error: expected absolute path: --library-path" -> se foloseste doar LD_LIBRARY_PATH env
+## 2026-10-23 - agent.py: integrarea unui tool nou (session: /storage/emulated/0/Download/Agent/workspace)
+TRAP: am adaugat tool `androidapi` in lista T + sandbox run_code + functie -> apelul modelului intoarcea GOL -> exista DOUA dispatchere: `_call_tool_inner(c)` (apelurile REALE, ~linia 2741, lant `if fn=="nume":`) si `sandbox={...}` din run_code_ptc (~3545); adauga in AMBELE -> verificare `grep -n 'if fn=="NUME"' agent.py`
+TRAP: TOOLGUIDE e TUPLU de stringuri care se inchide cu `")` pe ULTIMA linie -> daca adaug o linie si las `,)` => `TypeError: can only concatenate tuple (not "str") to tuple` -> nu edita pe linii: `t.replace(ULTIMA_LINIE_EXACTA, ultima_fara_paranteza + "\\n" + linie_noua + ")")`
+TRAP: editarea `lines[i]=...` pe agent.py (6300+ linii) a produs de 3 ori `SyntaxError: '(' was never closed` -> foloseste `str.replace(OLD_EXACT, NEW)` cu text copiat verbatim, nu indexi de linie
+PREVENT: dupa orice modificare de agent.py -> `py_compile.compile(p,doraise=True)` DUPA FIECARE pas, apoi test real prin `m._call_tool_inner({"function":{"name":"X","arguments":json.dumps({...})}})`; NU `call_tool()` (lanseaza insight_tool/subprocese si poate atarna)
+PREVENT: procesul agentului tine codul VECHI in memorie -> tool-ul da GOL dupa modificare desi `py_compile` trece; nu depana codul, cere RESTART si retesteaza
+P: /data/data/net.sys32.agent/files/python/agent.py -> agentul care ruleaza; `workspace/app/net.sys32.agent/app/src/main/assets/python/agent.py` -> sursa din APK la rebuild (trebuie IDENTICE, verifica md5)
+## 2026-10-23 - assets APK: ce se extrage automat la instalare (session: /storage/emulated/0/Download/Agent/workspace)
+OK: MainActivity.extractAssets() face `copyDir("python"|"binder"|"proot"|"skills"|"toolchain")` + `assets.open("memory.md")`; stampila = versionCode+lastUpdateTime -> orice update de APK re-extrage automat; un script pus in `assets/python/` ajunge in `files/python/` fara interventie
+TRAP: `assets.open("memory.md")` esua silentios (try/catch gol) pentru ca fisierul exista DOAR in `assets/python/memory.md` -> la instalare curata agentul pornea fara lectiile din APK -> se pune si `assets/memory.md` la radacina
+TRAP: `.gitignore` are regula globala `memory.md` -> `assets/memory.md` NU se commitea -> fix: linie `!workspace/app/net.sys32.agent/app/src/main/assets/memory.md` LA SFARSITUL .gitignore (negarea nu merge inainte de regula care exclude)
+TRAP: `assets/toolchain/` lipseste din repo (gitignore, 257MB) -> NORMAL, se genereaza cu `workspace/app/build_toolchain.sh`; nu-l cauta si nu-l adauga in git
+## 2026-10-23 - git push din Debian (session: /storage/emulated/0/Download/Agent/workspace)
+OK: `apt-get install -y git` in Debian merge (git 2.47.3), desi dpkg da erori la daemoni (dbus/pam-cap) - binarul se instaleaza; repo: `git@github.com:fetidness/android_agent.git`, remote-LOCAL in Debian `~/android_agent`
+TRAP: `ssh -T git@github.com` -> `Host key verification failed` -> `ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts` apoi merge: "Hi fetidness!"
+TRAP: git commit esua cu identity lipsa -> `git config user.name/user.email` in repo inainte de primul commit
+P: /storage/emulated/0/Download/ssh_github/id_ed25519 -> cheia SSH GitHub; se copiaza in Debian `~/.ssh/id_ed25519` chmod 600 + `.pub` chmod 644
+RULE (verificare sincronizare repo<->device): 1. md5 pe fiecare fisier din `files/python/` vs `assets/python/` 2. `git status --porcelain` gol 3. `git rev-parse HEAD` == `git rev-parse origin/master`; `key.txt` trebuie sa LIPSEASCA din repo (e cheie API)
