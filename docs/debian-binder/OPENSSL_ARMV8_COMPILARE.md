@@ -1,4 +1,64 @@
-# OPENSSL CU ARMV8 CRYPTO - STARE COMPILARE
+# OPENSSL CU ARMV8 CRYPTO - STARE (actualizat 2026-10-23 23:55)
+
+## CONCLUZIE FINALA: s-a incercat si NU se rezolva fara recompilare
+
+Am testat toate caile rapide. Rezultat: **singura solutie reala e recompilarea
+OpenSSL cu ARMv8 crypto**, care ramane de facut. Mai jos e tot ce s-a incercat,
+ca sa nu se repete.
+
+### CAUZA EXACTA (masurata, nu presupusa)
+`_hashlib...so` are `NEEDED: libcrypto_python.so`. Linkerul Android cauta intai
+in `nativeLibraryDir` (APK lib dir), unde exista
+`libcrypto_python.so` (4537664 B) compilat FARA ARMv8 activ -> 242 MB/s.
+`/system/lib64/libcrypto.so` face 1444 MB/s, dar nu e folosit de Python.
+
+### CE AM INCERCAT SI DE CE A ES ESUAT (toate testate azi)
+
+1. **Copie libcrypto din sistem ca libcrypto_python.so in files/libs**
+   -> linkerul prefera tot APK-ul (nativeLibraryDir are prioritate fixa)
+   -> `_hashlib` incarca in continuare cel din APK
+
+2. **LD_PRELOAD=<copia din files/libs>**
+   -> **SIGSEGV** (rc=-11), conflict de simboluri
+
+3. **ctypes.CDLL(sistem, RTLD_GLOBAL) inainte de import hashlib**
+   -> ambele biblioteci incarcate, dar `_hashlib` foloseste tot cea din APK
+   -> ramane 242 MB/s
+
+4. **Patch pe binarul _hashlib**: schimbat stringul `libcrypto_python.so`
+   in `libcrypto.so` (acelasi offset, lungime diferita -> rescris)
+   -> `_hashlib` a luat `libcrypto.so` din files/libs (268 MB/s)
+   -> **DAR: `dlopen failed: cannot locate symbol "EVP_MD_get_type"`**
+   -> versiunea din sistem NU e compatibila cu `_hashlib` compilat pentru
+      `libcrypto_python.so` (API diferit / simboluri lipsa)
+   -> RESTAURAT din `.orig`, verificat ca totul merge din nou (243 MB/s, ssl OK)
+
+### DE CE NU MERGE NICIO SCURTATURA
+`libcrypto_python.so` din APK si `libcrypto.so` din Android sunt **build-uri
+diferite de OpenSSL** cu seturi de simboluri diferite. `_hashlib` a fost
+compilat impotriva celui dintâi. Deci:
+- fie `_hashlib` ramane cu cel din APK (242 MB/s, dar merge)
+- fie se RECOMPILA `_hashlib` + `libcrypto_python.so` impreuna, cu ARMv8 activ
+
+## DE FACUT (raman variantele de compilare din documentul anterior)
+
+Compilarea OpenSSL a ajuns la blocajul cu `aarch64-linux-android-gcc`.
+Solutia de incercat (Varianta 1 din sectiunea de mai jos): creeaza
+`files/tmp/aarch64-linux-android-gcc.sh` (wrapper-ul libshwrap_exec.so cauta
+acest script dupa argv[0]).
+
+Alternativ, mai simplu: compileaza OpenSSL ca `libcrypto_python.so` cu
+`-DOPENSSL_armcap=...` si inlocuieste-l pe cel din APK **prin rebuild APK**
+(pune-l in jniLibs), nu prin patch pe device.
+
+## IMPORTANT
+Starea actuala a device-ului e **sanatoasa**: `_hashlib` restaurat, SHA-256 la
+243 MB/s, `import ssl` OK. Nu s-a stricat nimic.
+
+---
+
+## ISTORIC: ce am facut anterior
+
 
 Scris: 2026-10-23 seara. Oprire intentionata, reluare maine.
 
