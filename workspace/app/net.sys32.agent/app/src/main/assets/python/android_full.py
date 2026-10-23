@@ -1,77 +1,80 @@
 #!/usr/bin/env python3
-"""android_full - acces complet la Android din Debian, prin bridge-ul aplicatiei.
+"""android_full - acces complet la Android din Debian (o singura cale: DShell).
 
-Bridge-ul (AndroidBridge.kt) ruleaza in procesul APLICATIEI, unde reflexia si
-SDK-ul functioneaza complet. Aici e clientul: JSON pe linie peste TCP loopback.
+DShell e puntea CANONICA: un server in procesul aplicatiei, expus pe TCP loopback,
+cu client instalat in /usr/local/bin/dshell. Aici nu duplicam nimic - vorbim cu el.
 
-Asta da lui Debian EXACT accesul pe care il are tool-ul `android` din agent:
-senzori live, camera, orice getSystemService, reflexie arbitrara.
+De ce DShell si nu AndroidBridge direct:
+  - DShell expune TOT ce expune AndroidBridge (orice cmd e pasat tool-urilor native)
+    PLUS doua lucruri care nu exista in AndroidBridge: `sh` (uid 2000) si `debian`.
+  - are self-heal la rebuild (clientul se rescrie in rootfs la fiecare pornire)
+  - portul se muta automat daca e ocupat (46500..46519)
+
+Protocol: o linie JSON per cerere -> {"cmd":..., "arg":...} -> {"ok":..., "out":...}
 
 Uz:
-  python3 android_full.py battery
-  python3 android_full.py sensors list
-  python3 android_full.py eval '{"op":"services"}'
-  python3 android_full.py raw '{"tool":"wifi"}'
+  python3 android_full.py available
+  python3 android_full.py sh "id -u"
+  python3 android_full.py debian "uname -a"
+  python3 android_full.py eval '{"op":"call","target":"ctx","method":"getSystemService","args":["wifi"]}'
+  python3 android_full.py sensors '{"action":"list"}'
+  python3 android_full.py battery '{"action":"full"}'
+  python3 android_full.py ui '{"action":"read","max":10}'
 """
 import json
 import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
-_PORT_CACHE = {"p": None}
+_PORT = {"v": None}
 
 
 def _port_candidates():
-    """Locuri in care poate sta bridge.port, in ordinea sanselor."""
     c = []
-    for env in ("AGENT_BRIDGE_PORT_FILE",):
-        v = os.environ.get(env)
-        if v:
-            c.append(v)
-    env = os.environ.get("ANDROID_BRIDGE")
+    env = os.environ.get("DSHELL_PORT_FILE")
     if env:
-        c.append(env + ".port")
-    # workspace-ul de pe /sdcard - calea prin care Debian vede device-ul
-    c.append("/storage/emulated/0/Download/Agent/workspace/bridge.port")
-    # filesDir (vizibil doar din app, dar incercam)
-    c.append("/data/data/net.sys32.agent/files/bridge.port")
-    c.append("/data/data/net.sys32.agent/files/home/bridge.port")
+        c.append(env)
+    # calea pe care Debian o vede (workspace-ul de pe /sdcard)
+    c.append("/storage/emulated/0/Download/Agent/workspace/dshell.port")
+    c.append("/data/local/tmp/dshell.port")
     here = Path(__file__).resolve().parent
-    c.append(str(here / "bridge.port"))
+    c.append(str(here / "dshell.port"))
+    c.append(str(here.parent / "tmp" / "dshell.port"))
     return c
 
 
 def port(force=False):
-    if _PORT_CACHE["p"] and not force:
-        return _PORT_CACHE["p"]
+    if _PORT["v"] and not force:
+        return _PORT["v"]
     for p in _port_candidates():
         try:
             if p and os.path.exists(p):
                 t = open(p).read().strip()
                 if t.isdigit():
-                    _PORT_CACHE["p"] = int(t)
-                    return _PORT_CACHE["p"]
+                    _PORT["v"] = int(t)
+                    return _PORT["v"]
         except Exception:
             pass
-    raise RuntimeError("bridge.port negasit in: " + ", ".join(_port_candidates()))
+    raise RuntimeError("dshell.port negasit in: " + ", ".join(_port_candidates()))
 
 
-def call(tool, action="", **params):
-    """O cerere catre bridge; intoarce dict-ul de raspuns (nu arunca la ok=False)."""
+def call(cmd, arg=""):
+    """O cerere DShell. Intoarce dict-ul brut {"ok":..,"out"/"error":..}."""
     def _once():
         p = port()
-        s = socket.create_connection(("127.0.0.1", p), timeout=60)
+        s = socket.create_connection(("127.0.0.1", p), timeout=120)
         try:
-            s.sendall((json.dumps({"tool": tool, "action": action, "params": params}) + "\n").encode())
+            s.sendall((json.dumps({"cmd": cmd, "arg": arg}) + "\n").encode())
             buf = b""
             while not buf.endswith(b"\n"):
-                chunk = s.recv(65536)
-                if not chunk:
+                ch = s.recv(65536)
+                if not ch:
                     break
-                buf += chunk
+                buf += ch
             if not buf:
-                raise RuntimeError("raspuns gol de la bridge")
+                raise RuntimeError("raspuns gol de la dshell")
             return json.loads(buf.decode("utf-8", "replace"))
         finally:
             try:
@@ -81,39 +84,77 @@ def call(tool, action="", **params):
     try:
         return _once()
     except Exception:
-        # aplicatia poate fi repornita pe alt port: recitim fisierul o data
-        port(force=True)
+        port(force=True)      # aplicatia poate fi pe alt port acum
         return _once()
 
 
-def ok(tool, action="", **params):
-    """Ca call(), dar intoarce doar `data` si arunca daca ok=False."""
-    r = call(tool, action, **params)
+def ok(cmd, arg=""):
+    """Ca call(), dar intoarce doar `out` si arunca daca ok=False."""
+    r = call(cmd, arg)
     if not r.get("ok"):
         raise RuntimeError(str(r.get("error"))[:300])
-    return r.get("data")
+    return r.get("out")
+
+
+def json_call(cmd, action="", **params):
+    """Pentru comenzile cu parametri: trimite {"action":..,...} ca JSON si parseaza `out`."""
+    payload = dict(params)
+    if action:
+        payload["action"] = action
+    out = ok(cmd, json.dumps(payload) if payload else "")
+    if isinstance(out, str):
+        try:
+            return json.loads(out)
+        except Exception:
+            return out
+    return out
 
 
 def available():
     try:
-        return bool(call("battery").get("ok"))
+        return bool(call("ping").get("ok"))
     except Exception:
         return False
 
 
+# ---- scurtaturi pentru cazurile cele mai folosite ----
+def sh(cmd):
+    """Comanda ca uid 2000 (pm/dumpsys/settings/input)."""
+    return ok("sh", cmd)
+
+
+def debian(cmd):
+    """Comanda in rootfs-ul Debian (proot)."""
+    return ok("debian", cmd)
+
+
 def eval_expr(expr):
-    """Reflexie arbitrara: {"op":"services"} / {"op":"call",...} / {"op":"get",...}"""
-    return ok("eval", expr=expr)
-
-
-def service_info(target, filt=""):
-    return ok("eval", expr={"op": "info", "target": target, "filter": filt})
+    """Reflexie arbitrara: {"op":"services"} / {"op":"call",...} / {"op":"get",...}."""
+    return ok("eval", json.dumps(expr) if isinstance(expr, dict) else str(expr))
 
 
 def get_system_service(name):
     """Exact ca ctx.getSystemService din cod Android."""
-    return ok("eval", expr={"op": "call", "target": "ctx",
-                            "method": "getSystemService", "args": [name]})
+    return eval_expr({"op": "call", "target": "ctx",
+                      "method": "getSystemService", "args": [name]})
+
+
+def _dshell_bin():
+    """Clientul oficial din rootfs, daca exista (calea cea mai directa)."""
+    for p in ("/usr/local/bin/dshell", "/usr/bin/dshell"):
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def via_binary(cmd, arg=""):
+    """Varianta cu binarul `dshell` din rootfs (utile daca socketul e blocat)."""
+    b = _dshell_bin()
+    if not b:
+        raise RuntimeError("dshell nu e instalat")
+    r = subprocess.run([b, cmd] + ([arg] if arg else []),
+                       capture_output=True, text=True, timeout=180)
+    return r.stdout.strip()
 
 
 if __name__ == "__main__":
@@ -122,20 +163,28 @@ if __name__ == "__main__":
         print(__doc__)
         sys.exit(0)
     cmd = a[0]
+    arg = a[1] if len(a) > 1 else ""
     try:
-        if cmd == "eval":
-            out = eval_expr(json.loads(a[1]))
-        elif cmd == "info":
-            out = service_info(a[1], a[2] if len(a) > 2 else "")
-        elif cmd == "raw":
-            out = call(**json.loads(a[1]))
-        elif cmd == "available":
+        if cmd == "available":
             out = {"available": available(), "port": port()}
-        elif len(a) > 1:
-            out = ok(cmd, a[1])
         else:
-            out = ok(cmd)
-        print(json.dumps(out, indent=1, ensure_ascii=False)[:8000])
+            r = call(cmd, arg)
+            if not r.get("ok"):
+                print("ERR: " + str(r.get("error"))[:300])
+                sys.exit(1)
+            out = r.get("out")
+            # multe comenzi intorc JSON ca STRING: il parsez o data, ca sa fie utilizabil
+            if isinstance(out, str):
+                s = out.strip()
+                if s[:1] in "[{":
+                    try:
+                        out = json.loads(s)
+                    except Exception:
+                        pass
+        if isinstance(out, str):
+            print(out)
+        else:
+            print(json.dumps(out, indent=1, ensure_ascii=False)[:8000])
     except Exception as e:
         print("ERR: " + type(e).__name__ + ": " + str(e)[:300])
         sys.exit(1)

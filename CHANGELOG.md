@@ -5,6 +5,40 @@
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
 > Ultimul commit inclus: `6a5af83` (2026-10-23).
 
+### 2026-10-23 (b) - UNIFICARE PE DSHELL: o singura punte, nu doua
+
+> **Context:** operatorul a intrebat daca am folosit `dshell`. Nu il folosisem:
+> construisem `android_full.py` peste AndroidBridge (`bridge.port`), desi DShell
+> exista deja, era documentat si are self-heal la rebuild. Doua punti paralele
+> = confuzie.
+
+#### Ce s-a comparat (masurat, pe device)
+
+| | DShell | AndroidBridge |
+|---|---|---|
+| port | 46500 (`dshell.port`) | 46431 (`bridge.port`) |
+| protocol | `{"cmd":..,"arg":..}` -> `{"ok":..,"out":..}` | `{"tool":..,"action":..,"params":..}` -> `{"ok":..,"data":..}` |
+| comenzi | toate tool-urile native **+ `sh` (uid 2000) + `debian` (proot)** | doar tool-urile native |
+| client in Debian | `/usr/local/bin/dshell` (self-heal la rebuild) | nu |
+
+DShell e **superset**: include AndroidBridge si adauga `sh` + `debian`.
+
+#### Ce s-a schimbat
+
+- `android_full.py` rescris ca **client DShell** (nu mai duplica AndroidBridge):
+  port auto-detectat din `dshell.port`, `call()/ok()/json_call()`, scurtaturi
+  `sh()`, `debian()`, `eval_expr()`, `get_system_service()`, plus `via_binary()`
+  pentru cazul in care socketul e blocat dar binarul `dshell` exista.
+  `out`-ul JSON este parsat automat (inainte ajungea ca string).
+- tool-ul `bridge` din `agent.py` vorbeste tot cu **DShell** (nu AndroidBridge):
+  `_bridge_port()` citeste `dshell.port`, iar `bridge_call()` trimite
+  `{"cmd":..,"arg":..}`. Actiuni noi: `action=sh` si `action=debian`.
+- `TOOLGUIDE` spune explicit ca DShell e canalul canonic.
+
+#### Verificat prin dispatcher-ul real
+`battery` -> level 58, `sensors` -> 35, `sh` -> 2000, `debian` -> 6.1.0-debian,
+`eval getSystemService(wifi)` -> `android.net.wifi.WifiManager`.
+
 ### 2026-10-23 - ANDROIDAPI + BRIDGE: AGENTUL STIE CE POATE DEBIAN
 
 > **Context:** operatorul a intrebat daca Debianul are acces deplin la Android "ca
