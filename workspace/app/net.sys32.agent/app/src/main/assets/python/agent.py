@@ -1160,6 +1160,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 he
    {"type":"function","function":{"name":"smart","description":"AUTO-ROUTER: give the shell cmd and/or the Python code; it picks the faster engine itself and reports which and why. Use when unsure.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command you would run if bash is chosen"},"code":{"type":"string","description":"the Python code you would run if python is chosen"}},"required":["cmd"]}}},
    {"type":"function","function":{"name":"look","description":"Look at an IMAGE file (screenshot, chart, photo) with vision and answer what is really in it. Never guess image content - look.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"image file path (png/jpg), absolute or relative to the cwd"},"prompt":{"type":"string","description":"what to look for / what to answer"}},"required":["path"]}}},{"type":"function","function":{"name":"android","description":"Native Android control (Android build only). The ui tool: SEE and CONTROL other apps. Actions: read (COMPACT text list, ~10x smaller than JSON; params max, depth, textonly), find (SEARCH a node by text - USE FIRST for a contact/button/field), settext, click, tap, swipe, scroll, back/home/recents, openapp, windows, wake, sleep, service. FULL SDK access via reflection: action=\"eval\" runs ANY class/method/field; also services (list all system services), info (methods of a class). Plus ready shortcuts: camera location battery clipboard notify vibrate tts volume wifi device apps intent settings system storage processes network display audio telephony nfc usb appinfo.","parameters":{"type":"object","properties":{"tool":{"type":"string","description":"sensors|camera|location|battery|clipboard|notify|vibrate|tts|volume|wifi|device|apps|intent|settings|tourl|system|storage|processes|network|display|audio|telephony|nfc|usb|appinfo|eval"},"action":{"type":"string","description":"the sub-action (e.g. sensors: list|read|stream; location: last|fresh|current|providers; camera: list|photo; battery: get|full; clipboard: get|set; tts: say; apps: list|launch; settings: get|set)"},"params":{"type":"object","description":"parameters; for eval must contain \"expr\" = the reflection request. Reflection ops: call, new, get, set, info, services, objs, free, proxy (make a real instance of any Java INTERFACE: {\"op\":\"proxy\",\"iface\":\"java.lang.Runnable\"}), await (block for the next callback: {\"op\":\"await\",\"id\":\"s0\",\"timeout_ms\":10000}), subclass (make a REAL concrete subclass of any class incl. abstract: {\"op\":\"subclass\",\"parent\":\"android.bluetooth.le.ScanCallback\"}), events, sinks. To PASS AN OBJECT as an argument use a 2-element array [\"ref\",<value>] where value is \"ctx\", \"app\", \"obj:<id>\" or \"svc:<name>\" (e.g. args:[[\"ref\",\"ctx\"],0,[\"ref\",\"obj:o5\"],0x04000000]); a bare string \"ctx\" is a literal and is NOT resolved."}},"required":["tool"]}}},
    {"type":"function","function":{"name":"adbsh","description":"SUPER POWERS: real ADB shell uid=2000(shell) on this phone, run FROM the app, no PC (Android build only). Raw shell as the privileged user, which app code cannot: pm grant/revoke, appops set, settings put, dumpsys (full), input tap/text/keyevent (UI automation WITHOUT accessibility), screencap, uiautomator dump, am start/force-stop, pm list/enable/disable, logcat, getprop, svc, wm size/density, ls/cat/cp on the whole sdcard and /data/local/tmp, run-as, ifconfig/ip, cat /proc/net/*. Bypasses every permission wall: USE IT whenever the android/ui tools hit a SecurityException or a runtime permission is missing.","parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"the shell command to run as the shell user, e.g. \"pm grant net.sys32.agent android.permission.CAMERA\" or \"dumpsys battery\" or \"input keyevent 3\""},"timeout":{"type":"integer","description":"seconds to wait (default 20, max 60)"}},"required":["cmd"]}}},{"type":"function","function":{"name":"binder","description":"BINDER NATIV IN-PROCESS: apeleaza serviciile Android direct din procesul aplicatiei (deschide /dev/binder, fara adb si fara bridge). Action: list (toate serviciile, ~466), check name=, handle name=, iface name= (descriptorul AIDL), call name= code= args=[..] (apel AIDL real; intoarce status + stringuri + hex), raw name= code=. ★ CIFRE MASURATE PE ACEST DEVICE (SM-A366B, Android 16): list() = 466 servicii; ~113 au handle direct; ~353 intorc null la getService si sunt LAZY (activity, window, notification, SurfaceFlinger, connectivity, stats, media.*) - se inregistreaza in servicemanager abia cand le cere un client din framework. LAZY NU INSEAMNA BLOCAT si NU e o eroare de binder: NU concluziona ca binder-ul nu merge dintr-un esantion de servicii lazy. Apeluri dovedite: display(code 1)=1736 B, input(code 1)=8 B, batteryproperties(code 1)=24 B; power(code 5) intoarce eroarea reala de permisiune DEVICE_POWER. Serviciile AIDL cer descriptorul in parcel, altfel dau \"Binder invocation to an incorrect interface\"; obtine-l cu iface. Pentru binder din Debian foloseste android-binder selftest, NU scrie un client nou.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"list|check|handle|iface|call|raw"},"params":{"type":"object","description":"name= (serviciu), code= (codul metodei AIDL), args= (lista de int32), descriptor= (optional, altfel dedus cu iface)"}},"required":["action"]}}},{"type":"function","function":{"name":"bg","description":"BACKGROUND JOBS: the ONLY correct way to launch and track long work (builds, downloads, servers, llama.cpp). NEVER raw nohup/& via adbsh - you WILL lose track, read a stale log, get mixed output. Keeps a persistent REGISTRY: unique id, own timestamped log, tracked PID. Actions: start (cmd=, name=); status (what is REALLY running now - checks /proc, with duration+log size); log (job=, lines=) last lines of THAT job; kill (job=); list; clean. RULE: anything over ~30s goes through bg.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"start | status | list | log | kill | clean","enum":["start","status","list","log","kill","clean"]},"cmd":{"type":"string","description":"for start: the shell command to run in the background"},"name":{"type":"string","description":"for start: short label for the job (e.g. llamacpp_build)"},"job":{"type":"string","description":"for log/kill: the job id (or its prefix)"},"lines":{"type":"integer","description":"for log: how many last lines (default 40)"}},"required":["action"]}}},
+   {"type":"function","function":{"name":"androidapi","description":"ANDROID API DE NIVEL INALT peste uid=2000 (adb_client): intoarce DATE REALE parsate, nu text brut. action: battery (level_pct/voltage_mv/temp_c/health), location (fix GPS real lat/lon/alt_m/accuracy_m + care provideri au fix), wifi (ssid/bssid/ip/rssi_dbm/band/link_mbps/freq_mhz), telephony (voice/data/call_state), sensors (lista cu vendor+type), accel (esantioane x/y/z), services (toate serviciile Android). Foloseste-l IN LOC de dumpsys+grep manual: evita 4-6 pasi si greseala de regex pe campurile mWifiInfo care stau pe O singura linie lunga.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["battery","location","wifi","telephony","sensors","accel","services","all"]},"limit":{"type":"integer","description":"pentru accel: cate esantioane (implicit 5)"}},"required":["action"]}}},
    {"type":"function","function":{"name":"toolchain","description":"NATIVE COMPILE TOOLCHAIN, already bundled IN THE APK (no PC, no external packages, no bootstrap). clang 21 + lld + sysroot + libxml2/libxslt deps live in filesDir/toolchain and are used DIRECTLY BY THE APP. Actions: status (is the toolchain present + what it can do - run this first if unsure); selftest (COMPILE+LINK reality check: C, C++ with STL, Python.h extension, Fortran + what is missing - run this before promising an install); heal (REPAIRS the whole on-device environment: dead launcher symlinks after an APK update, truncated packages that shadow the app zip, pip.conf, sysconfig paths, LD_LIBRARY_PATH, CA bundle, git identity - run it if a tool looks broken/missing; audit = report only. It ALSO runs automatically at every startup and before every pip_install); pip_install (package= : downloads from PyPI and COMPILES C/C++ extensions NATIVELY on the phone - use it for numpy, pillow, cryptography etc.; ALSO accepts a LOCAL PATH (a source directory or .tar.gz already on the device) or a URL - e.g. when the PyPI sdist of the package picks broken build requirements); compile (source= path to a .c/.cpp, out= .so path - compile your own native code); env (show the full compile environment: CC/CXX/CFLAGS/LDFLAGS/PATH); preflight (10s sanity test: C, C++, math, SSL); profile (ready-made cmake/cflags/ldflags). THERE IS NO BOOTSTRAP STEP: the toolchain ships with the app, so just call pip_install/compile directly. Do NOT look for a prefix in /data/local/tmp - it is in filesDir/toolchain.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"status | pip_install | compile | env | preflight | profile | heal | audit","enum":["status","selftest","pip_install","compile","env","preflight","profile","doctor","fix","env-file","heal","audit"]},"package":{"type":"string","description":"for pip_install: package name (e.g. numpy, pillow, cryptography) OR a local path/.tar.gz/URL on the device"},"source":{"type":"string","description":"for compile: path to a .c/.cpp source file"},"out":{"type":"string","description":"for compile: output .so path"},"flags":{"type":"string","description":"extra compiler flags (optional)"},"timeout":{"type":"integer","description":"seconds to wait (default 1200, max 3600)"}},"required":["action"]}}},
 {"type": "function", "function": {"name": "terminal", "description": "LINUX TERMINAL real in aplicatie (bash in Debian, pty adevarat - nu pipe). Deschide terminal cu sesiuni multiple, culori ANSI, vim/htop/nano functionale. Actions: open (deschide terminalul; uid2000=true pentru shell Android uid 2000), run (cmd=: executa in Debian si intoarce output), list (sesiuni), kill (inchide toate).", "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["open", "run", "list", "kill"]}, "cmd": {"type": "string", "description": "pentru run: comanda de executat"}, "uid2000": {"type": "boolean", "description": "true = shell Android uid 2000 (pm/dumpsys/settings); false = Debian root"}, "timeout": {"type": "integer", "description": "secunde pentru run (implicit 120)"}}, "required": ["action"]}}},
    {"type":"function","function":{"name":"build_apk","description":"COMPILES AN ANDROID APK ON THE DEVICE, FULLY OFFLINE (no PC). Uses Gradle+AGP+JDK+aapt2+cmake+NDK, all bundled in the APK. Actions: setup (extracts the tools from assets into filesDir, once - run it first; it also self-tests java+aapt2); build (compiles an Android project from <dir> -> APK, runs preflight and automatically PUBLISHES the APK to /sdcard/Download/Agent/workspace/; params: dir=project path, task=assembleDebug default); verify (checks an existing APK: params: apk=path); install (installs the APK WITHOUT a PC: tries publish -> /data/local/tmp -> pm install as shell uid=2000; if adb is not authorised it opens the SYSTEM INSTALLER on the phone (one tap, no adb); params: apk=path OR dir=project); selftest (checks that java+aapt2 really run, heals a missing libX.so.N by itself). Ex: build_apk action=build dir=/path/to/android_project, then build_apk action=install dir=/path/to/android_project.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"setup | build | verify | install | selftest","enum":["setup","build","verify","install","selftest"]},"dir":{"type":"string","description":"the Android project path (for build)"},"apk":{"type":"string","description":"the APK path (for verify/install; for install you may also pass dir=)"},"task":{"type":"string","description":"Gradle task (default assembleDebug)"}},"required":["action"]}}},
@@ -1175,7 +1176,8 @@ TOOLGUIDE=("TOOL SELECTION (measured on THIS device, toybox on aarch64 - do not 
   "Never use toybox sort/awk/sed on a big file: python is up to 95x faster. Never parse JSON with grep/awk: it is also WRONG (leaks values from escaped strings) - always python json.loads. "
   "TOYBOX GREP TRAP (measured on this device): the `bash` tool runs with a minimal PATH (`/system/bin`) and there grep IS toybox, which SILENTLY FAILS on several GNU patterns. Worst case: the basic-regex ALTERNATION (a backslash-pipe between two words, GNU style) prints NOTHING and still exits 0, so it LOOKS like 'no match' even when matches exist. In the `adbsh` tool the PATH starts with the toolchain, so there grep IS GNU and that same command WORKS. => NEVER use a bare `grep` with backslash-pipe alternation: use `grep -E` with a plain pipe (works in BOTH), or `grep -F` for a literal string, or just do it in python. COROLLARY: the SAME grep can give DIFFERENT results in bash vs adbsh; if a check comes back empty but you expected a match, re-run it with -E before concluding the text is absent. "
   "SAME RULE for other toybox builtins: prefer POSIX-safe flags (-E, -F, -q, -r) and avoid GNU-only extensions (`grep -P`, `sed -i` with a bare expression, `awk --csv` ...). When unsure, run the check in `adbsh` (GNU coreutils) instead of `bash`. "
-  "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line).")
+  "WARNING: do NOT build a hybrid that captures a huge awk output into Python memory (subprocess capture_output on megabytes) - 14x the memory of plain bash. If you must combine, STREAM it (iterate stdout line by line). "
+  "★ ANDROIDAPI (added 2026-10-23, uid=2000): for ANY hardware/system-state question use tool=androidapi INSTEAD of dumpsys+grep+regex by hand. Returns PARSED REAL data: battery (level_pct/voltage_mv/temp_c/health), location (real GPS fix lat/lon/alt_m/accuracy_m + which providers have a fix), wifi (ssid/bssid/ip/rssi_dbm/band/link_mbps/freq_mhz), telephony (voice/data/call_state), sensors (list with vendor+type), accel (x/y/z samples), services (all Android services). Measured this session: level_pct=63 voltage_mv=4029 temp_c=33.1, GPS 00.000000/00.000000 acc=12.77m, wifi SSID MyWifi RSSI -51dBm 5180MHz, 29 sensors, 469 services. By hand this costs 4-6 steps AND the mWifiInfo fields sit on ONE long line so regex is easily wrong. action=all = full snapshot in ONE step.")
 
 # --- FORMATARE OUTPUT (Android: terminalul nu randeaza tabele corect) ---
 FMT=("OUTPUT FORMAT - ABSOLUTE RULES for this small phone screen: "
@@ -2215,6 +2217,142 @@ def _adbsh_guard(cmd):
     return ""
 
 
+# ---------------------------------------------------------------------------
+# ANDROID API DIRECT (2026-10-23): date REALE parsate peste uid=2000
+# ---------------------------------------------------------------------------
+def android_api(*, what="battery", limit=5):
+    """API de nivel inalt peste shell-ul uid=2000 (adb_client).
+    what: battery|location|wifi|telephony|sensors|accel|services|all
+    Intoarce dict cu date reale parsate (nu text brut)."""
+    import re as _re
+
+    def _sh(c):
+        try:
+            return run_adbsh_tool(c, timeout=45) or ""
+        except Exception as e:
+            return "ERR:" + str(e)[:120]
+
+    def _battery():
+        t = _sh("dumpsys battery")
+        d = {}
+        for l in t.splitlines():
+            if ":" in l:
+                k, v = l.split(":", 1)
+                k, v = k.strip(), v.strip()
+                if len(k) > 60:
+                    continue
+                d[k] = v
+        keep = ("level", "scale", "voltage", "temperature", "technology", "status",
+                "health", "present", "Charge counter", "AC powered", "USB powered",
+                "Wireless powered")
+        out = {k: d[k] for k in keep if k in d}
+        try:
+            out["level_pct"] = int(out.get("level", "0"))
+            out["voltage_mv"] = int(out.get("voltage", "0"))
+            out["temp_c"] = round(int(out.get("temperature", "0")) / 10.0, 1)
+        except Exception:
+            pass
+        return out
+
+    def _location():
+        t = _sh("dumpsys location 2>&1 | grep -E 'last location=|provider:' | head -10")
+        out = {"providers": {}, "fix": None, "raw": t[:400]}
+        cur = None
+        for line in t.splitlines():
+            if "provider:" in line:
+                cur = line.split("provider:")[0].strip()
+                out["providers"][cur] = None
+            m = _re.search(r"last location=Location\[(\w+)\s+(-?[\d.]+),(-?[\d.]+)\s+hAcc=([\d.]+)", line)
+            if m:
+                out["providers"][cur] = m.group(1)
+                if out["fix"] is None:
+                    out["fix"] = {"provider": m.group(1), "lat": float(m.group(2)),
+                                  "lon": float(m.group(3)), "accuracy_m": float(m.group(4))}
+                    am = _re.search(r"alt=([-\d.]+)", line)
+                    if am:
+                        out["fix"]["alt_m"] = float(am.group(1))
+        return out
+
+    def _wifi():
+        t = _sh("dumpsys wifi 2>&1 | grep -E 'mWifiInfo SSID|Wi-Fi is ' | head -3")
+        d = {"enabled": ("Wi-Fi is enabled" in t), "raw": t[:300]}
+        m = _re.search(r'SSID: "([^"]*)".*?BSSID: ([\w:]+).*?IP: /([\d.]+).*?RSSI: (-?\d+).*?Link speed: (\d+)Mbps.*?Frequency: (\d+)MHz', t)
+        if m:
+            f = int(m.group(6))
+            d.update({"ssid": m.group(1), "bssid": m.group(2), "ip": m.group(3),
+                      "rssi_dbm": int(m.group(4)), "link_mbps": int(m.group(5)),
+                      "freq_mhz": f, "band": "5GHz" if f > 4000 else "2.4GHz"})
+        return d
+
+    def _telephony():
+        t = _sh("dumpsys telephony.registry 2>&1 | grep -E 'mCallState|mServiceState' | head -4")
+        d = {"raw": t[:400]}
+        m = _re.search(r"mVoiceRegState=(\d)\((\w+)\)", t)
+        if m:
+            d.update({"voice_state": int(m.group(1)), "voice": m.group(2)})
+        m = _re.search(r"mDataRegState=(\d)\((\w+)\)", t)
+        if m:
+            d.update({"data_state": int(m.group(1)), "data": m.group(2)})
+        m = _re.search(r"mCallState=(\d)", t)
+        if m:
+            d["call_state"] = int(m.group(1))
+        return d
+
+    def _sensors():
+        t = _sh("dumpsys sensorservice 2>&1 | grep -E '^0x[0-9a-f]+\\)' | head -50")
+        out = []
+        for line in t.splitlines():
+            m = _re.match(r"0x([0-9a-f]+)\)\s+(.+?)\s+\|\s+(\S+)\s+\|\s+ver:\s*(\d+)\s+\|\s+type:\s+([\w.]+)\((\d+)\)", line)
+            if m:
+                out.append({"name": m.group(2).strip(), "vendor": m.group(3),
+                            "type": m.group(5), "type_id": int(m.group(6))})
+        return {"count": len(out), "sensors": out}
+
+    def _accel(lim=5):
+        t = _sh("dumpsys sensorservice 2>&1 | grep -A%d 'Accelerometer: last'" % (lim + 1))
+        evs = []
+        for line in t.splitlines():
+            m = _re.search(r"ts=([\d.]+).*?\)\s*(.*)$", line)
+            if m and "masked" not in m.group(2):
+                vals = [float(x) for x in m.group(2).split(",") if x.strip()]
+                if len(vals) == 3:
+                    evs.append({"ts": float(m.group(1)), "x": vals[0], "y": vals[1], "z": vals[2]})
+        return {"count": len(evs[:lim]), "events": evs[:lim]}
+
+    def _services():
+        t = _sh("service list")
+        out = []
+        for l in t.splitlines():
+            m = _re.match(r"(\d+)\s+(\S+):", l.strip())
+            if m:
+                out.append(m.group(2))
+        return {"count": len(out), "services": out}
+
+    fns = {"battery": _battery, "location": _location, "wifi": _wifi,
+           "telephony": _telephony, "sensors": _sensors,
+           "accel": lambda: _accel(limit), "services": _services}
+    if what == "all":
+        return {k: f() for k, f in fns.items() if k != "accel"}
+    f = fns.get(what)
+    if not f:
+        return {"error": "unknown: " + str(what), "available": list(fns)}
+    return f()
+
+
+def run_androidapi_tool(action="battery", limit=5):
+    """Wrapper tool androidapi."""
+    dsc = "androidapi: " + str(action)
+    try:
+        r = android_api(what=(action or "battery"), limit=int(limit or 5))
+    except Exception as e:
+        r = {"error": type(e).__name__ + ": " + str(e)[:200]}
+    TN[0] += 1
+    o = json.dumps(r, indent=1, ensure_ascii=False)
+    TASK.update(steps=TASK["steps"] + 1, chars=TASK["chars"] + len(o))
+    _show_step(dsc, o, TASK["steps"])
+    return o
+
+
 def run_adbsh_tool(cmd, timeout=20):
     """SHELL ca user 'shell' (uid=2000) prin clientul ADB pur-Python (adb_client).
 
@@ -2632,6 +2770,8 @@ def _call_tool_inner(c):
         return bg_tool(a)
     if fn=="adbsh":
         return run_adbsh_tool(a.get("cmd",""), int(a.get("timeout",20) or 20))
+    if fn=="androidapi":
+        return run_androidapi_tool(a.get("action","battery"), int(a.get("limit",5) or 5))
     if fn=="binder":
         return run_binder_tool(a.get("action","list"), a.get("params",{}) or {})
     if fn=="terminal":
@@ -3404,6 +3544,7 @@ def ptc_run(code, max_tool_calls=None, timeout=300):
         "todo": _wrap("todo", lambda a: run_todo_tool(a if isinstance(a,dict) else {})),
         "android": _wrap("android", lambda a: run_android_tool(a.get("tool",""),a.get("action",""),a.get("params",{}) or {})),
         "adbsh": _wrap("adbsh", lambda a: run_adbsh_tool(a.get("cmd","") if isinstance(a,dict) else str(a), 20)),
+        "androidapi": _wrap("androidapi", lambda a: run_androidapi_tool((a.get("action","battery") if isinstance(a,dict) else "battery"), (a.get("limit",5) if isinstance(a,dict) else 5))),
         "binder": _wrap("binder", lambda a: run_binder_tool(a.get("action","list") if isinstance(a,dict) else "list", (a.get("params",{}) if isinstance(a,dict) else {}))),
         "print": print, "json": json, "os": os, "re": re,
     }
