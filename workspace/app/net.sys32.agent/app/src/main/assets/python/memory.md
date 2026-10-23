@@ -77,6 +77,13 @@ OK: compile binar Android care leaga libc++ STATIC: `clang++ --target=aarch64-li
 TRAP: libbinder.so are NEEDED libapexsupport.so + libvndksupport.so + libprocessgroup.so -> fara ele dlopen reuseste dar init crapa -> copiaza-le toate in acelasi dir cu libbinder
 DEAD: /data/local/tmp/<binar> executat direct -> Permission denied (SELinux data_file_type) -> ruleaza via `/apex/com.android.runtime/bin/linker64 /data/local/tmp/x` cu LD_LIBRARY_PATH setat
 DEAD: `linker64 --library-path ... <bin>` -> "error: expected absolute path: --library-path" -> se foloseste doar LD_LIBRARY_PATH env
+## 2026-10-23 - DEBIAN are acces COMPLET la Android (nu doar shell)
+OK: bridge-ul exista deja si merge din proot: `AndroidBridge.kt` (1142 linii, in procesul aplicatiei) + `android_bridge.py`, JSON pe linie peste TCP loopback, portul in `bridge.port` (vizibil din Debian ca /storage/emulated/0/Download/Agent/workspace/bridge.port).
+OK: DIN DEBIAN (proot), masurat: battery level 60/voltage 4004/temp 31.7C; `sensors list` = 35 senzori; `sensors read accelerometer` = valori LIVE; `eval services` = 301; `eval call ctx.getSystemService(wifi)` -> `android.net.wifi.WifiManager` REAL.
+P: /data/data/net.sys32.agent/files/python/android_full.py -> client Python pt bridge (port auto-detectat, reconnectare); in assets/python/ deci se extrage automat la rebuild.
+TRAP: `dumpsys battery | head -12` TRUNCHIAZA output-ul (pipe inchis inainte de `level:`) -> apare doar "Max charging voltage: 0" -> NU pune `head` mic pe dumpsys; filtreaza cu grep pe camp sau ruleaza-l intreg (12015 B).
+PREVENT: cand operatorul intreaba ce poate Debian, NU raspunde "doar dumpsys/senzori" - bridge-ul da reflexie arbitrara, camera, clipboard, UI, orice getSystemService. Verifica cu `python3 android_full.py available`.
+DEAD: `app_process` din uid 2000 -> "Error changing dalvik-cache ownership: Operation not permitted" -> ART face chown, CapEff=0 -> cod Java propriu in shell e blocat structural (nu se rezolva cu ANDROID_DATA/mkdir).
 ## 2026-10-23 - agent.py: integrarea unui tool nou (session: /storage/emulated/0/Download/Agent/workspace)
 TRAP: am adaugat tool `androidapi` in lista T + sandbox run_code + functie -> apelul modelului intoarcea GOL -> exista DOUA dispatchere: `_call_tool_inner(c)` (apelurile REALE, ~linia 2741, lant `if fn=="nume":`) si `sandbox={...}` din run_code_ptc (~3545); adauga in AMBELE -> verificare `grep -n 'if fn=="NUME"' agent.py`
 TRAP: TOOLGUIDE e TUPLU de stringuri care se inchide cu `")` pe ULTIMA linie -> daca adaug o linie si las `,)` => `TypeError: can only concatenate tuple (not "str") to tuple` -> nu edita pe linii: `t.replace(ULTIMA_LINIE_EXACTA, ultima_fara_paranteza + "\\n" + linie_noua + ")")`
@@ -95,3 +102,15 @@ TRAP: `ssh -T git@github.com` -> `Host key verification failed` -> `ssh-keyscan 
 TRAP: git commit esua cu identity lipsa -> `git config user.name/user.email` in repo inainte de primul commit
 P: /storage/emulated/0/Download/ssh_github/id_ed25519 -> cheia SSH GitHub; se copiaza in Debian `~/.ssh/id_ed25519` chmod 600 + `.pub` chmod 644
 RULE (verificare sincronizare repo<->device): 1. md5 pe fiecare fisier din `files/python/` vs `assets/python/` 2. `git status --porcelain` gol 3. `git rev-parse HEAD` == `git rev-parse origin/master`; `key.txt` trebuie sa LIPSEASCA din repo (e cheie API)
+
+## 2026-10-23 - operator: asteptari de livrare (sesiune: /storage/emulated/0/Download/Agent/workspace)
+OK: operatorul cere plan scris intr-un fisier inainte de executie si actualizarea lui pe parcurs ("sa nu ne pierdem pe drum"); raspunde in romana, accepta si cere verdict explicit dupa teste comparative ("care este mai capabil?")
+OK: operatorul verifica afirmatiile si corecteaza (ex: "eu stiam ca si debian are acces complet la senzori", "ai zis ca ar lipsi o librarie binder?") -> o concluzie despre environment se da DOAR dupa un test care a esuat, cu comanda si eroarea exacta
+OK: standard de livrare "out of the box": orice modificare urcata pe git trebuie sa functioneze dupa rebuild APK + reinstalare curata, fara pasi manuali (regula scrisa in capul memory.md)
+## 2026-10-23 - Android: ce poate si ce nu poate uid 2000 (shell), masurat (sesiune: /workspace)
+OK: uid 2000 are puteri de ADMINISTRARE mai mari decat aplicatia: `pm install/grant/uninstall/clear` (grant rc=0), `am force-stop`/`am broadcast` rc=0, `settings put global` rc=0 si citibil inapoi, `input tap/keyevent` rc=0, `screencap` scrie PNG 328KB in /data/local/tmp, `logcat`, `dumpsys activity`, `uiautomator dump`, `service call`, `appops get/set`, `cmd wifi status`; `pm list packages` = 415 aplicatii, `service list` = 470
+DEAD: uid 2000 NU are acces de app: `/data/data/com.android.settings` si `/data/app` -> Permission denied; `run-as com.android.settings` refuzat; `su` inexistent pe device; CapEff=0 CapBnd=0x8000c0, SELinux Enforcing u:r:shell:s0
+DEAD: cod Java/ART propriu din uid 2000 -> `app_process /system/bin` da "Error changing dalvik-cache ownership : Operation not permitted" (chiar si cu ANDROID_DATA=/data/local/tmp/ad si mkdir dalvik-cache/arm64) -> ART face chown la pornire, CapEff=0 -> cod Java in shell e blocat structural, NU e configuratie lipsa
+OK: ierarhia reala pe acest device: aplicatia (reflection+SDK, sandbox untrusted_app) > uid 2000 (comenzi de sistem, fara API nativ) > root (inexistent, build user ro.secure=1)
+TRAP: `dumpsys battery | head -12` trunchiaza output-ul -> pipe se inchide inainte de campurile utile -> apare doar "Max charging voltage: 0" fara level/voltage/temp -> ruleaza dumpsys FARA head (12015 B) sau filtreaza cu grep pe campul dorit
+P: /storage/emulated/0/Download/Agent/workspace/PLAN_DEBIAN_ACCES_DEPLIN.md -> plan acces deplin Android din Debian (4 cai evaluate, blocajul app_process masurat)
