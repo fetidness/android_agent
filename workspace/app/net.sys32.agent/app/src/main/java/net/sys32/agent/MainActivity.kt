@@ -1216,6 +1216,19 @@ class MainActivity : AppCompatActivity() {
 
     /** ★ Poarta: porneste agentul doar daca exista cheia; altfel o cere (onboarding).
      *  Cheia se cauta in files/python/key.txt, apoi files/home/key.txt, apoi env. */
+    /** Asteapta ca stdlib-ul sa fie complet (marker .stdlib_ok + threading.py). */
+    private fun waitStdlibReady(pyHome: File, timeoutMs: Long): Boolean {
+        val marker = File(pyHome, ".stdlib_ok")
+        val threading = File(pyHome, "lib/python3.14/threading.py")
+        val t0 = System.currentTimeMillis()
+        while (System.currentTimeMillis() - t0 < timeoutMs) {
+            if (marker.exists() && threading.exists()) return true
+            try { Thread.sleep(100) } catch (_: Exception) { return false }
+        }
+        // ultima sansa: daca stdlib-ul exista totusi complet, scriem markerul si pornim
+        return threading.exists().also { if (it) try { marker.writeText("ok") } catch (_: Exception) {} }
+    }
+
     private fun startPythonIfKey() {
         val GREEN = "\u001b[38;5;114m"
         val NRM = "\u001b[0m"
@@ -1265,10 +1278,69 @@ class MainActivity : AppCompatActivity() {
                 val scripts = File(filesDir, "python")
                 val pyHome = File(filesDir, "pyhome")
                 val stdlib = File(pyHome, "lib/python3.14")
-                if (!stdlib.exists()) {
-                    File(pyHome, "lib").mkdirs()
+                // ★ FIX (bug "ModuleNotFoundError: No module named 'threading'" +
+                //   "Fatal Python error: init_android_streams"): agent.py era pornit imediat ce
+                //   aparea files/python/agent.py, in timp ce Lib/ se copia INCA in pyhome ->
+                //   _android_support.py (rulat de CPython la bootstrap) facea
+                //   `from threading import RLock` cu threading.py inca inexistent.
+                //   Extragere ATOMICA + marker .stdlib_ok scris ULTIMUL; pornirea Python
+                //   asteapta markerul (waitStdlibReady), deci nu mai vede stdlib incomplet.
+                val stdlibOk = File(pyHome, ".stdlib_ok")
+                // ★ o stdlib COMPLETA = threading.py + encodings + lib-dynload (altfel CPython
+                //   moare in bootstrap cu "No module named 'threading'" / "Failed to import encodings")
+                // ★ ATENTIE: lib-dynload NU face parte din Lib/ - modulele .so se copiaza
+                //   SEPARAT, din assets/python/libdynload/<abi> in pyhome/.../lib-dynload.
+                //   De aceea conditia se uita DOAR la ce trebuie sa fie in Lib/:
+                //   threading.py (bootstrap CPython), encodings/ (obligatoriu la init) si os.py.
+                fun stdlibComplete(base: File): Boolean =
+                    File(base, "threading.py").exists() &&
+                    File(base, "encodings/__init__.py").exists() &&
+                    File(base, "os.py").exists()
+                val needExtract = !stdlibOk.exists() || !stdlibComplete(stdlib)
+                if (needExtract) {
+                    try { stdlibOk.delete() } catch (_: Exception) {}
+                    val tag = "-" + android.os.Process.myPid() + "-" + System.nanoTime()
+                    val tmp = File(pyHome, "lib/.py314.tmp" + tag)
+                    try { tmp.deleteRecursively() } catch (_: Exception) {}
+                    tmp.mkdirs()
                     val srcLib = File(scripts, "Lib")
-                    if (srcLib.exists()) srcLib.copyRecursively(stdlib, overwrite = true)
+                    // ★ copyRecursively() crapa silentios pe arborele stdlib (1688 fisiere, 27 MB)
+                    //   si lasa doar lib-dynload -> stdlib incomplet. Copiem manual, fiind foarte
+                    //   explicit: mkdirs pentru directoare, stream pentru fisiere.
+                    var _copied = 0
+                    var _err = 0
+                    fun copyTree(src: File, dst: File) {
+                        if (src.isDirectory) {
+                            if (!dst.exists()) dst.mkdirs()
+                            src.listFiles()?.forEach { copyTree(it, File(dst, it.name)) }
+                        } else {
+                            try {
+                                dst.parentFile?.mkdirs()
+                                src.inputStream().use { i -> dst.outputStream().use { o -> i.copyTo(o) } }
+                                _copied++
+                            } catch (_: Exception) { _err++ }
+                        }
+                    }
+                    if (srcLib.isDirectory) copyTree(srcLib, tmp)
+                    // verificare: stdlib-ul temporar trebuie sa fie COMPLET inainte de a inlocui
+                    val complete = stdlibComplete(tmp)
+                    runOnUiThread {
+                        appendAnsi("\u001b[38;5;243m[extract] stdlib: " + _copied + " fisiere, " +
+                            _err + " erori, " + (if (complete) "COMPLET" else "INCOMPLET") + "\u001b[0m\n")
+                    }
+                    if (complete) {
+                        if (stdlib.exists()) stdlib.renameTo(File(pyHome, "lib/.old" + tag))
+                        if (!tmp.renameTo(stdlib)) { tmp.copyRecursively(stdlib, overwrite = true) }
+                        stdlibOk.writeText("ok")
+                    } else {
+                        runOnUiThread {
+                            appendAnsi("\u001b[38;5;203m[extract] stdlib incomplet - reincerc\u001b[0m\n")
+                        }
+                    }
+                    try { tmp.deleteRecursively() } catch (_: Exception) {}
+                    try { File(pyHome, "lib").listFiles()?.filter {
+                        it.name.startsWith(".old") || it.name.startsWith(".py314.tmp")
+                    }?.forEach { it.deleteRecursively() } } catch (_: Exception) {}
                 }
                 // ★ pip + setuptools + wheel: livrate ca ZIP (AAPT2 ignora folderele cu '_',
                 // ex. pip/_internal) si puse in LIBDIR, de unde Python le incarca automat.
@@ -1292,6 +1364,9 @@ class MainActivity : AppCompatActivity() {
                         keep.copyRecursively(File(stdlib, "site-packages"), overwrite = true)
                     }
                 } catch (_: Exception) {}
+                // ★ lib-dynload face parte din conditia de "stdlib complet": daca lipseste,
+                //   stdlibComplete() da false si re-extragem TOT (nu doar dynload) - altfel
+                //   ramanea un stdlib fara encodings si CPython nu pornea deloc.
                 val dynDst = File(stdlib, "lib-dynload")
                 if (!dynDst.exists() || dynDst.list()?.isEmpty() != false) {
                     dynDst.mkdirs()
@@ -1334,6 +1409,14 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (_: Exception) {}
 
+                // ★ POARTA (acelasi bug ca mai sus): nu porni Python pana cand stdlib-ul nu e
+                // COMPLET pe disc. Markerul .stdlib_ok se scrie dupa threading.py; fara el
+                // CPython moare in bootstrap cu "No module named 'threading'".
+                if (!waitStdlibReady(pyHome, 120_000L)) {
+                    runOnUiThread {
+                        appendAnsi("\u001b[38;5;203m[python] stdlib incomplet - pornire amanata\u001b[0m\n")
+                    }
+                }
                 val pb = ProcessBuilder(py.absolutePath, "agent.py")
                 pb.directory(scripts)
                 pb.environment()["LD_LIBRARY_PATH"] = applicationInfo.nativeLibraryDir
