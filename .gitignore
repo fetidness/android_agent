@@ -39,11 +39,13 @@ workspace/archive/
 
 # ---- stdlib CPython din assets (regenerabil din sursa PSF) ----
 workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/*
-workspace/app/net.sys32.agent/app/src/main/assets/python/libdynload/
+# libdynload: COMIS (module .so critice: _ssl/_socket/zlib/_sqlite3/_ctypes - nu se regenereaza usor)
+# excludem doar testele CPython, inutile la runtime
+workspace/app/net.sys32.agent/app/src/main/assets/python/libdynload/**/_test*
+!workspace/app/net.sys32.agent/app/src/main/assets/python/libdynload/arm64/*.so
 # pastram site-packages: sunt biblioteci externe descarcate de pe PyPI, NU regenerabile din sursa CPython
 !workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/site-packages/
 !workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/zipfile/
-workspace/app/net.sys32.agent/app/src/main/assets/python/libdynload/
 
 # ---- gradle wrapper jar + binare wrapper ----
 workspace/app/net.sys32.agent/gradle/wrapper/gradle-wrapper.jar
