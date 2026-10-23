@@ -90,3 +90,6 @@ insights.json
 
 # backup local al documentelor inainte de consolidare (2026-10-22)
 .docs_backup/
+
+# memory.md livrat in APK (sursa de adevar pt lectiile la instalare curata)
+!workspace/app/net.sys32.agent/app/src/main/assets/memory.md
