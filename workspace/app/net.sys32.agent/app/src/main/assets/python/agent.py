@@ -4002,18 +4002,26 @@ _TERM_WORKER_STARTED = [False]
 _SETUP_DONE = [False]
 
 
+_SETUP_RUNNING = [False]
+_SETUP_LOCK = None
+
+
 def _run_terminal_setup():
     """First-run provisioning of the Linux environment and the Android binder client.
 
-    Rendering rules (operator requirement, 2026-10-21):
+    Rendering rules (operator requirement):
       - NO ANSI colour codes: the terminal view shows them as raw text
       - one plain text line per message, English, calm and factual
       - output goes to the terminal session ONLY, never to the app main window
+      - ONE run at a time: before this, three threads could start it in parallel
+        (terminal open + command + watchdog) -> duplicated "[done]" lines and
+        two "DONE" blocks interleaved in the wrong order.
     """
+    import threading as _thg
+    global _SETUP_LOCK
     files = "/data/data/net.sys32.agent/files"
 
     def emit(line=""):
-        """Append one line to the active terminal session (nothing else)."""
         try:
             import glob as _g
             for p in _g.glob(os.path.join(files, "tmp", "term_out_*.txt")):
@@ -4022,25 +4030,34 @@ def _run_terminal_setup():
         except Exception:
             pass
 
+    # ★ GARDA: un singur setup simultan. Al doilea apel iese imediat.
+    if _SETUP_RUNNING[0]:
+        return
+    if _SETUP_LOCK is None:
+        _SETUP_LOCK = _thg.Lock()
+    if not _SETUP_LOCK.acquire(blocking=False):
+        return
+    _SETUP_RUNNING[0] = True
+    try:
+        _run_terminal_setup_locked(emit, files)
+    finally:
+        _SETUP_RUNNING[0] = False
+        try:
+            _SETUP_LOCK.release()
+        except Exception:
+            pass
+
+
+def _run_terminal_setup_locked(emit, files):
+    # ★ HEADER-UL se scrie PRIMUL, inainte de orice munca (inainte aparea dupa
+    #   "[done]" pentru ca firele porneau in paralel).
     emit()
     emit("Setting up the Linux environment")
     emit("------------------------------")
     emit("This is the first run, so the system installs what it needs.")
-    emit("It takes a few minutes. Please wait until you see DONE.")
+    emit("It takes a few minutes. WAIT until you see READY - do not type anything.")
     emit("The terminal stays open; each step is listed as it finishes.")
     emit()
-
-    import threading as _thn
-    done = [False]
-    def _tick():
-        mins = 0
-        while not done[0] and mins < 120:
-            __import__("time").sleep(60)
-            if done[0]:
-                break
-            mins += 1
-            emit("  still working, %d minute(s) elapsed" % mins)
-    _thn.Thread(target=_tick, daemon=True).start()
 
     LABELS = (
         ("rootfs", "Linux filesystem"),
@@ -4049,6 +4066,8 @@ def _run_terminal_setup():
         ("gcc", "Compiler toolchain"),
         ("binder", "Android service access"),
     )
+    _emitted = set()
+
     def _label(step):
         low = step.lower()
         for key, label in LABELS:
@@ -4059,29 +4078,29 @@ def _run_terminal_setup():
     ok = False
     try:
         import proot_tool as _pt
+        # ★ fiecare pas se scrie CAND se termina, o singura data per eticheta
+        def _live(m):
+            lb = _label(m)
+            if lb in _emitted:
+                return
+            _emitted.add(lb)
+            emit("  [done] " + lb)
+        _pt._LIVE_CB[0] = _live
         r = _pt.ensure_ready_via_adb(progress=False)
         ok = isinstance(r, dict) and bool(r.get("ok") or r.get("skipped"))
-        seen = set()
-        for st in (r.get("steps") or []) if isinstance(r, dict) else []:
-            label = _label(st)
-            if label in seen:
-                continue
-            seen.add(label)
-            emit("  [done] " + label)
+        _pt._LIVE_CB[0] = None
     except Exception:
         ok = False
-    finally:
-        done[0] = True
 
     emit()
     if ok:
-        emit("DONE")
+        emit("READY !")
+        emit()
         emit("Everything is ready. You can use the terminal now.")
     else:
         emit("DONE with warnings")
         emit("Setup did not finish. Type setup and press Enter to try again.")
     emit()
-
 
 def _terminal_file_worker():
     """Thread care supravegheaza files/tmp/term_in.txt (scris de UI) si executa
@@ -4129,14 +4148,7 @@ def _terminal_file_worker():
             # execve din app_data_file (W^X SELinux) si nu poate scrie in
             # /data/local/tmp. Deci setup-ul ruleaza prin adbd (uid 2000) exact cand
             # operatorul deschide terminalul prima data, iar progresul apare aici.
-            if not _SETUP_DONE[0] and not os.path.exists(os.path.join(home, ".debian_ready")):
-                _SETUP_DONE[0] = True
-                try:
-                    import threading as _ths
-                    _ths.Thread(target=_run_terminal_setup, daemon=True,
-                                name="term_setup").start()
-                except Exception:
-                    pass
+            # ★ SETUP-UL NU mai porneste automat aici (cerut de operator: "configurarea
             try:
                 with open(inn, "r", errors="replace") as f:
                     content = f.read()

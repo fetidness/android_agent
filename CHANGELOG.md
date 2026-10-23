@@ -3,7 +3,122 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `81f5875` (2026-10-22).
+> Ultimul commit inclus: `7fee2bb` (2026-10-23).
+
+### 2026-10-23 - UI SETUP + FIX-URI CRITICE DE PORNIRE (instalare curata)
+
+> **Context:** sesiune de test E2E pe device dupa reinstalare la rece. Operatorul a
+> raportat, pe rand: "liniile se sterg singure la configurare", "agentul isi da restart
+> singur", "agent keep stopping", "dupa cheia API nu se intampla nimic", "[done] apar
+> toate deodata si in ordine gresita". Fiecare s-a dovedit un bug real, distinct.
+
+#### 1. `MainActivity.kt` - ecran de configurare dedicat (inlocuieste countdown-ul in terminal)
+
+**Inainte:** 5 blocuri de text rosu scrise in terminal + `lastLine()` apelat de 31 ori
+la fiecare secunda. `lastLine()` **stergea fizic ultima linie** din
+`SpannableStringBuilder` si o rescria -> text care se zbatea, fara ierarhie.
+
+**Acum:** panou propriu peste terminal, cu:
+- titlu `AGENT` + subtitlu `First-time setup` + mesaj rosu `Please wait, take a coffee and relax...`
+- `ProgressBar` orizontala legata de permisiunile acordate (7 = 100%)
+- lista de permisiuni cu bifa LIVE (`○` -> `✓`), reimprospatata la 700 ms
+- linie de status: `Waiting for N permission(s) - Xs` / `All permissions granted - starting...`
+- secțiune `STARTUP` cu etapele reale: `Environment`, `Libraries`, `Bridge`, `Agent`
+- fiecare etapa apare O SINGURA DATA si isi schimba doar starea (fara stergeri)
+
+**Blocaj obligatoriu de permisiuni** (cerut de operator): la expirarea ferestrei de 30 s
+fara toate permisiunile, setup-ul **NU porneste**. Apare `WARNING: N permission(s) not
+granted. Setup CANNOT start until ALL are granted: ...` plus butonul
+`GRANT ALL PERMISSIONS`, care reia cererile pana cand toate sunt acordate. Daca o
+permisiune e refuzata definitiv (`USER_FIXED`), a doua apasare deschide Setarile aplicatiei.
+
+#### 2. `MainActivity.kt` - `pyhome` se construieste in `extractAssets()`
+
+**Bug:** stdlib-ul Python (`pyhome/lib/python3.14`) se construia DOAR in
+`startPythonProcess()`, gate-uit de `pythonLaunching`. Daca prima incercare esua, `pyhome`
+nu exista niciodata, iar setup-ul raporta toate etapele ca "ok" fara stdlib pe disc.
+Simptom: dupa introducerea cheii API, toate bifele verzi si nimic altceva.
+
+**Fix:** stdlib-ul se construieste sincron in `extractAssets()`, cu copiere
+fisier-cu-fisier (`cpTree`), verificare de completitudine (`threading.py`, `encodings/`,
+`os.py`), rename atomic si marker `.stdlib_ok` scris ULTIMUL.
+
+#### 3. `MainActivity.kt` - `pyhome` nu mai e sters la fiecare `extractAssets()`
+
+**Bug:** `File(filesDir,"pyhome").deleteRecursively()` rula la FIECARE apel, iar
+`extractAssets()` e chemat si din `startCore()` (prima configurare) si din ramura
+`setupDone()` (fiecare pornire). Python pornea din `pyhome`, apoi al doilea
+`extractAssets` il stergea sub picioare -> proces mort -> watchdog -> bucla infinita
+de restarturi ("agentul isi da restart singur").
+
+**Fix:** se sterge doar cand lipseste efectiv `threading.py`.
+
+#### 4. `MainActivity.kt` - crash `AssertionError` in `extractToolchain`
+
+```
+FATAL EXCEPTION: Thread-3
+java.lang.AssertionError: rootDir must be verified to be directory beforehand.
+  at kotlin.io.FileTreeWalk$DirectoryState.<init>
+  at kotlin.io.FilesKt__UtilsKt.deleteRecursively
+  at MainActivity.extractToolchain(MainActivity.kt:1525)
+```
+`deleteRecursively()` **arunca** (nu returneaza) cand directorul nu exista. Toate cele
+3 locuri sunt acum protejate cu `runCatching { if (dest.isDirectory) ... }`.
+
+#### 5. `MainActivity.kt` - garda anti-duplicare pentru procesul Python
+
+3 procese Python simultane (fiecare cu worker de terminal si conexiune adb proprie),
+pentru ca `onResume` si `runSetup` chemau amandoua `startPythonProcess`.
+Fix: `@Volatile pythonLaunching` + eliberare in `finally`; `runSetup` idempotent prin
+`runSetupStarted`; `readyAnnounced` ca "Ready." sa apara o singura data.
+
+#### 6. `MainActivity.kt` - `onCreate` cheama `startCore()` necondiționat
+
+**Bug:** `startCore()` se chema doar daca toate permisiunile erau deja acordate. La o
+instalare curata nu sunt -> ecran gol pana nimerea `onResume` o stare buna
+("a durat 2 minute pana a aparut ready").
+
+#### 7. `MainActivity.kt` - watchdog gardat
+
+Watchdog-ul anunta `[watchdog] procesul Python lipseste` la 45 s, **inainte** ca
+extractia stdlib-ului (1688 fisiere) sa se termine. Acum nu raporteaza cat timp
+`!setupDone()` sau `pythonLaunching < 180 s`.
+
+#### 8. `agent.py` + `proot_tool.py` - setup Debian: progres live, o singura rulare
+
+**Probleme raportate:** toate `[done]` apareau deodata la sfarsit, unele inainte de
+header, si `[done] Android service access` se repeta in bucla.
+
+**Cauze:** (a) `ensure_ready_via_adb` e sincron, deci bucla care emitea pasii rula dupa
+terminarea lui; (b) setup-ul putea porni din 3 fire simultan; (c) bucla de `steps`
+emitea din nou tot ce `_LIVE_CB` scrisese deja.
+
+**Fix:**
+- `proot_tool._LIVE_CB`: callback global prin care `L()` scrie in terminal in momentul
+  in care pasul se termina
+- garda `_SETUP_RUNNING` + `_SETUP_LOCK`: un singur setup simultan, al doilea apel iese
+- header-ul (`Setting up the Linux environment`) se scrie PRIMUL, inainte de orice munca
+- eliminata bucla duplicata de emitere
+- eliminat ticker-ul `still working, N minute(s) elapsed`
+- mesaj final: `READY !` + linie goala + `Everything is ready. You can use the terminal now.`
+- header-ul instruieste explicit: `It takes a few minutes. WAIT until you see READY - do not type anything.`
+
+#### 9. `LinuxTerminalActivity.kt` - setup Debian la deschiderea terminalului
+
+**Cerut de operator:** configurarea Linux sa porneasca DOAR dupa apasarea butonului
+TERMINAL, nu automat dupa pornirea agentului, si nu la prima comanda (care oricum
+esua cu `proot_exec.so: inaccessible or not found`).
+
+**Fix:** `onCreate` scrie `[setup] configuring the Linux environment, please wait...` si
+trimite comanda `setup` in `term_in.txt` dupa 700 ms. Auto-startul din
+`_terminal_file_worker` a fost eliminat.
+
+#### 10. `agent.py` - `saveKeyAndStart` porneste setup-ul complet
+
+Dupa salvarea cheii API, `runSetupStarted` se reseteaza si procesul Python porneste
+direct (inainte, al doilea `runSetup()` iesea imediat din cauza garzii de idempotenta).
+
+---
 
 ### 2026-10-22 - PERFORMANTA: adb_client, proot batching, aliniere terminal_server
 

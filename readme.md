@@ -28,6 +28,21 @@
 > **absorbită în acest fișier** și ștearsă. Repo-ul are acum un singur README
 > și un singur CHANGELOG. Cifrele complete: secțiunea "PERFORMANȚĂ" și `CHANGELOG.md` 2026-10-22.
 
+
+> **Stare 2026-10-23 (UI SETUP + 10 FIX-URI DE PORNIRE):**
+> Ecranul de configurare a fost rescris complet. Countdown-ul care scria în terminal cu
+> `lastLine()` (ștergea fizic ultima linie la fiecare secundă — „liniile se șterg singure")
+> a fost înlocuit cu un **panou dedicat**: titlu, mesaj `Please wait, take a coffee and relax...`,
+> bară de progres reală legată de permisiuni, listă de permisiuni cu bifă live și secțiune
+> `STARTUP` cu etapele reale. Setup-ul e **blocat obligatoriu** până când TOATE permisiunile
+> sunt acordate (buton `GRANT ALL PERMISSIONS`). Setup-ul Debian pornește **doar la apăsarea
+> butonului TERMINAL**, cu progres pas cu pas și mesaj final `READY !`.
+> Zece bug-uri distincte reparate în aceeași sesiune (crash `AssertionError` în
+> `extractToolchain`, restart infinit din `pyhome` șters la fiecare extracție, 3 procese
+> Python simultane, watchdog care raporta înainte de extracție, `[done]` duplicate și în
+> ordine greșită). Detalii complete: `CHANGELOG.md` 2026-10-23 și secțiunea
+> „ECRAN DE CONFIGURARE" mai jos.
+
 ## 🚀 SETUP AUTOMAT (2026-10-21) - INSTALAREA APK = MEDIU COMPLET FUNCTIONAL
 
 ### Ce se intampla
@@ -1221,6 +1236,110 @@ Varianta slaba avea 3 lipsuri reale:
 ### Lectie
 Cand aceeasi functie exista in doua fisiere, ele DIVERGHEAZA. Verifica intotdeauna
 care e cea folosita efectiv, inainte de a o repara pe cea aparenta.
+
+## 🎨 ECRAN DE CONFIGURARE (2026-10-23) - PRIMA PORNIRE
+
+### Fluxul, pas cu pas
+
+1. **Panoul de setup** apare peste terminal (`MainActivity.buildSetupPanel()`).
+   - titlu `⚡ AGENT`, subtitlu `First-time setup`
+   - mesaj roșu: `Please wait, take a coffee and relax...`
+   - bară de progres (0-100%, legată de permisiunile acordate)
+   - linie de status: `Waiting for N permission(s) - Xs`
+   - listă `PERMISSIONS` cu bifă live: Camera, Microphone, Location, Contacts,
+     Photos & media, Notifications, All files access
+   - secțiune `STARTUP` (se populează la rulare): Environment, Libraries, Bridge, Agent
+
+2. **Fereastra de 30 s pentru permisiuni** (`startSetupTicker()`).
+   Se închide IMEDIAT ce toate sunt acordate — nu se așteaptă cele 30 s degeaba.
+
+3. **Blocaj obligatoriu.** La expirare fără toate permisiunile:
+   ```
+   ⚠ WARNING: 2 permission(s) not granted.
+   Setup CANNOT start until ALL are granted:
+   Camera, Notifications
+   [ GRANT ALL PERMISSIONS ]
+   ```
+   Butonul reia cererile până când toate sunt date. Dacă o permisiune e refuzată
+   definitiv (`USER_FIXED`, „Don't ask again"), Android nu mai afișează dialogul —
+   a doua apăsare deschide direct Setările aplicației.
+
+4. **Etapele de setup**, fiecare apare o singură dată și își schimbă doar starea:
+   - `✓ Environment` — `extractAssets()`: scripturi Python + **stdlib-ul complet**
+   - `✓ Libraries` — `verifyStdlibInstalled()`
+   - `✓ Bridge` — `AndroidBridge` pornit
+   - `✓ Agent` — procesul Python lansat
+
+5. **Cheia API.** Dacă lipsește, input-ul devine `paste DeepSeek key (sk-...) and send`.
+   După trimitere se salvează în `files/python/key.txt` + `files/home/key.txt` și
+   pornește procesul Python.
+
+6. **Panoul se ascunde** doar după ce toate etapele sunt bifate → terminal curat.
+
+### Construirea stdlib-ului Python (`pyhome`)
+
+Se face în `extractAssets()`, sincron, cu extracție atomică:
+
+```
+files/pyhome/
+├── .stdlib_ok                  <- marker, scris ULTIMUL
+└── lib/
+    ├── python3.14/             <- Lib/ din assets, copiat fisier-cu-fisier (cpTree)
+    │   ├── threading.py        <- OBLIGATORIU: CPython il importa in bootstrap
+    │   ├── encodings/          <- OBLIGATORIU pentru init
+    │   ├── os.py
+    │   └── lib-dynload/        <- 67 module .so, din assets/python/libdynload/arm64
+    ├── pysitepkg.zip           <- pip + setuptools + wheel
+    └── stdlib_extra.zip        <- subpachetele cu '_' eliminate de AAPT2
+```
+
+Condiția de „complet" (`stdlibComplete`) verifică `threading.py` + `encodings/__init__.py`
++ `os.py`. **`lib-dynload` NU face parte din `Lib/`** — vine separat din
+`assets/python/libdynload/<abi>`, iar includerea lui în condiție producea o buclă
+infinită de re-extracție.
+
+### De ce extracția e atomică
+
+`_android_support.py` (rulat de CPython la bootstrap) face `from threading import RLock`.
+Dacă `threading.py` nu e încă scris, Python moare cu:
+
+```
+ModuleNotFoundError: No module named 'threading'
+Fatal Python error: init_android_streams: failed to initialize Android streams
+```
+
+De aceea: copiem în `<stdlib>.tmp-<pid>-<nano>`, verificăm, redenumim atomic, apoi
+scriem `.stdlib_ok`. Pornirea Python așteaptă markerul (`waitStdlibReady`, max 120 s).
+
+### Setup-ul Debian: doar la TERMINAL
+
+`LinuxTerminalActivity.onCreate()` trimite comanda `setup` în `term_in.txt` după 700 ms.
+**Nu** pornește automat la boot-ul agentului și **nu** așteaptă prima comandă a
+utilizatorului (care oricum eșua cu `proot_exec.so: inaccessible or not found`).
+
+Progresul se scrie **live**, prin callback-ul `proot_tool._LIVE_CB`, o singură dată per
+etichetă, cu gardă `_SETUP_RUNNING` + `_SETUP_LOCK` (un singur setup simultan):
+
+```
+Setting up the Linux environment
+------------------------------
+This is the first run, so the system installs what it needs.
+It takes a few minutes. WAIT until you see READY - do not type anything.
+The terminal stays open; each step is listed as it finishes.
+
+  [done] Linux filesystem
+  [done] Linux runtime
+  [done] Compiler toolchain
+  [done] Android service access
+
+READY !
+
+Everything is ready. You can use the terminal now.
+```
+
+Fără ticker-ul `still working, N minute(s) elapsed`.
+
+---
 
 ## 🖥 TERMINAL LINUX (2026-10-20) - ARHITECTURA
 

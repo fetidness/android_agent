@@ -19,6 +19,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -324,6 +325,7 @@ class MainActivity : AppCompatActivity() {
 
         val frame = FrameLayout(this)
         frame.addView(root, ViewGroup.LayoutParams(-1, -1))
+        buildSetupPanel(frame)
         setContentView(frame)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
@@ -343,11 +345,16 @@ class MainActivity : AppCompatActivity() {
         // cerem permisiunile DUPĂ ce ecranul All-Files (deschis tot din
         // requestAllPermissions) s-a închis si activitatea e iar in fata.
         // Altfel dialogul de runtime e acoperit de Settings si se pierde.
+        // ★ la PRIMA configurare afisam panoul INAINTE de cererea de permisiuni, ca userul
+        //   sa vada exact ce i se cere (lista cu bife) si sa revina dupa fiecare acordare.
+        // ★ BUG reparat ("ecranul sta asa, nu porneste; a durat 2 minute"):
+        //   startCore() se chema DOAR daca toate permisiunile esentiale erau deja date.
+        //   La o instalare curata ele nu sunt -> nu se chema nimic -> ecranul ramanea gol
+        //   (fara panou, fara setup) pana cand onResume nimerea intamplator o stare buna.
+        //   Acum startCore() e chemat INTOTDEAUNA; el stie sa afiseze panoul de setup
+        //   si sa astepte permisiunile (blocajul e in ticker, nu aici).
+        startCore()
         requestAllPermissions()
-        // ★ STARTUP-ul mutat in onRequestPermissionsResult (dupa ce permisiunile sunt acordate)
-        // altfel extractAssets/startPython ruleaza cu permisiunile inca needate -> eroare
-        if (allEssentialPermsGranted()) startCore()
-        else requestAllPermissions()
         // Cere o singura data excluderea de la optimizarea bateriei (ca sa nu moara in Doze).
         requestIgnoreBatteryOptimizations()
 
@@ -469,6 +476,336 @@ class MainActivity : AppCompatActivity() {
     /** ★ Inlocuieste ULTIMA linie din terminal (pentru countdown-uri).
      *  PERFORMANTA: nu reconstruim tot textul (Ansi.toSpannable pe tot ar fi lent);
      *  stergem doar ultima linie din spannable-ul existent si adaugam linia noua. */
+    // ================== ECRAN DE CONFIGURARE (prima pornire) ==================
+    // Design: panou propriu peste terminal, cu progres REAL si permisiuni bifate live.
+    // Inlocuieste countdown-ul orb de 30s care scria in terminal cu lastLine() (liniile
+    // se stergeau una dupa alta -> haos). Countdown-ul EXISTA in continuare ca fereastra
+    // de timp pentru acordarea permisiunilor, dar se termina imediat ce toate sunt date.
+
+    private var setupPanel: LinearLayout? = null
+    private var setupProgress: ProgressBar? = null
+    private var setupStatus: TextView? = null
+    private var setupStepRows: LinkedHashMap<String, TextView> = LinkedHashMap()
+    private var setupPermRows: LinkedHashMap<String, TextView> = LinkedHashMap()
+    private var setupDeadline: Long = 0L
+    private var setupWarning: TextView? = null
+    private var btnGrantAll: Button? = null
+    private var setupTickerDone = true
+    private var setupFinished = false
+    private var readyAnnounced = false
+
+    private val COLOR_BG = "#0D1117"
+    private val COLOR_CARD = "#11161D"
+    private val COLOR_TEXT = "#C8CDD4"
+    private val COLOR_DIM = "#5C6370"
+    private val COLOR_ACCENT = "#61AFEF"
+    private val COLOR_OK = "#98C379"
+    private val COLOR_WARN = "#E5C07B"
+    private val COLOR_ERR = "#E06C75"
+
+    /** Permisiunile cerute la prima configurare: (eticheta afisata, permisiune manifest). */
+    private fun essentialPermList(): List<Pair<String, String>> = listOf(
+        "Camera" to Manifest.permission.CAMERA,
+        "Microphone" to Manifest.permission.RECORD_AUDIO,
+        "Location" to Manifest.permission.ACCESS_FINE_LOCATION,
+        "Contacts" to Manifest.permission.READ_CONTACTS,
+        "Photos & media" to Manifest.permission.READ_MEDIA_IMAGES,
+        "Notifications" to Manifest.permission.POST_NOTIFICATIONS
+    )
+
+    private fun permGranted(perm: String): Boolean =
+        ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED
+
+    private fun allFilesOk(): Boolean =
+        if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager() else true
+
+    private fun buildSetupPanel(frame: FrameLayout) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor(COLOR_CARD))
+            setPadding(dp(26), dp(34), dp(26), dp(26))
+            visibility = View.GONE
+        }
+        val title = TextView(this).apply {
+            text = "\u26A1  AGENT"
+            textSize = 22f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor(COLOR_ACCENT))
+            letterSpacing = 0.08f
+        }
+        val subtitle = TextView(this).apply {
+            text = "First-time setup"
+            textSize = 14f
+            setTextColor(Color.parseColor(COLOR_DIM))
+            setPadding(0, dp(4), 0, dp(10))
+        }
+        // ★ cerut de operator: mesaj de calmare, rosu, sub subtitlu
+        val relax = TextView(this).apply {
+            text = "Please wait, take a coffee and relax\u2026"
+            textSize = 13f
+            typeface = mono
+            setTextColor(Color.parseColor(COLOR_ERR))
+            setPadding(0, 0, 0, dp(18))
+        }
+        setupProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100; progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor(COLOR_ACCENT))
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#1C2333"))
+        }
+        setupStatus = TextView(this).apply {
+            text = "Waiting for permissions\u2026"
+            textSize = 13f
+            typeface = mono
+            setTextColor(Color.parseColor(COLOR_TEXT))
+            setPadding(0, dp(12), 0, dp(20))
+        }
+        card.addView(title)
+        card.addView(subtitle)
+        card.addView(relax)
+        card.addView(setupProgress, LinearLayout.LayoutParams(-1, dp(6)))
+        card.addView(setupStatus)
+
+        // ---- secțiunea permisiuni ----
+        card.addView(sectionLabel("PERMISSIONS"))
+        for ((label, perm) in essentialPermList()) {
+            addRow(card, setupPermRows, label) { permGranted(perm) }
+        }
+        addRow(card, setupPermRows, "All files access") { allFilesOk() }
+
+        // ---- secțiunea etape de setup (se populează la pornire) ----
+        card.addView(sectionLabel("STARTUP"))
+
+        card.addView(LinearLayout(this))  // spacer flexibil in jos
+        // ★ Avertisment: setup-ul NU porneste fara TOATE permisiunile (cerinta operator).
+        setupWarning = TextView(this).apply {
+            visibility = View.GONE
+            textSize = 13f
+            typeface = mono
+            setTextColor(Color.parseColor(COLOR_ERR))
+            setPadding(0, 0, 0, dp(10))
+        }
+        card.addView(setupWarning)
+        // ★ Butonul GRANT ALL PERMISSIONS: apare dupa expirarea ferestrei de 30s.
+        //   Reia cererea de permisiuni pana cand TOATE sunt acordate. Fara el, setup-ul
+        //   nu porneste NICIODATA (obligatie, nu optiune).
+        btnGrantAll = Button(this).apply {
+            text = "GRANT ALL PERMISSIONS"
+            textSize = 13f
+            isAllCaps = false
+            typeface = mono
+            setTextColor(Color.parseColor("#0D1117"))
+            setBackgroundColor(Color.parseColor(COLOR_ACCENT))
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            visibility = View.GONE
+            setOnClickListener { grantAllPermissions() }
+        }
+        card.addView(btnGrantAll, LinearLayout.LayoutParams(-1, -2))
+        setupPanel = card
+        val lp = FrameLayout.LayoutParams(-1, -1)
+        frame.addView(card, lp)
+    }
+
+    private fun sectionLabel(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 11f
+        typeface = mono
+        setTextColor(Color.parseColor(COLOR_DIM))
+        letterSpacing = 0.12f
+        setPadding(0, dp(6), 0, dp(8))
+    }
+
+    /** Rând de stare: cerculet, eticheta, valoare. Se actualizează in loc. */
+    private fun addRow(
+        parent: LinearLayout,
+        map: LinkedHashMap<String, TextView>,
+        label: String,
+        check: () -> Boolean
+    ): TextView {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(5), 0, dp(5))
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val dot = TextView(this).apply {
+            text = "\u25CB"
+            textSize = 15f
+            setTextColor(Color.parseColor(COLOR_DIM))
+            width = dp(26)
+        }
+        val name = TextView(this).apply {
+            text = label
+            textSize = 14f
+            typeface = mono
+            setTextColor(Color.parseColor(COLOR_TEXT))
+        }
+        row.addView(dot)
+        row.addView(name)
+        parent.addView(row)
+        val holder = object : TextView(this) {}.apply { visibility = View.GONE }
+        row.addView(holder)
+        map[label] = dot
+        return dot
+    }
+
+    /** Reîmprospătează bifele de permisiuni + textul de status. */
+    private fun refreshSetupPanel() {
+        if (setupFinished) return
+        val missing = mutableListOf<String>()
+        for ((label, perm) in essentialPermList()) {
+            val ok = permGranted(perm)
+            setupPermRows[label]?.let { setDot(it, ok) }
+            if (!ok) missing.add(label)
+        }
+        val filesOk = allFilesOk()
+        setupPermRows["All files access"]?.let { setDot(it, filesOk) }
+        if (!filesOk) missing.add("All files access")
+
+        val st = setupStatus ?: return
+        val left = ((setupDeadline - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+        // bara reflecta permisiunile acordate (7 = toate), apoi trece pe etapele de setup
+        val total = essentialPermList().size + 1
+        val done = total - missing.size
+        setupProgress?.progress = (done * 100 / total)
+        if (missing.isEmpty()) {
+            st.text = "All permissions granted \u2014 starting\u2026"
+            st.setTextColor(Color.parseColor(COLOR_OK))
+        } else {
+            st.text = "Waiting for " + missing.size + " permission(s) \u2014 " + left + "s"
+            st.setTextColor(Color.parseColor(if (left < 10) COLOR_WARN else COLOR_TEXT))
+        }
+    }
+
+    private fun setDot(v: TextView, ok: Boolean) {
+        v.text = if (ok) "\u2713" else "\u25CB"
+        v.setTextColor(Color.parseColor(if (ok) COLOR_OK else COLOR_DIM))
+    }
+
+    /** Afișează panoul și pornește fereastra de permisiuni. */
+    private fun showSetupPanel() {
+        setupFinished = false
+        setupPanel?.visibility = View.VISIBLE
+        startSetupTicker()
+    }
+
+    /** Porneste fereastra de 30s + reimprospatarea bifelelor (idempotent). */
+    private fun startSetupTicker() {
+        if (setupTickerDone == false) return   // deja ruleaza
+        setupDeadline = System.currentTimeMillis() + 30_000L
+        setupTickerDone = false
+        refreshSetupPanel()
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                if (setupTickerDone || setupFinished) return
+                refreshSetupPanel()
+                val missing = essentialPermList().any { !permGranted(it.second) } || !allFilesOk()
+                if (!missing) {
+                    // toate date -> nu mai așteptăm cele 30s
+                    finishSetupPanel()
+                    return
+                }
+                if (System.currentTimeMillis() >= setupDeadline) {
+                    // WINDOW EXPIRED WITHOUT ALL PERMISSIONS: setup does NOT start.
+                    // Show WARNING + GRANT ALL PERMISSIONS; setup is OBLIGATORILY gated.
+                    setupTickerDone = true
+                    val miss = essentialPermList().filter { !permGranted(it.second) }
+                        .map { it.first }.toMutableList()
+                    if (!allFilesOk()) miss.add("All files access")
+                    setupWarning?.let { w ->
+                        w.visibility = View.VISIBLE
+                        w.text = "\u26A0 WARNING: " + miss.size + " permission(s) not granted.\n" +
+                                 "Setup CANNOT start until ALL are granted:\n" +
+                                 miss.joinToString(", ")
+                    }
+                    setupStatus?.text = "Blocked \u2014 grant all permissions to continue"
+                    setupStatus?.setTextColor(Color.parseColor(COLOR_ERR))
+                    btnGrantAll?.visibility = View.VISIBLE
+                    return
+                }
+                h.postDelayed(this, 700)
+            }
+        }
+        h.postDelayed(tick, 700)
+    }
+
+    /** ★ Cerinta operator: butonul reia cererea de permisiuni PANA CAND toate sunt date.
+     *  Setup-ul nu porneste fara ele - e obligatie, nu optiune. */
+    private fun grantAllPermissions() {
+        val need = essentialPermList().map { it.second }
+            .filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (need.isNotEmpty()) {
+            // Some were permanently denied ("Don't ask again") -> Android gives no dialog.
+            // In that case open the app's settings page so the user can toggle them.
+            // daca vreo permisiune e refuzata definitiv (USER_FIXED), Android nu mai arata
+            // dialogul -> deschidem DIRECT ecranul de setari al aplicatiei
+            val firstTime = getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean("grant_retry", false)
+            if (firstTime) {
+                try {
+                    startActivity(android.content.Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:$packageName")))
+                } catch (_: Exception) {}
+            } else {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("grant_retry", true).apply()
+            }
+            ActivityCompat.requestPermissions(this, need.toTypedArray(), 1)
+            return
+        }
+        // runtime permissions done -> All files access is a system Settings screen
+        if (!allFilesOk()) {
+            requestAllFilesAccess()
+            return
+        }
+        // everything granted -> restart the window and let the ticker start setup
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("grant_retry", false).apply()
+        setupWarning?.visibility = View.GONE
+        btnGrantAll?.visibility = View.GONE
+        setupTickerDone = true
+        startSetupTicker()
+    }
+
+    private fun finishSetupPanel() {
+        setupFinished = true
+        setupTickerDone = true
+        // ★ BUG reparat: inainte, runSetup() era chemat in withEndAction() al animatiei,
+        //   care NU se executa daca view-ul nu are inca un parinte/layout valid (sau daca
+        //   animatia e anulata) -> panoul disparea si setup-ul nu pornea NICIODATA
+        //   ("dupa ce expira secundele nu functioneaza"). Acum setup-ul porneste
+        //   necondiionat, iar ascunderea panoului e independenta.
+        // ★ Panoul ramane VIZIBIL cat timp setup-ul ruleaza (arată etapele cu bife),
+        //   si se ascunde abia cand ultima etapa s-a terminat. Inainte era ascuns
+        //   dupa 200 ms -> operatorul nu vedea nimic, doar terminalul gol.
+        runSetup()
+    }
+
+    /** Ascunde panoul de configurare (la finalul setup-ului sau la eroare). */
+    private fun hideSetupPanel() {
+        setupPanel?.let {
+            it.animate().alpha(0f).setDuration(220).start()
+            it.postDelayed({ it.visibility = View.GONE; it.alpha = 1f }, 260)
+        }
+    }
+
+    /** O etapă de setup: apare o singura data, isi schimba doar starea. FARA stergeri. */
+    private fun setupStep(label: String, state: String) {
+        runOnUiThread {
+            val card = setupPanel ?: return@runOnUiThread
+            var dot = setupStepRows[label]
+            if (dot == null) {
+                dot = addRow(card, setupStepRows, label) { false }
+            }
+            when (state) {
+                "run" -> { dot.text = "\u25CF"; dot.setTextColor(Color.parseColor(COLOR_ACCENT)) }
+                "ok"  -> { dot.text = "\u2713"; dot.setTextColor(Color.parseColor(COLOR_OK)) }
+                "err" -> { dot.text = "\u2717"; dot.setTextColor(Color.parseColor(COLOR_ERR)) }
+            }
+            val total = 6f
+            val done = setupStepRows.values.count { it.text == "\u2713" }.toFloat()
+            setupProgress?.progress = (10 + (done / total) * 90f).toInt()
+        }
+    }
+
     private fun lastLine(s: String) {
         try {
             val cur = output.text
@@ -684,8 +1021,11 @@ class MainActivity : AppCompatActivity() {
      *  si pornim motorul. Asa nu mai depindem doar de callback-ul de permisiuni. */
     override fun onResume() {
         super.onResume()
-        if (!coreStarted && allEssentialPermsGranted()) {
-            root.postDelayed({ startCore() }, 800)
+        // ★ Revenirea in prim-plan (din dialoguri de permisiuni / Settings / All files access)
+        //   e singurul moment in care putem sti ca userul a schimbat ceva. Verificam o
+        //   singura data, centralizat, si pornim setup-ul daca totul e acordat.
+        if (!setupDone()) {
+            root.postDelayed({ onPermissionsMaybeComplete() }, 250)
         }
         // ★ La revenirea in prim-plan, Android re-layoutuieste tot TextView-ul (poate dura):
         // daca urmaream coada, ne asezam la fund DUPA layout, nu inainte.
@@ -754,7 +1094,13 @@ class MainActivity : AppCompatActivity() {
                     val k = readStoredKey()
                     val now = System.currentTimeMillis()
                     // cooldown 60s intre reporniri + verificare REALA a procesului
-                    if (k != null && coreStarted && !awaitingKey && (now - lastPythonStart) > 20000L) {
+                    // ★ NU raporta "lipseste" cat timp prima configurare e IN CURS: extractia
+                    //   stdlib-ului (1688 fisiere) + pornirea Python dureaza zeci de secunde,
+                    //   iar mesajul de watchdog aparea INAINTE de "[extract]" si nelinistea
+                    //   operatorul ("procesul python lipseste" chiar cand el se instala).
+                    val stillSettingUp = !setupDone() || (pythonLaunching && (now - pythonStartRequestedAt) < 180000L)
+                    if (k != null && coreStarted && !awaitingKey && !stillSettingUp &&
+                        (now - lastPythonStart) > 20000L) {
                         if (!pythonRunning()) {
                             appendAnsi("\n[watchdog] procesul Python lipseste - il repornesc\n")
                             lastPythonStart = now
@@ -890,51 +1236,66 @@ class MainActivity : AppCompatActivity() {
         }
         firstConfig = true
 
-        // ★ COOLDOWN 30s: countdown real prin Handler (nu Thread.sleep -> UI se blocheaza).
-        val RED = "\u001b[38;5;203m"
-        val NRM = "\u001b[0m"
-        appendAnsi("\n" + RED + "AGENT CONFIGURATION IN PROGRESS..." + NRM + "\n"
-            + RED + "Preparing keys, libraries and environment." + NRM + "\n"
-            + RED + "Do not close the app." + NRM + "\n")
-        // linia de countdown (o adaug o data, apoi o inlocuiesc)
-        appendAnsi(RED + "Configuring... 30 seconds remaining" + NRM)
-
-        var s = 30
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        val tick = object : Runnable {
-            override fun run() {
-                if (s > 1) {
-                    s--
-                    lastLine(RED + "Configuring... " + s + " seconds remaining" + NRM)
-                    handler.postDelayed(this, 1000)
-                } else {
-                    lastLine(RED + "Configuring... DONE" + NRM)
-                    handler.postDelayed({ runSetup() }, 1500)
-                }
-            }
-        }
-        handler.postDelayed(tick, 1000)
+        // ★ ECRAN DE CONFIGURARE dedicat (nu mai scriem countdown in terminal: lastLine()
+        //   stergea ultima linie la fiecare secunda -> text care se zbate, fara ierarhie).
+        //   Fereastra de 30s pentru permisiuni EXISTA in continuare (fara ea setup-ul crapa),
+        //   dar se inchide IMEDIAT ce toate permisiunile sunt acordate. Etapele reale de
+        //   setup se marcheaza pe rand, o singura data, fara stergeri.
+        showSetupPanel()
     }
 
-    /** Configurarea reala (dupa countdown): extract + bridge + python + serviciu. */
+    /** Configurarea reala (dupa fereastra de permisiuni): extract + bridge + python + serviciu. */
+    @Volatile private var runSetupStarted = false
+
     private fun runSetup() {
-        val RED = "\u001b[38;5;203m"
-        val NRM = "\u001b[0m"
-        appendAnsi("\n" + RED + "Finalizing configuration..." + NRM + "\n")
+        // ★ idempotent: onResume + finishSetupPanel pot chema amandoua -> setup-ul rula de
+        //   DOUA ori (de aici "Ready." de doua ori si doua procese Python).
+        if (runSetupStarted) return
+        runSetupStarted = true
         Thread {
-            try { extractAssets() } catch (e: Exception) {
-                runOnUiThread { appendAnsi(RED + "Extract error: $e" + NRM + "\n") }
+            setupStep("Environment", "run")
+            try {
+                extractAssets(); setupStep("Environment", "ok")
+            } catch (e: Exception) {
+                setupStep("Environment", "err")
             }
+            setupStep("Libraries", "run")
+            try {
+                verifyStdlibInstalled(); setupStep("Libraries", "ok")
+            } catch (_: Exception) { setupStep("Libraries", "err") }
+            setupStep("Bridge", "run")
+            try {
+                bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
+                bridge!!.start(); setupStep("Bridge", "ok")
+            } catch (e: Exception) { setupStep("Bridge", "err") }
             runOnUiThread {
-                try {
-                    bridge = AndroidBridge(this, File(filesDir, "bridge.sock"))
-                    bridge!!.start()
-                } catch (e: Exception) { appendAnsi(RED + "Bridge error: $e" + NRM + "\n") }
-                startPythonIfKey()
+                setupStep("Agent", "run")
+                try { startPythonIfKey() } catch (e: Exception) {
+                    appendAnsi("\u001b[38;5;203m[start] " + e + "\u001b[0m\n")
+                }
                 startAgentService()
+                setupStep("Agent", "ok")
                 requestIgnoreBatteryOptimizations()
+                if (!readyAnnounced && setupStepRows.values.all { it.text == "\u2713" }) {
+                    readyAnnounced = true
+                    appendAnsi("\n\u001b[38;5;114mReady.\u001b[0m\n\n")
+                    // setup complet -> ascundem panoul si lasam terminalul
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed({ hideSetupPanel() }, 900)
+                }
             }
         }.start()
+    }
+
+    /** Confirma ca stdlib-ul Python e complet pe disc (nu doar ca s-a copiat). */
+    private fun verifyStdlibInstalled() {
+        val base = File(filesDir, "pyhome/lib/python3.14")
+        val need = listOf("threading.py", "encodings/__init__.py", "os.py")
+        val t0 = System.currentTimeMillis()
+        while (System.currentTimeMillis() - t0 < 90_000L) {
+            if (need.all { File(base, it).exists() }) return
+            try { Thread.sleep(150) } catch (_: Exception) { return }
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -951,10 +1312,30 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             root.postDelayed({ requestAllFilesAccess() }, 500)
+            // ★ BUG reparat ("ecranul sta asa, nu porneste pasul urmator"): aici NU se chema
+            //   nimic pentru pornirea setup-ului. Dupa ce userul acorda permisiunile, panoul
+            //   ramanea pe loc si setup-ul nu pleca niciodata. Acum pornim explicit.
+            root.postDelayed({ onPermissionsMaybeComplete() }, 900)
         }
         if (requestCode == 2) {
             // dupa raspunsul la BACKGROUND, cerem All-Files
             root.postDelayed({ requestAllFilesAccess() }, 500)
+            root.postDelayed({ onPermissionsMaybeComplete() }, 1200)
+        }
+    }
+
+    /** ★ Porneste setup-ul cand toate permisiunile esentiale sunt acordate (idempotent). */
+    private fun onPermissionsMaybeComplete() {
+        if (setupDone()) return
+        val allOk = essentialPermList().all { permGranted(it.second) }
+        if (!allOk) { refreshSetupPanel(); return }
+        setupWarning?.visibility = View.GONE
+        btnGrantAll?.visibility = View.GONE
+        if (!coreStarted) {
+            startCore()
+        } else if (!runSetupStarted) {
+            setupTickerDone = true
+            finishSetupPanel()
         }
     }
 
@@ -1020,10 +1401,21 @@ class MainActivity : AppCompatActivity() {
                 oldSp.copyRecursively(keepDir, overwrite = true)
             } catch (_: Exception) {}
         }
-        // la fiecare re-extragere, stergem si pyhome: altfel stdlib-ul copiat o singura data
-        // (Lib/ + site-packages/) NU s-ar actualiza cand adaugam biblioteci noi in assets.
-        File(filesDir, "pyhome").deleteRecursively()
-        dest.deleteRecursively()
+        // ★ BUG reparat ("agentul isi da restart singur"): aici se stergea pyhome LA FIECARE
+        //   apel al extractAssets(). Dar extractAssets() e chemat din startCore() (prima
+        //   configurare) SI din ramura setupDone() (fiecare pornire) -> dupa ce Python pornea
+        //   cu stdlib-ul din pyhome, un al doilea extractAssets il stergea sub picioarele lui,
+        //   procesul murea, watchdog-ul il repornea -> bucla infinita de restarturi.
+        //   Acum pyhome se sterge DOAR cand se schimba efectiv continutul din assets
+        //   (stampila diff), nu la fiecare rulare.
+        val oldLib = File(filesDir, "pyhome/lib/python3.14/threading.py")
+        val needLibRefresh = !oldLib.exists()
+        if (needLibRefresh) File(filesDir, "pyhome").deleteRecursively()
+        // ★ BUG reparat (crash "agent keeps stopping"): deleteRecursively() arunca
+        //   AssertionError ("rootDir must be verified to be directory beforehand") daca
+        //   directorul NU exista -> crash pe Thread-3 la prima configurare.
+        runCatching { if (dest.isDirectory) dest.deleteRecursively() }.onFailure { dest.mkdirs() }
+        dest.mkdirs()
         fun copyDir(path: String, out: File) {
             val list = assets.list(path) ?: return
             if (list.isEmpty()) {
@@ -1035,6 +1427,72 @@ class MainActivity : AppCompatActivity() {
             }
         }
         copyDir("python", dest)
+        // ★ BUG reparat ("dupa cheie, ecranele sunt bifate dar nu se intampla nimic"):
+        //   pyhome (stdlib-ul Python) se construia DOAR in startPythonProcess(), care la randul
+        //   lui era gate-uit de pythonLaunching. Daca prima incercare esua, pyhome nu exista
+        //   niciodata si setup-ul raporta etapele ca "ok" fara sa existe stdlib.
+        //   Acum stdlib-ul se construieste AICI, sincron cu restul extragerii.
+        try {
+            val pyHomeX = File(filesDir, "pyhome")
+            val stdlibX = File(pyHomeX, "lib/python3.14")
+            val stdlibOkX = File(pyHomeX, ".stdlib_ok")
+            fun stdlibFull(base: File): Boolean =
+                File(base, "threading.py").exists() &&
+                File(base, "encodings/__init__.py").exists() &&
+                File(base, "os.py").exists()
+            if (!stdlibOkX.exists() || !stdlibFull(stdlibX)) {
+                try { stdlibOkX.delete() } catch (_: Exception) {}
+                val tagX = "-" + android.os.Process.myPid() + "-" + System.nanoTime()
+                val tmpX = File(pyHomeX, "lib/.py314.tmp" + tagX)
+                try { tmpX.deleteRecursively() } catch (_: Exception) {}
+                tmpX.mkdirs()
+                var n = 0
+                fun cpTree(src: File, dst: File) {
+                    if (src.isDirectory) {
+                        if (!dst.exists()) dst.mkdirs()
+                        src.listFiles()?.forEach { cpTree(it, File(dst, it.name)) }
+                    } else {
+                        try {
+                            dst.parentFile?.mkdirs()
+                            src.inputStream().use { i -> dst.outputStream().use { o -> i.copyTo(o) } }
+                            n++
+                        } catch (_: Exception) {}
+                    }
+                }
+                val srcLibX = File(dest, "Lib")
+                if (srcLibX.isDirectory) cpTree(srcLibX, tmpX)
+                if (stdlibFull(tmpX)) {
+                    if (stdlibX.exists()) {
+                        try { stdlibX.renameTo(File(pyHomeX, "lib/.old" + tagX)) } catch (_: Exception) {}
+                    }
+                    if (!tmpX.renameTo(stdlibX)) {
+                        try { tmpX.copyRecursively(stdlibX, overwrite = true) } catch (_: Exception) {}
+                    }
+                    if (stdlibFull(stdlibX)) stdlibOkX.writeText("ok")
+                }
+                try { tmpX.deleteRecursively() } catch (_: Exception) {}
+                try { File(pyHomeX, "lib").listFiles()?.filter {
+                    it.name.startsWith(".old") || it.name.startsWith(".py314.tmp")
+                }?.forEach { it.deleteRecursively() } } catch (_: Exception) {}
+            }
+            // lib-dynload (modulele .so) - separate de Lib/
+            val dynX = File(stdlibX, "lib-dynload")
+            if (!dynX.exists() || dynX.list()?.isEmpty() != false) {
+                dynX.mkdirs()
+                val abi = if (android.os.Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a") "arm64" else "x86_64"
+                val dynSrcX = File(dest, "libdynload/$abi")
+                if (dynSrcX.isDirectory) dynSrcX.copyRecursively(dynX, overwrite = true)
+            }
+            // zip-urile pip/setuptools
+            try {
+                File(dest, "pysitepkg.zip").let {
+                    if (it.exists()) it.copyTo(File(pyHomeX, "lib/pysitepkg.zip"), overwrite = true)
+                }
+                File(dest, "stdlib_extra.zip").let {
+                    if (it.exists()) it.copyTo(File(pyHomeX, "lib/stdlib_extra.zip"), overwrite = true)
+                }
+            } catch (_: Exception) {}
+        } catch (e: Exception) { runOnUiThread { appendAnsi("\u001b[38;5;203m[pyhome] " + e + "\u001b[0m\n") } }
         // ★ FIX 2026-10-21 (cauza pentru care lectiile despre binder nu ajungeau la o
         // instalare curata): assets continea DOUA memory.md - unul in radacina assets/
         // (cel bun) si unul vechi in assets/python/memory.md (copiat de copyDir("python")).
@@ -1131,6 +1589,7 @@ class MainActivity : AppCompatActivity() {
             if (stamp.exists() && stamp.readText() == want &&
                 File(dest, "trixie-arm64.tar.zst").exists()) return
         } catch (_: Exception) {}
+        runCatching { if (dest.isDirectory) dest.deleteRecursively() }
         dest.mkdirs()
         fun copyDir(path: String, out: File) {
             val list = assets.list(path) ?: return
@@ -1169,7 +1628,7 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) {}
             }
         }
-        dest.deleteRecursively()
+        runCatching { if (dest.isDirectory) dest.deleteRecursively() }
         fun copyDir(path: String, out: File) {
             val list = assets.list(path) ?: return
             if (list.isEmpty()) {
@@ -1258,7 +1717,16 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
+    @Volatile private var pythonLaunching = false
+    @Volatile private var pythonStartRequestedAt = 0L
+
     private fun startPythonProcess(keyIn: String?) {
+        // ★ GARDA ANTI-DUPLICARE in MEMORIE (nu doar pe disc): onResume + runSetup pot
+        //   chema amandoua startPythonProcess -> 3 procese Python simultane (fiecare isi
+        //   deschide propriul worker de terminal si propria conexiune adb).
+        if (pythonLaunching) return
+        pythonLaunching = true
+        pythonStartRequestedAt = System.currentTimeMillis()
         Thread {
             try {
                 // ★ P1 GARDA ANTI-DUPLICARE (stare pe DISC, nu in memorie):
@@ -1480,7 +1948,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 val msg = e.toString()
                 runOnUiThread { appendAnsi("\n[ERROR] $msg\n") }
-            }
+            } finally { pythonLaunching = false }
         }.start()
     }
 
@@ -1526,6 +1994,19 @@ class MainActivity : AppCompatActivity() {
             //  feedbackul e schimbarea hint-ului de input)
             awaitingKey = false
             input.hint = "message the agent..."
+            // ★ BUG reparat ("a durat 2 minute pana a aparut ready si abia apoi cere cheia"):
+            //   saveKeyAndStart() chema DIRECT startPythonProcess(), sarind peste extractAssets()
+            //   si peste ecranul de setup. Daca pyhome nu exista, Python nu pornea si setup-ul
+            //   nu se mai facea niciodata. Acum, dupa salvare, pornim setup-ul COMPLET
+            //   (extract -> verify -> bridge -> python) exact o data, prin runSetup().
+            // ★ BUG reparat ("dupa ce am inserat cheia, ecranul arata toate etapele bifate
+            //   dar nu se intampla nimic"): runSetup() e idempotent prin runSetupStarted,
+            //   iar el RULASE deja o data (cand a aparut cererea de cheie) -> a doua chemare
+            //   iesea imediat si Python nu pornea niciodata.
+            //   Acum, dupa salvare, pornim DIRECT procesul Python (stdlib-ul e deja pe disc,
+            //   verificat de prima rulare a setup-ului).
+            appendAnsi("\n\u001b[38;5;114mKey saved.\u001b[0m Starting agent...\n")
+            runSetupStarted = false
             startPythonProcess(key.trim())
         } catch (e: Exception) {
             appendAnsi(RED + "[key] ERROR while saving: " + e.message + NRM + "\n")

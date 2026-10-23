@@ -190,6 +190,21 @@ class LinuxTerminalActivity : AppCompatActivity(), TerminalClient.Listener {
             input.requestFocus()
             openKeyboard()
         }
+        // ★ SETUP AUTOMAT LA DESCHIDEREA TERMINALULUI (cerut de operator):
+        //   instalarea mediului Linux porneste imediat ce se apasa TERMINAL, FARA sa mai
+        //   fie nevoie de o comanda care oricum esua ("proot_exec.so: inaccessible").
+        //   Progresul apare in terminal pas cu pas: "done Linux filesystem",
+        //   "done Linux runtime", "done Android service access", "done Compiler toolchain".
+        //   Idempotent: agent.py sare peste tot daca files/.debian_ready exista.
+        root.postDelayed({
+            try {
+                if (activeId >= 0) {
+                    appendCmd("[setup] configuring the Linux environment, please wait\u2026")
+                    client.sendCommand(activeId, "setup", uid2000 = false)
+                    scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+                }
+            } catch (_: Exception) {}
+        }, 700)
     }
 
     // ---------------- UI helpers ----------------

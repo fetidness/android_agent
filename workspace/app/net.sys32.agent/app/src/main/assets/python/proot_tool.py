@@ -355,6 +355,11 @@ def _logline(msg):
         pass
 
 
+# ★ Callback de progres LIVE: agent.py seteaza aici o functie care scrie DIRECT in
+#   terminal (files/tmp/term_out_*.txt), ca fiecare pas sa apara cand se termina.
+_LIVE_CB = [None]
+
+
 def ensure_ready_via_adb(progress=True):
     """★ SETUP COMPLET la prima deschidere a TERMINALULUI.
 
@@ -370,10 +375,24 @@ def ensure_ready_via_adb(progress=True):
       6. android-binder selftest
     """
     steps = []
+    # ★ _live e citit la INTRAREA in functie, dar callback-ul e setat de apelant INAINTE,
+    #   deci il luam din nou aici (inainte ramanea None daca functia era apelata din alt
+    #   loc, iar liniile [done] apareau doar la final, toate deodata).
+    _live = _LIVE_CB[0]
+
     def L(m):
         steps.append(m)
         if progress:
             _logline(m)
+        # ★ PROGRES LIVE (cerut de operator: "sa scrie progresiv ... una dupa alta"):
+        #   inainte toate liniile [done] erau emise DUPĂ ce setup-ul se termina, deci
+        #   utilizatorul vedea un bloc de text dintr-o data. Acum fiecare pas se scrie in
+        #   terminal in momentul in care se termina.
+        if _live is not None:
+            try:
+                _live(m)
+            except Exception:
+                pass
 
     try:
         os.remove(ADB_LOG)
