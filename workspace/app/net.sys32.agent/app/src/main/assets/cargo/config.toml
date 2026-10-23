@@ -1,0 +1,6 @@
+[build]
+target = "aarch64-linux-android"
+
+[target.aarch64-linux-android]
+linker = "/data/data/net.sys32.agent/files/tmp/cc-rust"
+rustflags = ["-C", "link-arg=--target=aarch64-linux-android36", "-C", "link-arg=--sysroot=/data/data/net.sys32.agent/files/toolchain/sysroot"]
