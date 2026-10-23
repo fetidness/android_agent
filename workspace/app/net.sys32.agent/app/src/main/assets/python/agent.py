@@ -2455,8 +2455,18 @@ def run_bridge_tool(action="battery", expr=None):
             r = bridge_call("sensors", "list")
         elif action == "camera":
             r = bridge_call("camera", "list")
-        elif action in ("apps", "settings", "system", "ui", "notif"):
-            r = bridge_call(action, "list")
+        elif action == "apps":
+            r = bridge_call("apps", "list")
+        elif action == "settings":
+            r = bridge_call("settings", "get")
+        elif action == "ui":
+            r = bridge_call("ui", "read")
+        elif action == "notif":
+            r = bridge_call("notif", "list")
+        elif action == "clipboard":
+            r = bridge_call("clipboard", "get")
+        elif action == "system":
+            r = bridge_call("system", "full")
         elif action == "location":
             r = bridge_call("location", "last")
         elif action in ("clipboard", "audio", "display", "device", "storage",
@@ -2466,6 +2476,10 @@ def run_bridge_tool(action="battery", expr=None):
             r = bridge_call(action or "battery")
     except Exception as e:
         r = {"ok": False, "error": type(e).__name__ + ": " + str(e)[:200]}
+    # DShell intoarce cheia `err`, nu `error`: o normalizam ca mesajul sa NU se piarda
+    if isinstance(r, dict) and not r.get("ok"):
+        if "error" not in r or not r.get("error"):
+            r["error"] = r.get("err") or r.get("message") or "unknown error (no message from bridge)"
     TN[0] += 1
     o = json.dumps(r, indent=1, ensure_ascii=False)
     TASK.update(steps=TASK["steps"] + 1, chars=TASK["chars"] + len(o))
