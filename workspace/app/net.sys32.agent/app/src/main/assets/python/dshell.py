@@ -13,17 +13,11 @@ Portul se citeste din dshell.port (scris de server), sau din $DSHELL_PORT.
 """
 import json, os, socket, sys
 
-# Ordinea conteaza: fisierele scrise de AndroidBridge.kt vin PRIMELE. dshell.port e
-# mostenire si poate fi VECHI (alt port decat cel pe care asculta serverul acum).
 PORTFILE_CANDIDATES = (
-    "/data/data/net.sys32.agent/files/bridge.port",
-    "/data/data/net.sys32.agent/files/home/bridge.port",
-    "/sdcard/Download/Agent/workspace/bridge.port",
     "/sdcard/Download/Agent/workspace/dshell.port",
-    "/data/local/tmp/bridge.port",
     "/data/local/tmp/dshell.port",
 )
-DEFAULT_PORT = None  # fara fisier nu ghicim: mai bine eroare clara decat port mort
+DEFAULT_PORT = 46500
 
 
 def get_port():
@@ -32,14 +26,10 @@ def get_port():
         return int(p)
     for f in PORTFILE_CANDIDATES:
         try:
-            v = int(open(f).read().strip())
-            if v > 0:
-                return v
+            return int(open(f).read().strip())
         except Exception:
             continue
-    if DEFAULT_PORT:
-        return DEFAULT_PORT
-    raise SystemExit("[dshell] nu gasesc portul bridge-ului in: " + ", ".join(PORTFILE_CANDIDATES))
+    return DEFAULT_PORT
 
 
 def call(cmd, arg="", port=None, timeout=None):
@@ -72,15 +62,11 @@ def main():
         return 2
     cmd = sys.argv[1]
     arg = " ".join(sys.argv[2:])
-    try:
-        r = call(cmd, arg)
-    except (ConnectionRefusedError, OSError) as e:
-        print("[dshell] portul %s nu raspunde (%s) - aplicatia ruleaza?" % (get_port(), e), file=sys.stderr)
-        return 1
+    r = call(cmd, arg)
     if r.get("ok"):
         print(r.get("out", ""), end="" if r.get("out", "").endswith("\n") else "\n")
         return 0
-    print("[dshell] EROARE: %s" % (r.get("err") or r.get("error")), file=sys.stderr)
+    print("[dshell] EROARE: %s" % r.get("err"), file=sys.stderr)
     return 1
 
 

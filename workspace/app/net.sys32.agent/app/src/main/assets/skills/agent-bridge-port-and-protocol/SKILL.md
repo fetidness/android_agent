@@ -1,55 +1,48 @@
 ---
 name: agent-bridge-port-and-protocol
-description: "Diagnose why the Android agent's Python clients (android_full.py, dshell.py, android_bridge.py) cannot reach the Kotlin AndroidBridge: wrong bridge.port file, wrong JSON protocol, or a missing native action forcing reflection. Use when the agent improvises with `eval`/reflection and fails with 'field not found', 'unknown tool' or 'cannot resolve target'."
+description: "Two independent servers expose Android to Python on this device: DShell (inside agent.py, port 46500-46519, file dshell.port, protocol {cmd,arg}, supports sh/debian/eval + any native tool) and AndroidBridge.kt (Kotlin, file bridge.port, protocol {tool,action,params}). Use when a client gets 'unknown tool', picks the wrong port, or you are about to 'fix' dshell.py."
 ---
-# Bridge Python <-> AndroidBridge.kt: portul, protocolul, actiunile lipsa
+# DShell vs AndroidBridge: doua servere diferite, nu unul
 
-## Cand se foloseste
-- Agentul incearca sa aprinda lanterna / sa citeasca un senzor si ocoleste prin `eval` cu reflexie.
-- Erori tipice: `unknown tool:`, `field not found: cameraIdList`,
-  `method ...get argument 1 has type CameraCharacteristics$Key, got java.lang.String`,
-  `cannot resolve target: svc:media.camera`.
+## Regula de aur (masurata 2026-10-24, dupa ce am stricat-o)
+**`dshell.py` si `android_full.py` sunt COREcte in git. Nu le "repara".**
+Ordinea din `PORTFILE_CANDIDATES` (dshell.port PRIMUL) este intentionata.
 
-## Cauza radacina (masurat 2026-10-24)
-Exista TREI clienti Python cu TREI conventii diferite, dar UN SINGUR server:
-`AndroidBridge.kt` este singurul care scrie `files/bridge.port` si accepta doar
-`{"tool":..,"action":..,"params":{..}}`.
+## Cele doua servere
 
-| fisier | cauta portul in | protocol |
+| | DShell | AndroidBridge.kt |
 |---|---|---|
-| android_bridge.py | bridge.port (corect) | {tool,action,params} |
-| android_full.py | dshell.port INAINTE de bridge.port (greșit) | {cmd,arg} (greșit) |
-| dshell.py | doar /sdcard + /data/local/tmp, default 46500 | {cmd,arg} |
+| unde | IN `agent.py` (`_dshell_serve`) | procesul aplicatiei, Kotlin |
+| fisier port | `dshell.port` (46500..46519) | `bridge.port` |
+| protocol | `{"cmd","arg"}` | `{"tool","action","params"}` |
+| `ping` | `pong` | unknown tool |
+| `sh` | uid 2000 | **nu exista** |
+| `debian` | proot rootfs | **nu exista** |
+| `eval` | reflexie | doar ca tool `eval` |
+| native tools | le ruteaza la android_bridge | nativ |
 
-`dshell.port` ramane pe disc cu valoarea dintr-o rulare VECHE (ex. 46500) in timp ce
-`bridge.port` are portul real (ex. 34793). Cine citeste intai dshell.port vorbeste pe un port mort.
+DShell e SUPERSETUL: `_dshell_handle` ruteaza orice nume necunoscut catre
+`android_bridge`, deci `{"cmd":"battery","arg":'{"action":"full"}'}` merge.
 
-## Reparatii aplicate in sursa
-1. `AndroidBridge.kt` — acțiune noua `camera`/`action=torch` cu `params.on`, plus `torch_list`.
-   CameraManager NU are getter de torch, deci starea se tine intr-un `object TorchState`.
-2. `android_full.py` — `_port_candidates()` pune `files/bridge.port` PRIMUL; `_request()` trimite
-   protocolul corect; `tool()`, `torch()`, `flash(n)`; `_probe()` foloseste `camera list`
-   (`ping` nu exista ca tool); `BrokenPipeError` prins in `__main__`.
-3. `dshell.py` — aceleasi cai, `DEFAULT_PORT = None` (fara ghicit), retry explicit.
-
-## Verificare (pe device, nu pe loguri)
+## Dovada ca DShell e viu (ruleaza asta INAINTE sa concluzionezi ceva)
 ```
-adb shell run-as net.sys32.agent cat files/bridge.port      # portul REAL
-adb shell run-as net.sys32.agent cat files/tmp/dshell.port  # poate fi VECHI - nu te baza pe el
-T='run-as net.sys32.agent sh files/tmp/python3.sh files/python/android_full.py'
-adb shell "$T available"                 # {"available":true,"port":...}
-adb shell "$T camera '{\"action\":\"torch_list\"}'"
-adb shell "$T flash 3"
-adb shell dumpsys media.camera | grep -i 'Torch for camera' | head -6   # DOVADA fizica
+python3 -c: socket -> 127.0.0.1:46500, trimite {"cmd":"ping"}
+  -> {"ok": true, "out": "pong"}
+  {"cmd":"debian","arg":"cat /etc/debian_version"} -> "13.7"
+  {"cmd":"sh","arg":"id -u"}                       -> "2000"
+  {"cmd":"battery","arg":"{\"action\":\"full\"}"}   -> level/charging/temp
+  {"cmd":"sensors","arg":"{\"action\":\"list\"}"}   -> 35 senzori
+  {"cmd":"eval","arg":"{\"op\":\"call\",\"target\":\"ctx\",\"method\":\"getPackageName\"}"}
 ```
 
 ## Capcane
-- `python3.sh` din `files/tmp` e scris de `toolchain.py` si contine calea
-  `nativeLibraryDir`. Dupa FIECARE reinstalare calea `codePath` se schimba
-  (`/data/app/~~XXXX==/net.sys32.agent-YYYY==`), deci wrapper-ul vechi da
-  `libpyexec.so: inaccessible or not found`. Se repara ruland toolchain-ul sau rescriind
-  wrapper-ul cu `pm path net.sys32.agent`.
-- NU taia calea cu `cut -d= -f2`: `~~XXXX==` contine `=`. Foloseste
-  `pm path net.sys32.agent | sed 's|package:||;s|/base.apk||'`.
-- `dumpsys media.camera` fara pipe in `adb shell` da "inaccessible or not found";
-  ruleaza-l cu stdin din python sau fara pipe.
+- `dshell.port` NU e "vechi": e portul DShell. `bridge.port` e alt server. Ambele sunt vii.
+- Istoric: `dshell_bridge.py` (proces separat, port 45800) a fost ABSORBIT in `agent.py`
+  in commit-ul `d130556` ("stabil la rebuild"). Fisierul nu mai exista pe disc, dar
+  serverul DA - e in agent.py.
+- `python3.sh` din `files/tmp` contine `nativeLibraryDir`, care se schimba la FIECARE
+  reinstalare (`/data/app/~~XXXX==/net.sys32.agent-YYYY==`). Simptom:
+  `libpyexec.so: inaccessible or not found`. Repara cu
+  `pm path net.sys32.agent | sed 's|package:||;s|/base.apk||'` (NU `cut -d= -f2`: calea contine `==`).
+- `dumpsys media.camera` fara pipe in `adb shell` da "inaccessible or not found":
+  ruleaza-l din python sau fara pipe.
