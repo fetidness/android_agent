@@ -20,6 +20,20 @@ Uz:
   python3 android_full.py sensors '{"action":"list"}'
   python3 android_full.py battery '{"action":"full"}'
   python3 android_full.py ui '{"action":"read","max":10}'
+  python3 android_full.py camera '{"on":true}'        # LANTERNA (nativ, nu reflexie)
+  python3 android_full.py camera '{"on":false}'
+
+Protocol: doua formate, in functie de cmd.
+  {"cmd","arg"}                  -> comenzile vechi: sh, debian, ping
+  {"tool","action","params":{}}  -> tot ce expune AndroidBridge.kt:
+                                    sensors, camera, location, battery, clipboard, notify,
+                                    vibrate, tts, volume, wifi, device, apps, intent, settings,
+                                    system, storage, processes, network, display, audio,
+                                    telephony, ui, notif, ime, capture, eval, services, info
+
+Lanterna are acum actiune nativa: {"tool":"camera","action":"torch","params":{"on":true}}.
+Inainte lipsea si trebuia improvizata cu reflexie peste CameraManager.setTorchMode,
+care esua cu "field not found: cameraIdList" si "argument 1 has type CameraCharacteristics$Key".
 """
 import json
 import os
@@ -32,16 +46,36 @@ _PORT = {"v": None}
 
 
 def _port_candidates():
+    """Fisierele unde serverul Kotlin isi anunta portul, in ordinea de preferinta.
+
+    AndroidBridge.kt scrie DOUA fisiere: files/bridge.port si files/home/bridge.port.
+    Restul sunt mosteniri istorice (dshell.port) - pastrate ca fallback, dar ultimele,
+    pentru ca pot fi VECHI si atunci clientul vorbeste pe un port mort.
+    """
     c = []
     env = os.environ.get("DSHELL_PORT_FILE")
     if env:
         c.append(env)
-    # calea pe care Debian o vede (workspace-ul de pe /sdcard)
+    env = os.environ.get("AGENT_BRIDGE_PORT_FILE")
+    if env:
+        c.append(env)
+    home = os.environ.get("HOME", "")
+    if home:
+        c.append(os.path.join(home, "bridge.port"))
+        c.append(os.path.join(os.path.dirname(home), "bridge.port"))
+    try:
+        here = Path(__file__).resolve().parent          # files/python
+        files = here.parent                             # files
+        c.append(str(files / "bridge.port"))            # <- calea REALA scrisa de Kotlin
+        c.append(str(files / "home" / "bridge.port"))
+        c.append(str(here / "bridge.port"))
+        c.append(str(here.parent / "tmp" / "dshell.port"))
+    except Exception:
+        pass
+    c.append("/data/data/net.sys32.agent/files/bridge.port")
+    c.append("/data/data/net.sys32.agent/files/home/bridge.port")
     c.append("/storage/emulated/0/Download/Agent/workspace/dshell.port")
     c.append("/data/local/tmp/dshell.port")
-    here = Path(__file__).resolve().parent
-    c.append(str(here / "dshell.port"))
-    c.append(str(here.parent / "tmp" / "dshell.port"))
     return c
 
 
@@ -60,13 +94,13 @@ def port(force=False):
     raise RuntimeError("dshell.port negasit in: " + ", ".join(_port_candidates()))
 
 
-def call(cmd, arg=""):
-    """O cerere DShell. Intoarce dict-ul brut {"ok":..,"out"/"error":..}."""
+def _request(payload, timeout=120):
+    """Trimite UN dict JSON pe o linie si citeste UN dict JSON inapoi."""
     def _once():
         p = port()
-        s = socket.create_connection(("127.0.0.1", p), timeout=120)
+        s = socket.create_connection(("127.0.0.1", p), timeout=timeout)
         try:
-            s.sendall((json.dumps({"cmd": cmd, "arg": arg}) + "\n").encode())
+            s.sendall((json.dumps(payload) + "\n").encode())
             buf = b""
             while not buf.endswith(b"\n"):
                 ch = s.recv(65536)
@@ -74,7 +108,7 @@ def call(cmd, arg=""):
                     break
                 buf += ch
             if not buf:
-                raise RuntimeError("raspuns gol de la dshell")
+                raise RuntimeError("raspuns gol de la bridge")
             return json.loads(buf.decode("utf-8", "replace"))
         finally:
             try:
@@ -86,6 +120,23 @@ def call(cmd, arg=""):
     except Exception:
         port(force=True)      # aplicatia poate fi pe alt port acum
         return _once()
+
+
+def call(cmd, arg=""):
+    """O cerere DShell in VECHIUL protocol {"cmd","arg"} (pastrat pentru `sh`/`debian`)."""
+    return _request({"cmd": cmd, "arg": arg})
+
+
+def tool(name, action="", **params):
+    """Cerere in protocolul REAL al serverului: {"tool","action","params"}.
+
+    AndroidBridge.kt (singurul care scrie bridge.port) accepta doar acest format;
+    {"cmd","arg"} dadea "unknown tool: ".
+    """
+    r = _request({"tool": name, "action": action, "params": params})
+    if not r.get("ok"):
+        raise RuntimeError(str(r.get("error"))[:300])
+    return r.get("data")
 
 
 def ok(cmd, arg=""):
@@ -110,11 +161,16 @@ def json_call(cmd, action="", **params):
     return out
 
 
-def available():
+def _probe():
+    """Bridge viu? `ping` NU e tool in AndroidBridge.kt (dadea 'unknown tool:') - folosim camera list."""
     try:
-        return bool(call("ping").get("ok"))
+        return bool(_request({"tool": "camera", "action": "list", "params": {}}).get("ok"))
     except Exception:
         return False
+
+
+def available():
+    return _probe()
 
 
 # ---- scurtaturi pentru cazurile cele mai folosite ----
@@ -137,6 +193,29 @@ def get_system_service(name):
     """Exact ca ctx.getSystemService din cod Android."""
     return eval_expr({"op": "call", "target": "ctx",
                       "method": "getSystemService", "args": [name]})
+
+
+# ---- lanterna (actiune nativa `camera torch`, nu reflexie) ----
+def torch(on):
+    """Porneste/opreste lanterna. Intoarce {"on":bool,"cameraId":str}."""
+    return tool("camera", "torch", on=bool(on))
+
+
+def torch_status():
+    """Starea lanternei asa cum o tine minte aplicatia (serverul nu are getter nativ)."""
+    return tool("camera", "status")
+
+
+def flash(times=1, delay=0.4):
+    """Porneste lanterna de `times` ori, cu pauza intre cicluri. Intoarce lista de stari."""
+    import time as _t
+    out = []
+    for i in range(int(times)):
+        out.append({"cycle": i + 1, "on": torch(True)})
+        _t.sleep(delay)
+        out.append({"cycle": i + 1, "off": torch(False)})
+        _t.sleep(delay)
+    return out
 
 
 def _dshell_bin():
@@ -164,16 +243,33 @@ if __name__ == "__main__":
         sys.exit(0)
     cmd = a[0]
     arg = a[1] if len(a) > 1 else ""
+    # Comenzile vechi vorbesc {"cmd","arg"}; orice altceva e un TOOL nativ {"tool","action","params"}.
+    LEGACY = ("sh", "debian", "ping")
     try:
         if cmd == "available":
-            out = {"available": available(), "port": port()}
+            out = {"available": _probe(), "port": port()}
+        elif cmd == "torch":
+            out = torch(arg.strip().lower() in ("1", "on", "true", "yes"))
+        elif cmd == "flash":
+            out = flash(int(arg or 1))
         else:
-            r = call(cmd, arg)
+            if cmd in LEGACY:
+                r = call(cmd, arg)
+            else:
+                params = {}
+                action = ""
+                if arg.strip():
+                    try:
+                        params = json.loads(arg)
+                    except Exception:
+                        params = {"action": arg.strip()}
+                if isinstance(params, dict) and "action" in params:
+                    action = str(params.pop("action"))
+                r = _request({"tool": cmd, "action": action, "params": params})
             if not r.get("ok"):
-                print("ERR: " + str(r.get("error"))[:300])
+                print("ERR: " + str(r.get("error") or r.get("err"))[:300])
                 sys.exit(1)
-            out = r.get("out")
-            # multe comenzi intorc JSON ca STRING: il parsez o data, ca sa fie utilizabil
+            out = r.get("data", r.get("out"))
             if isinstance(out, str):
                 s = out.strip()
                 if s[:1] in "[{":
@@ -185,6 +281,16 @@ if __name__ == "__main__":
             print(out)
         else:
             print(json.dumps(out, indent=1, ensure_ascii=False)[:8000])
+    except BrokenPipeError:
+        # `| head` inchide pipe-ul: nu e o eroare reala, dar traceback-ul polueaza output-ul
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except Exception:
+            pass
+        sys.exit(0)
     except Exception as e:
-        print("ERR: " + type(e).__name__ + ": " + str(e)[:300])
+        try:
+            print("ERR: " + type(e).__name__ + ": " + str(e)[:300])
+        except BrokenPipeError:
+            pass
         sys.exit(1)

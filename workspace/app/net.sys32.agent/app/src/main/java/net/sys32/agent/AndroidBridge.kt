@@ -52,6 +52,24 @@ class AndroidBridge(
     private val ctx: Context,
     private val socketFile: File,
 ) {
+    /** Starea lanternei: CameraManager nu are getter pentru torch, deci o tinem noi. */
+    private object TorchState {
+        @Volatile var isOn = false
+        @Volatile var cameraId = "0"
+        /** Prima camera din spate care are blit; altfel prima cu blit. */
+        fun pickCamera(cm: CameraManager): String {
+            if (cameraId.isNotEmpty() && runCatching { cm.getCameraCharacteristics(cameraId) }.isSuccess) return cameraId
+            var fallback = ""
+            for (id in cm.cameraIdList) {
+                val ch = cm.getCameraCharacteristics(id)
+                if (ch.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) != true) continue
+                if (fallback.isEmpty()) fallback = id
+                if (ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK) return id
+            }
+            return fallback.ifEmpty { cameraId.ifEmpty { "0" } }
+        }
+    }
+
     companion object { const val TAG = "AgentBridge" }
 
     private val refl by lazy { Reflection(ctx) }
@@ -554,7 +572,38 @@ class AndroidBridge(
                 ok(JSONObject().put("requested", true).put("path", path)
                     .put("note", "the photo is taken in the background; it appears in a few seconds at the given path"))
             }
-            else -> err("camera: action must be list|photo")
+            "torch", "flash", "flashlight" -> {
+                // Lanterna: actiune de PRIMA CLASA. Inainte lipsea si orice apel trebuia
+                // improvizat cu reflexie peste CameraManager.setTorchMode (greu de ghicit din Python).
+                val on = when (action) {
+                    "status" -> null
+                    else -> p.optBoolean("on", false)
+                }
+                if (on == null) {
+                    ok(JSONObject().put("on", TorchState.isOn).put("cameraId", TorchState.cameraId))
+                } else {
+                    val id = p.optString("id", "").ifEmpty { TorchState.pickCamera(cm) }
+                    try {
+                        cm.setTorchMode(id, on)
+                        TorchState.isOn = on
+                        TorchState.cameraId = id
+                        ok(JSONObject().put("on", on).put("cameraId", id))
+                    } catch (e: Exception) {
+                        err("torch(setTorchMode id=$id on=$on) failed: " + e.javaClass.simpleName + ": " + e.message)
+                    }
+                }
+            }
+            "torch_list" -> {
+                val arr = JSONArray()
+                for (id in cm.cameraIdList) {
+                    val ch = cm.getCameraCharacteristics(id)
+                    arr.put(JSONObject().put("id", id)
+                        .put("hasFlash", ch.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true)
+                        .put("facing", if (ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT) "front" else "back"))
+                }
+                ok(arr)
+            }
+            else -> err("camera: action must be list|photo|torch|torch_list")
         }
     }
 
