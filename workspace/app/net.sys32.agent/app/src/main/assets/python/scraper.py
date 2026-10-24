@@ -42,11 +42,18 @@ def lxml_tostr(el):
         return str(el)
 
 def css(url, sel, attr=None):
-    """Selectori CSS prin parsel (peste lxml)."""
+    """Selectori CSS prin parsel (peste lxml).
+
+    FIX 24 oct: daca selectorul contine deja un pseudo-element (::text, ::attr(x)),
+    getall() direct pe el - vechiul cod aplica xpath("string(.)") peste rezultat
+    si returna mereu lista goala pentru 'h2::text'.
+    """
     from parsel import Selector
     s = Selector(text=fetch(url))
-    if attr: return s.css(sel).xpath("@"+attr).getall()
-    return s.css(sel).xpath("string(.)").getall()
+    if attr: return s.css(sel).xpath("@" + attr).getall()
+    if "::" in sel: return [x.strip() for x in s.css(sel).getall() if x.strip()]
+    out = s.css(sel).xpath("string(.)").getall()
+    return [x.replace("\u200b", "").strip() for x in out]
 
 def rss(url, limit=30):
     import feedparser

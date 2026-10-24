@@ -114,3 +114,15 @@ DEAD: cod Java/ART propriu din uid 2000 -> `app_process /system/bin` da "Error c
 OK: ierarhia reala pe acest device: aplicatia (reflection+SDK, sandbox untrusted_app) > uid 2000 (comenzi de sistem, fara API nativ) > root (inexistent, build user ro.secure=1)
 TRAP: `dumpsys battery | head -12` trunchiaza output-ul -> pipe se inchide inainte de campurile utile -> apare doar "Max charging voltage: 0" fara level/voltage/temp -> ruleaza dumpsys FARA head (12015 B) sau filtreaza cu grep pe campul dorit
 P: /storage/emulated/0/Download/Agent/workspace/PLAN_DEBIAN_ACCES_DEPLIN.md -> plan acces deplin Android din Debian (4 cai evaluate, blocajul app_process masurat)
+
+## 2026-10-24 - scraper integrat ca tool principal de web (sesiune: workspace)
+OK: `scraper` e acum TOOL in agent.py (13 actiuni: article/supreme/xpath/css/links/meta/table/head/fetch/sniff/rss/deep/js) - integrat in 4 puncte: lista T, run_scraper_tool(), if fn=="scraper" din _call_tool_inner, si sandbox-ul din run_code. TOOLGUIDE spune explicit: pentru web se foloseste scraper PRIMUL, nu requests+BeautifulSoup.
+OK: stack compilat nativ cu toolchain pip_install: lxml 6.1.3 (117s), parsel 1.12.1, trafilatura 2.3.1, feedparser 6.0.14, justext 3.0.2, quickjs 1.19.4 (44s). quickjs e obligatoriu pentru actiunile deep/js (jsengine.py).
+TRAP: `scraper.py` apeleaza `scraper.crawl()` care NU EXISTA -> actiunile reale sunt supreme/deep/js. Verifica `[n for n,o in vars(scraper).items() if inspect.isfunction(o)]` inainte sa pui o actiune in schema.
+TRAP: `deep` intoarce DICT (nu lista) cand nu gaseste date -> `r[:200]` da KeyError: slice. Fix: `if isinstance(r,list): r=r[:200]`.
+BUG reparat in scraper.css(): daca selectorul contine deja `::text`, vechiul cod aplica xpath("string(.)") peste rezultat si returna MEREU []. Acum: daca "::" in sel -> getall() direct, plus strip() pe \u200b (zero-width space din heading-uri).
+OK: scraper.py trimite User-Agent, requests+BS4 fara UA primeste de la Wikipedia 126 bytes ("Please set a user-agent"). Deci scraper e si mai ROBUST, nu doar mai rapid. Cu UA corect: BS4 scoate 1.4MB HTML brut, scraper scoate 82350 chars de text curat.
+RULE (out of the box): pachetele Python livrate in APK stau in `assets/python/Lib/site-packages/` (NU in pysitepkg.zip, care are doar build-tools: pip/setuptools/meson). MainActivity copiaza assets -> files/pyhome/.../site-packages.
+TRAP: `.gitignore` linia `*.so` blocheaza si modulele NATIVE din assets -> lxml/etree.so, quickjs/_quickjs.so nu ajung in APK si scraper moare dupa rebuild. Fix: negatie la SFARSITUL .gitignore pentru `assets/python/Lib/site-packages/**/*.so` si `libdynload/**/*.so`.
+P: ~/android_agent in Debian (clone git@github.com:fetidness/android_agent.git, cheia in /storage/emulated/0/Download/ssh_github/id_ed25519)
+TRAP: Debian NU vede /data/data/net.sys32.agent/files (SELinux) -> pentru sync device->repo se copiaza intai in /storage/emulated/0/Download/Agent/workspace/sync/ apoi in repo.
