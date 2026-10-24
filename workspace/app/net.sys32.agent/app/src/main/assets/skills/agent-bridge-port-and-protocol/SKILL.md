@@ -24,6 +24,46 @@ Ordinea din `PORTFILE_CANDIDATES` (dshell.port PRIMUL) este intentionata.
 DShell e SUPERSETUL: `_dshell_handle` ruteaza orice nume necunoscut catre
 `android_bridge`, deci `{"cmd":"battery","arg":'{"action":"full"}'}` merge.
 
+
+## Procedura de diagnostic (in ordinea asta - altfel tragi concluzii false)
+1. **Intreaba SERVERUL, nu clientul.** Un client stricat te face sa crezi ca serverul nu exista.
+   ```
+   adb shell run-as net.sys32.agent cat files/bridge.port       # AndroidBridge
+   adb shell run-as net.sys32.agent cat files/tmp/dshell.port   # DShell
+   adb shell ss -ltn | grep -E '46500|34793'                    # cine asculta
+   ```
+2. Sondeaza fiecare port cu payload-ul POTRIVIT (script pe disc, NU `-c` cu ghilimele
+   imbricate - escapare in `adb shell` da output GOL si crezi ca portul e mort):
+   ```python
+   import socket, json
+   def probe(port, payload):
+       s=socket.socket(); s.settimeout(6); s.connect(("127.0.0.1",port))
+       s.sendall((json.dumps(payload)+"\n").encode())
+       buf=b""
+       while not buf.endswith(b"\n"):
+           c=s.recv(65536)
+           if not c: break
+           buf+=c
+       s.close(); return buf.decode("utf-8","replace").strip()
+   probe(46500, {"cmd":"ping"})                              # DShell  -> pong
+   probe(46500, {"cmd":"debian","arg":"cat /etc/debian_version"})  # -> 13.7
+   probe(46500, {"cmd":"sh","arg":"id -u"})                  # -> 2000
+   probe(34793, {"cmd":"ping"})                              # AndroidBridge -> unknown tool
+   probe(34793, {"tool":"camera","action":"list","params":{}})     # -> camerele
+   ```
+3. Abia apoi citeste codul: `_dshell_handle` in `agent.py` arata exact ce comenzi
+   accepta DShell (`ping|sh|debian|eval`, restul -> `android_bridge`).
+
+## Pitfalls
+- **Un client stricat NU dovedeste ca serverul lipseste.** Am concluzionat "DShell nu
+  exista" pentru ca `dshell.py` intorcea `unknown tool:` - el lua `bridge.port` pentru ca
+  fusesem eu insumi pus `bridge.port` inaintea `dshell.port` in `PORTFILE_CANDIDATES`.
+  Verificarea corecta e pasul 1-2 de mai sus, nu rularea clientului.
+- A pune `bridge.port` primul in `dshell.py` / `android_full.py` STRICA ambele:
+  ele vorbesc DShell. Restaurare: `git checkout <commit> -- <fisier>`.
+- `adb shell 'run-as ... '` rulat prin `bash -lc` pe HOST da `run-as: command not found`
+  (comanda ajunge local). Foloseste `subprocess.run([ADB,"shell"], input=cmd)`.
+
 ## Dovada ca DShell e viu (ruleaza asta INAINTE sa concluzionezi ceva)
 ```
 python3 -c: socket -> 127.0.0.1:46500, trimite {"cmd":"ping"}

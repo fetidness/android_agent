@@ -3,7 +3,83 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `6a5af83` (2026-10-23).
+> Ultimul commit inclus: `0bbe8f4` (2026-10-24).
+
+### 2026-10-24 (c) - LANTERNA NATIVA, WIPE TOTAL SI E2E DE LA ZERO
+
+> **Context:** operatorul a cerut un test E2E pe curat (build complet, stergere totala
+> de pe telefon, reinstalare). Sesiunea a inceput cu o eroare de diagnostic a mea
+> (am afirmat ca DShell nu exista) care a fost corectata prin verificare in git.
+
+#### Ce s-a adaugat in sursa
+
+- **`AndroidBridge.kt`: actiunea nativa `camera/action=torch`** (+ `torch_list`).
+  Inainte lipsea, iar orice apel trebuia improvizat cu reflexie peste
+  `CameraManager.setTorchMode`, care esua cu `field not found: cameraIdList` si
+  `argument 1 has type CameraCharacteristics$Key`. Starea se tine in `object TorchState`
+  (CameraManager nu are getter pentru torch), cu alegerea automata a camerei cu blit.
+
+#### Ce s-a restaurat (reparasem ce nu era stricat)
+
+In sesiunea anterioara am "reparat" doi clienti corecti. Ambele restaurate din `3cfb540`:
+
+- `dshell.py` - pusesem `bridge.port` inaintea `dshell.port` in lista de cautare,
+  deci lua portul AndroidBridge si primea `unknown tool:`.
+- `android_full.py` - schimbasem protocolul pe `{tool,action,params}` desi el vorbeste
+  cu DShell (`{cmd,arg}`).
+
+#### Clarificare de arhitectura (masurata, nu presupusa)
+
+Exista **doua servere diferite**, ambele vii simultan:
+
+| | DShell | AndroidBridge.kt |
+|---|---|---|
+| unde | in `agent.py` (`_dshell_serve`) | Kotlin, procesul aplicatiei |
+| fisier port | `dshell.port` (46500..46519) | `bridge.port` |
+| protocol | `{"cmd","arg"}` | `{"tool","action","params"}` |
+| `ping` | `pong` | `unknown tool` |
+| `sh` / `debian` | da (uid 2000 / proot) | nu |
+
+DShell e superset: ruteaza orice nume necunoscut catre `android_bridge`.
+Istoric: `dshell_bridge.py` (proces separat, port 45800) a fost absorbit in `agent.py`
+in `d130556`; fisierul nu mai exista pe disc, dar serverul da.
+
+#### Build + wipe + reinstalare (2026-10-24)
+
+- `gradle --offline clean assembleDebug` -> **BUILD SUCCESSFUL in 52s**, APK 1 068 882 403 B.
+- Stergere totala: `pm uninstall` + `/data/data/net.sys32.agent`,
+  `/sdcard/Android/data/net.sys32.agent`, `/sdcard/Download/Agent`,
+  `/data/local/tmp/{debian,debkeep,binder,proot_exec.so}`, ~70 scripturi.
+  Verificat cu `ls` ca nu mai exista (nu doar mesajul de la `rm`).
+  **NU** s-au atins fisierele care nu apartin agentului (`xp`, `tbox`, `wt`, tarball-uri Wine).
+- Reinstalare curata: `firstInstallTime == lastUpdateTime` = 18:11:50.
+- Setup automat: 248 MB -> **2236 MB** extras; aplicatia si-a instalat singura
+  `gcc libc6-dev` (prins in flagrant ca `apt-get` PID 26673, lasat sa termine).
+
+#### Rezultatul E2E (14 verificari, toate PASS)
+
+| Test | Rezultat |
+|---|---|
+| DShell ping / sh / debian | `pong` / `2000` / `13.7` |
+| DShell battery / sensors / eval | level 39 CHARGING / **35 senzori** / `net.sys32.agent` |
+| AndroidBridge camera list | 4 camere |
+| Bridge torch ON/OFF | `{"on":true,"cameraId":"0"}` / `false` |
+| battery full / device info | level 39, 28.7 C / SM-A366B samsung |
+| location last | 55.4806, 9.4747 (GPS, 12.7 m) |
+| apps list / debian sdcard | pachete reale / `Android DCIM` |
+| debian python3 / gcc / whoami | `42` / `gcc 14.2.0` / `root` |
+
+Porturi in aceasta rulare: `dshell=46500`, `bridge=33187`.
+
+#### Observat, de stiut
+
+- `python3` **nu vine** cu rootfs-ul `debootstrap minbase`; se instaleaza in ~20 s prin
+  `debian "apt-get install -y python3"`.
+- `files/tmp/python3.sh` contine `nativeLibraryDir`, care se schimba la fiecare
+  reinstalare (`/data/app/~~XXXX==/net.sys32.agent-YYYY==`). Simptom:
+  `libpyexec.so: inaccessible or not found`. `toolchain.py` il rescrie corect singur.
+- `logcat -b crash | grep -c net.sys32.agent` numara orice mentiune, nu crash-uri:
+  verificarea corecta e `grep -A3 'FATAL EXCEPTION'`, care a fost gol.
 
 ### 2026-10-23 (b) - UNIFICARE PE DSHELL: o singura punte, nu doua
 

@@ -43,6 +43,16 @@
 > ordine greșită). Detalii complete: `CHANGELOG.md` 2026-10-23 și secțiunea
 > „ECRAN DE CONFIGURARE" mai jos.
 
+> **Stare 2026-10-24:** build complet + **wipe total + reinstalare curata + test E2E de la zero**,
+> cu **14/14 verificari PASS** pe device. S-a adaugat actiunea nativa **`camera/action=torch`**
+> in `AndroidBridge.kt` (inainte lipsea si orice aprindere a lanternei trebuia improvizata cu
+> reflexie peste `CameraManager`, care esua). S-a clarificat o confuzie de arhitectura care a
+> costat o sesiune intreaga: exista **DOUA servere diferite**, ambele vii simultan —
+> **DShell** (`agent.py`, fisier `dshell.port`, protocol `{"cmd","arg"}`, are `sh` + `debian`)
+> si **AndroidBridge.kt** (Kotlin, fisier `bridge.port`, protocol `{"tool","action","params"}`,
+> doar tool-uri native). DShell e superset. `dshell.py` si `android_full.py` sunt corecte
+> si **nu trebuie "reparate"**. Detalii: `CHANGELOG.md` 2026-10-24 (c).
+
 ## 🚀 SETUP AUTOMAT (2026-10-21) - INSTALAREA APK = MEDIU COMPLET FUNCTIONAL
 
 ### Ce se intampla
@@ -122,6 +132,13 @@ TRAP: terminalul chema `libproot_exec.so`, setup-ul instaleaza `proot_exec.so`
   -> "inaccessible or not found" la ORICE comanda din Debian.
 
 ## 🔗 DShell BRIDGE (2026-10-21) - DEBIAN VORBESTE CU ANDROIDUL
+
+> **ATENTIE (2026-10-24):** DShell si AndroidBridge sunt servere **diferite**, nu unul si acelasi.
+> DShell traieste in `agent.py` si scrie `dshell.port` (46500..46519); accepta `{"cmd","arg"}` si
+> stie `ping`, `sh` (uid 2000), `debian` (proot) si orice tool nativ (rutat la `android_bridge`).
+> AndroidBridge.kt scrie `bridge.port` si accepta doar `{"tool","action","params"}`.
+> Daca un client primeste `unknown tool:`, aproape sigur vorbeste pe portul celuilalt.
+> Verificare rapida: `{"cmd":"ping"}` -> `pong` inseamna DShell.
 
 Punte RPC prin **TCP pe localhost** care da codului din Debian acces la **tot** ce
 poate face agentul: comenzi Android uid 2000, reflecție SDK si toate tool-urile native.
