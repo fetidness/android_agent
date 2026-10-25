@@ -206,7 +206,9 @@ def render(t):
         else:
             out.append(_chunk(_compact(p)))
     return re.sub(r"^\n+","",re.sub(r"\n(?:\n)+$","\n","".join(out)))
-WORK=os.path.join(os.path.dirname(os.path.abspath(__file__)),"temp")
+# AGENT_WORK (optional): the working folder can be given from outside, so a test/session runs in its OWN
+# directory instead of always using temp/ next to the script (the local agent works this way).
+WORK=os.environ.get("AGENT_WORK") or os.path.join(os.path.dirname(os.path.abspath(__file__)),"temp")
 os.makedirs(WORK,exist_ok=True)
 CTXNAME="context.json"       # conversation history: lives permanently in the working folder (temp)
 # WORK PERSISTS. Only the scratch folder WORK/tmp is wiped on startup - everything else the agent
@@ -686,6 +688,32 @@ def brief(code):
     """The EXACT short English description of a step, derived from its own code: the same function feeds
     the live line while the step runs and the final line when it is over, so they always agree."""
     return _op_of(code).rstrip(".").strip()   # FULL text: no truncation, the whole description is shown
+def _tool_brief(name,a):
+    """One-line description derived from the REAL arguments of ANY tool. Before this, every tool that was
+    not `python` was described as "looks at <basename(path)>", so `bash` printed the bare words "looks at"
+    with no command at all and `read`/`multi`/`todo` were indistinguishable in the terminal."""
+    a=a if isinstance(a,dict) else {}
+    if name=="python": return brief(a.get("code",""))
+    if name in ("bash","smart"):
+        c=(a.get("cmd") or "").strip().split("\n")[0]
+        return c[:110] or "ran a shell command"
+    if name=="read":
+        v=str(a.get("path","")); extra=[]
+        if a.get("grep"): extra.append("grep="+str(a["grep"])[:30])
+        if a.get("offset"): extra.append("@"+str(a["offset"]))
+        return "read "+(os.path.basename(v) or v)+(" "+" ".join(extra) if extra else "")
+    if name=="write": return "wrote "+os.path.basename(str(a.get("path","")))
+    if name=="edit": return "edited "+os.path.basename(str(a.get("path","")))
+    if name=="look": return "looks at "+os.path.basename(str(a.get("path","")))
+    if name=="multi": return "multi %d ops" % len(a.get("ops") or [])
+    if name=="todo": return "todo: %d items" % len(a.get("todos") or [])
+    if name=="skill": return "skill "+str(a.get("name",""))[:40]
+    if name=="run_code": return "run_code: "+(a.get("code") or "").strip().split("\n")[0][:100]
+    if name=="delegate": return "delegate: "+str(a.get("goal",""))[:70]
+    if name=="scrape": return "scrape "+str(a.get("action",""))+" "+str(a.get("url",""))[:60]
+    if name=="moa": return "moa: "+str(a.get("question",""))[:70]
+    return name+"("+", ".join(list(a)[:3])+")"
+
 def _task_head(q=""):
     """Opens a task: the timer starts HERE and does not stop until the final answer.
     No labels are prepared here: each one is produced from the code of that very step (see brief)."""
@@ -698,7 +726,7 @@ def _task_head(q=""):
     box=[BAR+"╭"+"─"*w+"╮"+N,
          BAR+"│"+N+ST+t+N+" "*pad+BAR+"│"+N,
          BAR+"╰"+"─"*w+"╯"+N]
-    return "\n"+"\n".join(box)+"\n\n"+N   # box, then exactly 2 blank lines before the first step
+    return "\n"+"\n".join(box)+"\n"+N   # box + ONE blank line: print() adds the second newline
 def _task_foot(stare="done"):
     """Closes the task: steps/rounds + the tokens of THIS task and of the CURRENT session
     (SESS: from /reset to the next /reset). COMPACT, wrap-safe layout (same as agent.py)."""
@@ -2169,7 +2197,22 @@ def bash(cmd, cwd):
         try: os.killpg(p.pid,signal.SIGKILL); p.wait(timeout=3)
         except Exception: pass
         raise
-    o.seek(0); return (o.read().decode("utf-8","replace") or "(no output)")
+    o.seek(0); out=o.read().decode("utf-8","replace")
+    # O comanda care REDIRECTIONEAZA tot output-ul ("cmd > f") reuseste dar nu tipareste nimic. "(no output)"
+    # facea modelul sa creada ca a esuat si sa repete pasul; si o numaratoare care scrie in folderul curent
+    # se numara pe SINE (masurat: count.txt = 24 pentru 23 de fisiere).
+    if not out:
+        out=("(no output, but the command SUCCEEDED: exit code 0 - redirection took effect; verify with ls -l / cat)"
+             if p.returncode==0 else "(no output; exit code "+str(p.returncode)+" = the command FAILED)")
+    else:
+        try:
+            _dest=re.search(r">\s*([\w./-]+\.\w+)",cmd or "")
+            if _dest and re.search(r"\b(find|ls|grep -c|wc -l)\b",cmd or ""):
+                _d=os.path.basename(_dest.group(1))
+                out+="\n[effect] the command WRITES "+_d+" and also COUNTS files in the same folder: "+_d+\
+                     " exists by the time the count runs, so it counts ITSELF (+1). Write the result elsewhere or exclude it: ! -name "+_d
+        except Exception: pass
+    return out
 
 def run_bash_tool(cmd):
     """Wrapper cu acelasi contor de pasi si aceeasi linie de afisare ca run_tool."""
@@ -2206,7 +2249,29 @@ def tool_read(a):
     bud=int(a.get("budget") or 6000); bud=max(500,min(bud,CHUNK))   # ceiling = tool budget (1M window)dow limit
     num=bool(a.get("numbered",True)); g=a.get("grep") or ""
     try: raw=open(path,encoding="utf-8",errors="replace").read()
-    except Exception as e: return "[read] "+e.__class__.__name__+": "+str(e)
+    except Exception as e:
+        # o eroare seaca nu ajuta: modelul reia aceeasi cale gresita de 2-3 ori (masurat pe agentul local:
+        # 69 s pierduti pe "read politica.txt" cand fisierul era in documentatie/). Dam ALTERNATIVA.
+        _abs=path if os.path.isabs(path) else os.path.join(os.getcwd(),path)
+        _d=os.path.dirname(_abs) or os.getcwd()
+        try: _sib=sorted(x for x in os.listdir(_d) if os.path.isfile(os.path.join(_d,x)))
+        except Exception: _sib=[]
+        _base=os.path.basename(path); _found=[]
+        try:
+            for _root,_dirs,_files in os.walk(os.getcwd()):
+                if _root.count(os.sep)-os.getcwd().count(os.sep)>3: _dirs[:]=[]; continue
+                for _f in _files:
+                    if _f==_base: _found.append(os.path.relpath(os.path.join(_root,_f),os.getcwd()))
+                if len(_found)>=4: break
+        except Exception: pass
+        _hint="[read] "+e.__class__.__name__+": "+str(e)
+        if _sib: _hint+="\n[read] in "+_d+" exista: "+", ".join(_sib[:12])
+        if _found: _hint+="\n[read] fisierul EXISTA insa aici: "+", ".join(_found[:3])+" - citeste-l pe acea cale"
+        else:
+            import difflib as _dl
+            _near=_dl.get_close_matches(_base,_sib,n=3,cutoff=0.5)
+            if _near: _hint+="\n[read] probabil voiai: "+", ".join(_near)
+        return _hint
     lines=raw.split("\n"); total=len(lines)
     if g:
         try: rx=re.compile(g)
@@ -3028,7 +3093,7 @@ if __name__ == "__main__":
         if not TITLE["text"]: TITLE["text"]=make_title(q)
         M.append({"role":"user","content":_q});compact_history();save_ctx(); mark=len(M); TN[0]=0; _steps=[0]
         verify_reset(); guard_reset(); reset_failures()
-        print(_task_head(q))
+        print(_task_head(q),end="")   # the box already ends with its newlines
         try:
          tries=0
          while 1:
@@ -3047,7 +3112,7 @@ if __name__ == "__main__":
             M.append(m);save_ctx();ctx_warn()
             if m.get("tool_calls"):
                 _a=json.loads(m["tool_calls"][0]["function"]["arguments"] or "{}"); _nm=m["tool_calls"][0]["function"]["name"]
-                _fb=brief(_a.get("code","")) if _nm=="python" else ("looks at "+os.path.basename(_a.get("path","")) )
+                _fb=_tool_brief(_nm,_a)
                 _txt=str(m.get("content") or "").strip() or _fb
                 # the descriptive text appears ABOVE the step line, clean: no arrow, no leading "#"
                 if _txt:
@@ -3068,7 +3133,7 @@ if __name__ == "__main__":
                     print(OF+"   [loop] rephrase or split the request; the looped text was dropped from the context."+N)
                     print("\n"+C+"AGENT >"+N+"\n"+render(_final[:400]+"\n\n[...repetition loop cut...]")+"\n")
                     print(_task_foot("stopped: repetition loop")); flush_task_tokens(); break
-                print("\n"+C+"AGENT >"+N+"\n"+render(_final)+"\n")
+                print("\n"+C+"AGENT >"+N+"\n"+render(_final))   # print() adds the trailing newline
                 print(_task_foot())
                 flush_task_tokens()
                 if verify_should_nudge():
