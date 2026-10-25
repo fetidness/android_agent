@@ -1287,7 +1287,7 @@ def _subagent_system(goal,context):
       +"Work ONLY on this job, using tools, then report a SHORT result (max ~15 lines): what you found, "
        "exact commands/values, and anything the parent must know to decide. Do not pad, do not narrate, "
        "do not ask questions - the parent cannot answer you. Working dir: "+WORK+"\n"
-       "Available tools: python, bash, smart, read, multi, skill, todo, run_code.")
+       "Available tools: python, bash, smart, read, multi, skill, todo, run_code, scrape.")
 def delegate_task(goal, context="", tools=None, _tools=None):
     """Runs a SUBAGENT with a fresh context on *goal*. Returns its final report as a string.
     Isolated: the child never sees the parent's conversation and cannot touch its history."""
@@ -1841,7 +1841,7 @@ T=[{"type":"function","function":{"name":"python","description":"Run Python 3 co
    {"type":"function","function":{"name":"todo","description":"Maintain a TASK LIST for multi-step work: pass todos=[{content,status}] to write (status: pending|in_progress|completed|cancelled), omit todos to read. The list survives context compression and is re-injected, so use it to keep your plan on long tasks. One call returns the full list.","parameters":{"type":"object","properties":{"todos":{"type":"array","description":"full list to write; omit to just read","items":{"type":"object","properties":{"content":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed","cancelled"]}}}},"merge":{"type":"boolean","description":"merge into the existing list (update status by content) instead of replacing it"}}}}},
    {"type":"function","function":{"name":"skill","description":"Load a saved SKILL by name and return its FULL body (or action=\"list\" for the index). USE THIS whenever the SKILLS index shows a skill even partially relevant to the task: it carries the exact commands and pitfalls a past session already worked out. Reading a skill beats improvising.","parameters":{"type":"object","properties":{"name":{"type":"string","description":"the skill name exactly as in the SKILLS index"},"action":{"type":"string","enum":["list"],"description":"optional: list the index instead of a body"}}}}},
    {"type":"function","function":{"name":"read","description":"Read a file by LINE RANGE with a guaranteed char budget (default 6000), never cut in the middle. ALWAYS use this instead of python print(open().read()). Raise budget (e.g. 20000) to take a whole medium file in ONE call - with the 1M window that is cheap, and one big read beats many small ones. Returns a footer with the EXACT next offset. Long file: first call with grep=regex for the map, then offset/limit.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file to read (absolute or relative to the cwd)"},"offset":{"type":"integer","description":"first line to read, 1-based (default 1)"},"limit":{"type":"integer","description":"how many lines to read at most (default: as many as fit the budget)"},"budget":{"type":"integer","description":"max characters to return, default 6000; raise to 20000+ for a whole medium file in ONE call"},"grep":{"type":"string","description":"optional regex: return only lines matching it (with their line numbers), then read around them"},"numbered":{"type":"boolean","description":"prefix every line with its number (default true - makes offsets reusable)"}},"required":["path"]}}},
-   {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small (a listing, a short cat, a status). Do NOT bundle heavy/crashable pipelines here.","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines, stdlib only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output (e.g. env, ls, git status)"}},"required":["kind","body"]}}},"required":["ops"]}}}]
+   {"type":"function","function":{"name":"multi","description":"BATCH: 2-6 small, independent ops in ONE call, ONE consolidated answer. Biggest cost saver: each extra step re-sends the whole context. Keep entries small (a listing, a short cat, a status). Do NOT bundle heavy/crashable pipelines here.","parameters":{"type":"object","properties":{"ops":{"type":"array","description":"2-6 operations, each independent and small","items":{"type":"object","properties":{"kind":{"type":"string","description":"bash (a small shell command) or python (a few lines, stdlib only)","enum":["bash","python"]},"body":{"type":"string","description":"the command / the code for this entry, kept SHORT"},"name":{"type":"string","description":"short label shown in the output (e.g. env, ls, git status)"}},"required":["kind","body"]}}},"required":["ops"]}}},{"type":"function","function":{"name":"scrape","description":"Fetch and parse a web page and return CLEAN content, not raw HTML. Use it instead of curl/python for any web address. action: supreme (auto best), article (main text+meta), links, meta, xpath, css, table, rss, head, sniff, fetch. Network only when called.","parameters":{"type":"object","properties":{"action":{"type":"string","description":"supreme|article|links|meta|xpath|css|table|rss|head|sniff|fetch","enum":["supreme","article","links","meta","xpath","css","table","rss","head","sniff","fetch"]},"url":{"type":"string","description":"http(s) URL"},"arg":{"type":"string","description":"action-specific: xpath expression, css selector, link regex, or table index"},"limit":{"type":"integer","description":"max items returned (default 20)"}},"required":["action","url"]}}}]
 
 TOOLGUIDE=("TOOL SELECTION (measured on the Android toybox build; use the SAME rules when the target is GNU coreutils, where bash's sort/awk/sed are fast): you have 3 engines. "
   "1) `python`: THE DEFAULT AND THE FASTEST ENGINE for any computation. BEST for structured parsing (JSON/INI/KeyValues), logic, aggregation/counting, text transform, sorting, and HTTP (requests.Session beats repeated curl). Default to python for anything that is not a pure stream. "
@@ -2271,6 +2271,44 @@ def tool_multi(a):
         res = res[:_budget()-400] + "\n[... total capped; run fewer/smaller ops ...]"
     return res
 
+def scrape_tool(action="",url="",arg="",limit=20):
+    """Web scraping prin workspace/tools/scraper.py. Iese in retea DOAR cand e chemat.
+    actiuni: supreme|article|links|meta|xpath|css|table|rss|head|sniff|fetch"""
+    import json as _j
+    if not url: return "[scrape] lipseste url"
+    try:
+        _here=os.path.dirname(os.path.abspath(__file__))
+        for _c in (os.path.join(_here,"workspace","tools"),os.path.join(_here,"tools")):
+            if os.path.isfile(os.path.join(_c,"scraper.py")) and _c not in sys.path: sys.path.insert(0,_c)
+        import scraper as _sc
+    except Exception as e:
+        return "[scrape] scraper.py indisponibil: "+type(e).__name__+": "+str(e)[:150]
+    act=(action or "supreme").lower()
+    try:
+        if act=="head":      r=_sc.head(url)
+        elif act=="fetch":   r=_sc.fetch(url)[:20000]
+        elif act=="sniff":   r=_sc.sniff(_sc.fetch(url))
+        elif act=="xpath":   r=_sc.xpath(url,arg or "//h1/text()")[:limit]
+        elif act=="css":     r=_sc.css(url,arg or "h1")[:limit]
+        elif act=="links":   r=_sc.links(url,arg or None)[:limit]
+        elif act=="meta":    r=_sc.meta(url)
+        elif act=="table":   r=_sc.table(url,int(arg or 0))
+        elif act=="rss":     r=_sc.rss(url,int(limit or 10))
+        elif act=="article": r=_sc.article(url)
+        elif act=="supreme":
+            # RSS/Atom nu e articol: supreme() il trateaza ca pagina si intoarce gol
+            _h=_sc.fetch(url)
+            _is_feed=bool(_h.lstrip()[:200].lower().startswith(("<?xml","<rss","<feed"))) or "<rss" in _h[:2000].lower() or "<feed" in _h[:2000].lower()
+            if _is_feed:
+                r=_sc.rss(url,int(limit or 10)); r["_auto"]="rss"
+            else:
+                r=_sc.supreme(url)
+        else: return "[scrape] actiune necunoscuta: "+act+" (head|fetch|sniff|xpath|css|links|meta|table|rss|article|supreme)"
+    except Exception as e:
+        return "[scrape] "+act+" a esuat: "+type(e).__name__+": "+str(e)[:200]
+    out=_j.dumps(r,ensure_ascii=False,default=str)
+    return out[:24000]+("\n[truncated]" if len(out)>24000 else "")
+
 def _call_tool_raw(c):
 
     """Dispatches ONE tool_call: `python` runs code, `look` sends an image to the VISION
@@ -2282,6 +2320,11 @@ def _call_tool_raw(c):
         o=_spin(vision,a.get("path",""),a.get("prompt",""),phase="tool",desc=dsc,col=HCLR[sum(map(ord,dsc))%len(HCLR)])
         TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o)); _show_step("look "+a.get("path","")+"  <- "+(a.get("prompt","") or "").strip(),o,TASK["steps"])   # FULL prompt
         return o
+    if fn=="scrape":
+        dsc="scrape "+str(a.get("action") or "supreme")+" "+str(a.get("url",""))[:50]
+        o=_spin(scrape_tool,a.get("action",""),a.get("url",""),a.get("arg",""),a.get("limit",20),phase="tool",desc=dsc,col=HCLR[sum(map(ord,dsc))%len(HCLR)])
+        TN[0]+=1; TASK.update(steps=TASK["steps"]+1,chars=TASK["chars"]+len(o))
+        _show_step(dsc,o,TASK["steps"]); return o
     if fn=="bash":
         return run_bash_tool(a.get("cmd",""))
     if fn=="smart":
@@ -2869,7 +2912,7 @@ if __name__ == "__main__":
     _ca,_ck=curator_run()
     if _ca: print(G+"   [curator] "+str(_ca)+" old skill(s) archived (recoverable in skills_archive/)"+N)
     ctx_check_window()   # cheap API call: corrects CTXWINDOW if the local constant is wrong
-    print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look | "+os.getcwd()+N)
+    print(U+" ⚡ AGENT DeepSeek "+N+G+"| tools: python, bash, smart, look, scrape | "+os.getcwd()+N)
     print(G+"   "+HINT_LINE+"  ·  commands like /learn, /ctx, /compact, /verbose, /watch, /reset, /exit"+N+"\n")
     while 1:
         try: q=input(U+" TU > "+IN).strip()
