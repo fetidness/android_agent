@@ -53,6 +53,117 @@
 > doar tool-uri native). DShell e superset. `dshell.py` si `android_full.py` sunt corecte
 > si **nu trebuie "reparate"**. Detalii: `CHANGELOG.md` 2026-10-24 (c).
 
+## 🔊 VOCE OFFLINE (Phonon 31m) + `/audio` (2026-10-29)
+
+Raspunsurile agentului pot fi **ascultate**, cu un model TTS care ruleaza integral
+pe telefon, fara retea si fara servicii externe.
+
+### Cum se foloseste
+
+```
+/audio                     → Enter   (apare "mod audio ARMAT")
+<spune ce vrei>            → Enter   (raspunde DOAR audio, fara text pe ecran)
+```
+
+sau, intr-o singura linie:
+
+```
+/audio spune-mi starea bateriei
+```
+
+In modul audio, instructiunea trimisa modelului cere **engleza, proza curata**
+(fara markdown, liste, tabele, cod, emoji) si **fara limita de lungime**, ca textul
+sa poata fi citit direct cu voce tare. Instructiunea intra ca mesaj separat in
+context, deci nu apare pe ecran in linia `You > ...`.
+
+### Ce ruleaza efectiv
+
+| Componenta | Rol | Marime |
+|---|---|---|
+| `libptts_ffi.so` | motorul Phonon (Rust, compilat din surse, NDK 29, arm64-v8a) | 7.4 MB |
+| `libptts_exec.so` | `ptts-mini`, CLI minimal care scrie PCM pe stdout | 9 KB |
+| `assets/models/phonon-31m-en/` | modelul q8 + tokenizer + 4 voci | 63 MB |
+| `PhononTts.kt` | streaming: citeste PCM si il scrie in `AudioTrack` | - |
+
+Nu foloseste JNI: binarul ruleaza ca proces separat, iar aplicatia reda ce primeste.
+Motivul e in CHANGELOG (2026-10-29): legarea JNI esua in procesul agentului.
+
+### Cum se reface de la zero
+
+Modelul **nu se comite** in git (63 MB). Se descarca o singura data:
+
+```bash
+cd /home/gab/android_agent/temp
+mkdir -p phonon/models/phonon-31m-en/voices
+cd phonon/models/phonon-31m-en
+REPO=https://huggingface.co/gradium/phonon-31m-en/resolve/8c64b55ec301728e2d1695bfea87a08a267d0c2d
+for f in config.json generation_config.json processor_config.json tokenizer.json \
+         tokenizer.model model.q8.gguf; do curl -sSL -O "$REPO/$f"; done
+```
+
+Apoi copiaza in proiect:
+
+```bash
+APP=/home/gab/android_agent/workspace/app/net.sys32.agent/app/src/main
+mkdir -p $APP/assets/models/phonon-31m-en/voices
+cp /home/gab/android_agent/temp/phonon/models/phonon-31m-en/*.json \
+   /home/gab/android_agent/temp/phonon/models/phonon-31m-en/model.q8.gguf \
+   $APP/assets/models/phonon-31m-en/
+# vocile (4 .safetensors) vin din catalogul gradium/phonon-voices
+```
+
+Voci implicite livrate: `2A2fFf8SkDEJ8nzx` (en), `FXxJ9mANRq6BCTX5` (fr),
+`2A2fFf8SkDEJ8nzx` (de), `b6FvJAiokjdqIti4` (es).
+
+### Rebuild binarul nativ
+
+```bash
+# motorul (o singura data, ~1 min)
+cd /home/gab/android_agent/temp/phonon_src
+export ANDROID_NDK_HOME=/home/gab/Work/Android/ndk/29.0.14206865
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C strip=symbols -C link-arg=-Wl,-z,max-page-size=16384 -C target-cpu=generic -C target-feature=+dotprod,+fp16"
+cargo ndk -t arm64-v8a -o android/jniLibs build --release -p ptts-ffi
+
+# CLI-ul (sursa in temp/ttsbin/ptts_mini.c)
+CC=/home/gab/Work/Android/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
+$CC -O2 -o libptts_exec.so ptts_mini.c -I../phonon_src/ptts-ffi/include \
+    -L. -l:libptts_ffi.so -Wl,-rpath,'$ORIGIN'
+```
+
+### Instalare pe telefon (permisiunile raman)
+
+```bash
+bash /home/gab/android_agent/temp/scripts/install_agent.sh
+```
+
+Face `install -r -d` (fara uninstall, deci permisiunile supravietuiesc) si acorda
+automat toate permisiunile acordabile. Cele 2 rămase (`RECORD_BACKGROUND_AUDIO`,
+`BACKGROUND_CAMERA`) sunt legate de rol si nu se pot acorda nici manual.
+
+**ATENTIE la update-uri de `assets/python/`:** codul Python se extrage in
+`files/python` **doar la pornire**, cand stampila `.assets_stamp` difera. Daca un fix
+"nu se vede", forteaza re-extragerea:
+
+```bash
+adb shell am force-stop net.sys32.agent
+adb shell run-as net.sys32.agent rm -f files/.assets_stamp
+adb shell am start -n net.sys32.agent/.MainActivity
+# verificare (trebuie sa fie identic cu cel din APK):
+adb exec-out run-as net.sys32.agent cat files/python/agent.py | md5sum
+unzip -p app/build/outputs/apk/debug/app-debug.apk assets/python/agent.py | md5sum
+```
+
+### Limite cunoscute (masurate)
+
+- **Fara clonare de voce**: modelul de 31m nu are speaker encoder
+  (`this checkpoint has no speaker encoder`).
+- **Fara romana**: `unsupported language code: ro`; familia Phonon are doar
+  en/fr/de/es/pt. Pentru romana offline exista Piper (`ro_RO-mihai`), testat separat:
+  inteligibil, dar cu erori pe numere si cuvinte lungi.
+- **Doar CPU**: binarele oficiale nu includ CUDA/Vulkan
+  (`device 'cuda' is not available in this build`).
+- Vocea citeste **doar raspunsul ultimului task**, nu tot istoricul conversatiei.
+
 ## 🚀 SETUP AUTOMAT (2026-10-21) - INSTALAREA APK = MEDIU COMPLET FUNCTIONAL
 
 ### Ce se intampla

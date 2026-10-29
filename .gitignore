@@ -100,3 +100,11 @@ insights.json
 # fara ele scraper (lxml/etree) si quickjs NU functioneaza dupa rebuild APK
 !workspace/app/net.sys32.agent/app/src/main/assets/python/Lib/site-packages/**/*.so
 !workspace/app/net.sys32.agent/app/src/main/assets/python/libdynload/**/*.so
+
+# ---- Phonon TTS (voce offline): cele 2 binare TREBUIE comise, altfel build-ul nu are
+# ce livra dupa o clona noua. Modelul (63 MB) NU se comite: se pune din Hugging Face
+# (vezi readme.md -> "Voce offline (Phonon)"), iar aplicatia il extrage din assets.
+!workspace/app/net.sys32.agent/app/src/main/jniLibs/arm64-v8a/libptts_ffi.so
+!workspace/app/net.sys32.agent/app/src/main/jniLibs/arm64-v8a/libptts_exec.so
+workspace/app/net.sys32.agent/app/src/main/assets/models/
+workspace/app/net.sys32.agent/app/.cxx/

@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "net.sys32.agent"
     compileSdk = 36
+    ndkVersion = "29.0.14206865"   // NDK 27 da SIGSEGV pe acest host (vezi memorie)
 
     defaultConfig {
         applicationId = "net.sys32.agent"
@@ -28,6 +29,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     packaging {
         jniLibs { useLegacyPackaging = true }
+        // .so livrat precompilat + wrapper-ul JNI compilat din surse
     }
 }
 

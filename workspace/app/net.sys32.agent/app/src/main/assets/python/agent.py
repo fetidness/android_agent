@@ -556,6 +556,8 @@ LOGDIR=os.path.join(WORK,"logs")      # complete tool outputs (not deleted betwe
 ARCH=os.path.join(WORK,"archive")     # COMPLETE snapshots of the history, before every compression
 VERBOSE=[os.environ.get("AGENT_VERBOSE")=="1"]   # /verbose: re-prints code + output in the terminal
 NOSPIN=[os.environ.get("AGENT_NOSPIN")=="1"]     # /nospin: NO live/redrawn line at all (clean scrollback on a phone)
+# /audio: cand e True, urmatorul raspuns se rosteste si nu se formateaza
+AUDIO_MODE=[False, False]   # [urmeaza un task audio, task audio in curs]
 SAFEMODE=[True]
 SAFE_WARN=""
 THINKMIN=float(os.environ.get("AGENT_THINKMIN","0"))   # MINIMUM time "Thinking..." stays on screen (0 = the printed time is exactly the measured one). It never delays a tool step.
@@ -5971,7 +5973,17 @@ def do_learn(trigger="/learn"):
     elif _nless:
         print(G+"   [mem] lint OK: "+str(len(_nless))+" lesson line(s), no forbidden content, none over "+str(2000)+" chars."+N)
     save_ctx()
-    if m and m.get("content"): print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render(m["content"].strip()))
+    if m and m.get("content"):
+        if AUDIO_MODE[1]:
+            # modul /audio: raspunsul NU se afiseaza, doar se scrie pe disc pentru voce
+            try:
+                _ap = os.path.join(WORK, "tts_reply.txt")
+                open(_ap, "w", encoding="utf-8").write(m["content"].strip())
+                print(G + "   [audio] raspuns scris in tts_reply.txt (" + str(len(m["content"].strip())) + " car.)" + N)
+            except Exception as _e:
+                print(OF + "   [audio] nu pot scrie raspunsul: " + str(_e) + N)
+        else:
+            print("\n"+RED+"AGENT"+C+" >"+N+"\n\n"+render(m["content"].strip()))
     print(G+"   [/learn] the new memory loads into the system prompt at the NEXT startup."+N)
     print(_task_foot("/learn")); flush_task_tokens(); return
 
@@ -6305,6 +6317,7 @@ if __name__ == "__main__":
             print(G+"     /heal               repair the environment (0 tokens): launchers, shadowed packages, pip.conf"+N)
             print(G+"     /audit              what is broken right now, without repairing (0 tokens)"+N)
             print(G+"     /selfheal           show/hide the \"environment healthy\" line at startup (0 tokens)"+N)
+            print(G+"     /audio [mesaj]     raspunsul se ROSTESTE (text curat, fara formatare) si nu se afiseaza"+N)
             print(G+"     /help, /?           this list"+N)
             print(G+"     /exit, /quit        leave (empty line too)"+N)
             continue
@@ -6500,9 +6513,36 @@ if __name__ == "__main__":
                 print(OF + "   [ctx] " + str(_n) + " orphan tool_call(s) repaired (context valid)" + N)
         except Exception:
             pass
+        # ★ /audio: raspunsul se rosteste, nu se formateaza (text curat, citibil vocal)
+        _audio = False
+        if q.strip().lower() == "/audio":
+            AUDIO_MODE[0] = True
+            print(G + "   [audio] ON: urmatorul raspuns se rosteste, fara formatare." + N)
+            continue
+        if q.strip().lower().startswith("/audio "):
+            _audio = True
+            q = q.strip()[7:].strip()
+        if AUDIO_MODE[0]:
+            _audio = True
+            AUDIO_MODE[0] = False
+        # Instructiunea de stil NU se lipeste de q (q se afiseaza in "You > ..."); se adauga
+        # ca mesaj separat in context, dupa mesajul operatorului.
+        _audio_note = None
+        AUDIO_MODE[1] = False
+        if _audio:
+            AUDIO_MODE[1] = True
+            _audio_note = ("[RASPUNS AUDIO: raspunde OBLIGATORIU in LIMBA ENGLEZA (English only), "
+                           "indiferent in ce limba ti-a scris operatorul. Raspunde COMPLET, fara sa scurtezi. Scrie doar proza "
+                           "curata, in propozitii normale: fara markdown, fara bullet-uri, fara "
+                           "numerotari, fara tabele, fara blocuri de cod, fara emoji, fara simboluri "
+                           "decorative. Textul trebuie sa poata fi citit cu voce tare exact asa cum "
+                           "il scrii.]")
         _q=expand_references(q)
         if not TITLE["text"]: TITLE["text"]=make_title(q)
-        M.append({"role":"user","content":_q});compact_history();save_ctx(); mark=len(M); TN[0]=0; _steps=[0]
+        M.append({"role":"user","content":_q})
+        if _audio_note:
+            M.append({"role":"user","content":_audio_note})
+        compact_history();save_ctx(); mark=len(M); TN[0]=0; _steps=[0]
         verify_reset(); guard_reset(); reset_failures()
         print(_task_head(q))
         try:

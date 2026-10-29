@@ -3,7 +3,69 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: `0bbe8f4` (2026-10-24).
+> Ultimul commit inclus: voce offline Phonon + `/audio` (2026-10-29).
+
+### 2026-10-29 (d) - VOCE OFFLINE IN APLICATIE (Phonon 31m) + /audio
+
+> **Context:** operatorul a cerut ca raspunsurile agentului sa poata fi ASCULTATE,
+> cu un model TTS offline ("pune modelul offline pe calculator si fa-i teste").
+> Sesiunea a trecut prin 6 diagnostice gresite inainte de a ajunge la cauzele reale;
+> toate sunt notate mai jos, ca sa nu fie repetate.
+
+#### Ce s-a adaugat
+
+- **Voce offline in aplicatie (`PhononTts.kt`)** - Phonon 31m (Gradium, Apache 2.0),
+  31M parametri, ~64 MB, ruleaza pe CPU. Nu depinde de retea si nu foloseste JNI.
+- **Binar nativ `ptts-mini`** (`libptts_exec.so`, 9 KB) - CLI minimal in C care leaga
+  direct `libptts_ffi.so` (compilat din surse cu NDK 29 pentru arm64-v8a) si scrie
+  PCM pe stdout, ca aplicatia sa redea audio IN TIMP CE se genereaza.
+- **`/audio [mesaj]` in agent** - raspunsul se rosteste, nu se afiseaza. Instructiunea
+  de stil (engleza, proza curata, fara markdown) se adauga ca mesaj SEPARAT in context,
+  nu in textul operatorului (altfel aparea in "You > ..." pe ecran).
+- **`scripts/install_agent.sh`** (in `temp/`) - instaleaza cu `-r -d` (permisiunile
+  raman) si acorda automat toate permisiunile acordabile (174/177; cele 2 de rol nu
+  se pot acorda nici manual).
+
+#### Masuratori pe device (SM-A366B)
+
+| Ce | Rezultat |
+|---|---|
+| Generare | 230400 esantioane = 9.6 s audio din 167 caractere |
+| Streaming | primul sunet dupa 367-500 ms |
+| Viteza | RTF ~0.17-0.27 (4-6x realtime pe CPU) |
+| Text rostit complet | verificat cu Whisper: 16.64 s generate = 16.64 s in WAV |
+| Text rostit corect | 5/5 propozitii la 0.0% WER (pe host) |
+
+#### Cele 6 cauze reale (fiecare a costat 1-3 ture)
+
+1. **JNI nu se lega in procesul aplicatiei** - `UnsatisfiedLinkError` la `pttsNew`,
+   desi biblioteca se incarca (`nativeloader ... ok`). `System.loadLibrary` rezolva
+   in namespace-ul procesului o ALTA instalare a bibliotecii (procesul incarca si
+   Python + self-heal). Solutie: renuntat la JNI, binar separat + `System.load` cu
+   cale absoluta pentru `libptts_ffi.so`.
+2. **`NEEDED` cu calea hostului** - linker-ul NDK scria
+   `/home/gab/.../libptts_ffi.so` in DT_NEEDED, deci `dlopen` esua pe telefon.
+   Solutie: link direct pe fisier (`-l:libptts_ffi.so`), nu prin imported target CMake.
+3. **`track.write()` ignora valoarea returnata** - cand generatorul producea mai
+   repede decat consuma difuzorul, `AudioTrack` scria doar partial si restul se
+   pierdea; audio "se oprea la mijloc". Solutie: scriere in bucla + buffer 4 s.
+4. **Footer-ul de task are alt format** - regex-ul cauta `^#1 done`, dar linia reala
+   este `  +-  #1 done · 0 tools, 1 rnd`. Audio nu pornea niciodata.
+5. **Butonul de trimitere reseta `audioNext`** - la al doilea mesaj modul audio se
+   pierdea, deci `/audio` + Enter + mesaj rula ca task normal (text afisat).
+6. **`extractAssets()` nu re-extrăgea** - dupa update de APK, `files/python/agent.py`
+   rămânea cel vechi (stampila `.assets_stamp` nu se actualiza). Operatorul a testat
+   de 3 ori acelasi cod vechi. Verificare obligatorie dupa orice update de assets:
+   `adb exec-out run-as net.sys32.agent cat files/python/agent.py | md5sum` vs APK.
+
+#### Capcane pentru sesiunile viitoare
+
+- `.take(1500)` din `cleanText` taia textul rostit - scos; se rosteste tot.
+- MediaPlayer fara `USAGE_MEDIA`/`CONTENT_TYPE_SPEECH` apare in `dumpsys` ca
+  `usage=USAGE_UNKNOWN` si e tratat ca zgomot de fundal. Se seteaza explicit + se
+  cere audio focus.
+- Modelul de 31m **nu are speaker encoder** (fara clonare de voce) si **nu stie
+  romana** (`unsupported language code: ro`); binarele oficiale sunt doar CPU.
 
 ### 2026-10-24 (c) - LANTERNA NATIVA, WIPE TOTAL SI E2E DE LA ZERO
 
