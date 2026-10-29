@@ -157,7 +157,15 @@ In modul audio, pe ecran nu apare **nimic** din raspunsul agentului: nici textul
 pasi de tool (`+-- step NN [python] ...`), nici footer-ul de tokeni. Se aude doar vocea.
 
 **Modul este persistent:** `/audio on` rămâne activ pana la `/audio off` (alias `/text`),
-deci nu trebuie repetat la fiecare mesaj. Terminalul e inlocuit de un panou curat:
+deci nu trebuie repetat la fiecare mesaj.
+
+**Coada:** daca trimiti un mesaj nou in timp ce vocea vorbeste, el nu se pierde - intra in
+coada si se rosteste dupa primul (panoul arata `Queued - the agent will answer after the
+audio finishes.`).
+
+**Modul text e neatins:** fara `/audio`, agentul functioneaza exact ca inainte (aceleasi
+mesaje, aceeasi afisare, aceleasi comenzi). In `agent.py` sunt doar 2 linii originale
+atinse, ambele cu `else:` care pastreaza codul original. Terminalul e inlocuit de un panou curat:
 
 ```
         🔊  AUDIO MODE

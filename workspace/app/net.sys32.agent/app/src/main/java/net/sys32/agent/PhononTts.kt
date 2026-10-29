@@ -62,19 +62,53 @@ object PhononTts {
      * iar noi il redam imediat in AudioTrack. Primul sunet apare dupa ~1-2 s, nu dupa
      * ce se termina tot textul.
      */
+    /** Cerere de rostit, in ordine. A doua intra in coada si pleaca dupa prima. */
+    private class Item(val text: String, val onState: (String) -> Unit)
+    private val queue = java.util.concurrent.LinkedBlockingQueue<Item>()
+    @Volatile private var workerRunning = false
+
+    /** Adauga textul in coada de rostit. NU il pierde daca vorba e ocupata. */
     fun speak(ctx: Context, text: String, onState: (String) -> Unit) {
         val clean = cleanText(text)
         if (clean.isEmpty()) { onState("nothing to read"); return }
-        if (!busy.compareAndSet(false, true)) { onState("already speaking"); return }
-        cancel.set(false)
         ctxRef = ctx.applicationContext
+        queue.offer(Item(clean, onState))
+        onState("queued (" + queue.size + ")")
+        startWorkerIfNeeded(ctx)
+    }
+
+    private fun startWorkerIfNeeded(ctx: Context) {
+        synchronized(this) {
+            if (workerRunning) return
+            workerRunning = true
+        }
         exec.execute {
+            try {
+                while (true) {
+                    val item = queue.poll() ?: break
+                    busy.set(true)
+                    try { speakOne(ctx, item.text, item.onState) }
+                    finally { busy.set(false) }
+                }
+            } finally {
+                synchronized(this) { workerRunning = false }
+                if (queue.isNotEmpty()) startWorkerIfNeeded(ctx)   // a intrat ceva intre timp
+            }
+        }
+    }
+
+    private fun speakOne(ctx: Context, clean: String, onState: (String) -> Unit) {
+        cancel.set(false)
+        runBlockingSpeech(ctx, clean, onState)
+    }
+
+    private fun runBlockingSpeech(ctx: Context, clean: String, onState: (String) -> Unit) {
             var track: android.media.AudioTrack? = null
             try {
                 onState("preparing model...")
                 ensureModel(ctx)
                 val bin = binPath(ctx)
-                if (!bin.exists()) { onState("missing binary: " + bin.path); return@execute }
+                if (!bin.exists()) { onState("missing binary: " + bin.path); return }
 
                 val sr = 24000
                 track = android.media.AudioTrack.Builder()
@@ -149,9 +183,7 @@ object PhononTts {
                 onState("error: " + (t.message ?: t.javaClass.simpleName))
             } finally {
                 runCatching { track?.stop(); track?.release() }
-                busy.set(false)
             }
-        }
     }
 
     /** Salveaza ultimul audio in filesDir/tts/tts_last.wav (pentru verificare). */

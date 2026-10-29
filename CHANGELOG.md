@@ -57,6 +57,21 @@
 - Mesajul operatorului este afisat, desi textul agentului rămâne ascuns.
 
 
+#### (e) Coada audio + curatenie in modul text
+
+- **Coada de rostit**: daca un al doilea raspuns vine in timp ce vocea vorbeste, el NU se
+  mai pierde - intra in coada (`queued (N)`) si pleaca automat dupa primul. Inainte
+  `speak()` returna "already speaking" si raspunsul rămânea nerostit pentru totdeauna
+  (raportat de operator: "i-am dat alt task in timp ce audio rula si s-a oprit").
+- Panoul audio arata `Queued - the agent will answer after the audio finishes.` cand
+  trimiti in timpul redarii.
+- **Curatenie: modul text e neatins.** Linia adaugata in `/help` a fost tradusa in engleza
+  (`/audio [text]  reply is SPOKEN (clean prose, no formatting) and not shown`), consecvent
+  cu restul listei. Fata de commitul `4600761` (dinainte de sesiunea audio), in `agent.py`
+  sunt **exact 2 linii originale atinse**, ambele cu `else:` care pastreaza codul original:
+  afisarea raspunsului (`print(...render(m["content"]))`) si `M.append({"role":"user"...})`.
+  Restul sunt doar adaugari (`AUDIO_MODE`, blocul `/audio`, linia din `/help`).
+
 ### 2026-10-29 (d) - VOCE OFFLINE IN APLICATIE (Phonon 31m) + /audio
 
 > **Context:** operatorul a cerut ca raspunsurile agentului sa poata fi ASCULTATE,

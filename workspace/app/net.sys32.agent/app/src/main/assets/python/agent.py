@@ -6317,7 +6317,7 @@ if __name__ == "__main__":
             print(G+"     /heal               repair the environment (0 tokens): launchers, shadowed packages, pip.conf"+N)
             print(G+"     /audit              what is broken right now, without repairing (0 tokens)"+N)
             print(G+"     /selfheal           show/hide the \"environment healthy\" line at startup (0 tokens)"+N)
-            print(G+"     /audio [mesaj]     raspunsul se ROSTESTE (text curat, fara formatare) si nu se afiseaza"+N)
+            print(G+"     /audio [text]       reply is SPOKEN (clean prose, no formatting) and not shown"+N)
             print(G+"     /help, /?           this list"+N)
             print(G+"     /exit, /quit        leave (empty line too)"+N)
             continue

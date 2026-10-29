@@ -2208,6 +2208,9 @@ class MainActivity : AppCompatActivity() {
             // raspunda in engleza si proza curata, iar aplicatia sa ascunda textul
             audioNext = true; audioText.setLength(0); inTask = false; inAgent = false
             showAudioYou(t)
+            if (PhononTts.isBusy()) {
+                runOnUiThread { audioState.text = "Queued - the agent will answer after the audio finishes." }
+            }
             t = "/audio " + t
         }
         // ★ ONBOARDING: daca asteptam cheia API, o salvam si pornim agentul.
