@@ -41,6 +41,22 @@
 - Verificat pe device cu 822 de caractere: 1284480 esantioane = 53.5 s audio,
   `playhead=1284480/1284480` (redat integral), transcrierea contine si ULTIMA propozitie.
 
+#### (d) Mod audio PERSISTENT + ecran dedicat
+
+- **`/audio on`** (sau doar `/audio`) porneste modul **permanent**: toate raspunsurile se
+  rostesc si nu se afiseaza, pana la **`/audio off`** (alias `/text`). Inainte modul se
+  consuma dupa primul raspuns, deci al doilea mesaj rula ca task normal (raportat de
+  operator: "am intrebat apoi de full moon si a generat text in loc de audio").
+- **Ecran dedicat in mod audio**: terminalul e ascuns si rămâne un panou curat cu
+  `AUDIO MODE`, "Every reply is spoken, nothing is shown.", mesajul operatorului
+  (`You: ...`), starea si indiciul `/audio off`. Fara tokeni, sesiuni, tool-uri.
+- **Stare vizibila in timpul lucrului**: `You: <mesaj>` + `Agent is working... please wait.`
+  -> `Working...` -> `Preparing the reply...` -> `Loading voice...` -> `Speaking...` ->
+  `Ready - just type.`. Inainte, in mod audio ecranul era complet gol cat timp agentul
+  lucra (10-30 s la un task cu tool-uri), deci parea ca "nu se intampla nimic".
+- Mesajul operatorului este afisat, desi textul agentului rămâne ascuns.
+
+
 ### 2026-10-29 (d) - VOCE OFFLINE IN APLICATIE (Phonon 31m) + /audio
 
 > **Context:** operatorul a cerut ca raspunsurile agentului sa poata fi ASCULTATE,

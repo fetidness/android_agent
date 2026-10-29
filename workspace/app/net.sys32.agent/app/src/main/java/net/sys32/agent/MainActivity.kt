@@ -42,6 +42,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var btnStop: Button
     private lateinit var btnSpeak: Button
+    private lateinit var audioPanel: LinearLayout
+    private lateinit var audioTitle: TextView
+    private lateinit var audioSub: TextView
+    private lateinit var audioState: TextView
+    private lateinit var audioYou: TextView
+    private lateinit var audioHint: TextView
     // acumulator: textul pe care il citim cu voce tare la 🔊 (ultimul raspuns al agentului)
     private val lastAnswer = StringBuilder()
     // true = urmatorul text adaugat incepe un mesaj NOU al agentului (golim acumulatorul)
@@ -52,7 +58,34 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var inAgent = false
     // true = ultimul mesaj trimis a fost /audio -> raspunsul se rosteste automat, fara sa se afiseze
     @Volatile private var audioNext = false
+    // mod persistent: /audio on -> toate raspunsurile se rostesc pana la /audio off
+    @Volatile private var audioMode = false
     private val audioText = StringBuilder()
+
+    /** Arata in panoul audio ce a scris operatorul si ca agentul lucreaza. */
+    private fun showAudioYou(msg: String) {
+        if (!audioMode) return
+        runOnUiThread {
+            audioYou.text = "You: " + msg.take(120)
+            audioState.text = "Agent is working... please wait."
+            audioState.setTextColor(Color.parseColor("#E5C07B"))
+        }
+    }
+
+    /** Comuta interfata intre terminal si panoul curat de mod audio. */
+    private fun setAudioUi(on: Boolean) {
+        runOnUiThread {
+            audioPanel.visibility = if (on) View.VISIBLE else View.GONE
+            scroll.visibility = if (on) View.GONE else View.VISIBLE
+            if (on) audioState.text = "Ready - just type."
+        }
+    }
+
+    /** Starea vocii, afisata pe panoul audio (nu in terminal). */
+    private fun audioStatus(msg: String) {
+        if (!audioMode) return
+        runOnUiThread { audioState.text = msg }
+    }
 
     /** /audio sau /audio <mesaj>: raspunsul se rosteste, nu se afiseaza. */
     private fun isAudioCommand(m: String): Boolean {
@@ -149,6 +182,58 @@ class MainActivity : AppCompatActivity() {
         }
         scroll.addView(output, ViewGroup.LayoutParams(-1, -2))
 
+        // ===== PANOU MOD AUDIO (vizibil doar cu /audio on) =====
+        // Ecran curat: spune doar ca modul e activ si arata starea vocii.
+        audioPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#0D1117"))
+            visibility = View.GONE
+            setPadding(dp(28), dp(28), dp(28), dp(28))
+        }
+        audioTitle = TextView(this).apply {
+            text = "\uD83D\uDD0A  AUDIO MODE"
+            textSize = 26f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#98C379"))
+            gravity = Gravity.CENTER
+        }
+        audioSub = TextView(this).apply {
+            text = "Every reply is spoken, nothing is shown."
+            textSize = 15f
+            setTextColor(Color.parseColor("#ABB2BF"))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+        }
+        audioState = TextView(this).apply {
+            text = ""
+            textSize = 14f
+            typeface = mono
+            setTextColor(Color.parseColor("#61AFEF"))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(26), 0, 0)
+        }
+        audioHint = TextView(this).apply {
+            text = "Type /audio off to return to text."
+            textSize = 13f
+            setTextColor(Color.parseColor("#5C6370"))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(30), 0, 0)
+        }
+        audioYou = TextView(this).apply {
+            text = ""
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#E5C07B"))
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(22), dp(8), 0)
+        }
+        audioPanel.addView(audioTitle)
+        audioPanel.addView(audioSub)
+        audioPanel.addView(audioYou)
+        audioPanel.addView(audioState)
+        audioPanel.addView(audioHint)
+
         // ===== BARA DE CONTROL (sus, dreapta): dimensiune font =====
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -208,6 +293,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))    // bara sta SUS
 
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(audioPanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
         // ===== SCROLL =====
         // Nu mai tin niciun flag de "user a derulat". Sistemul e pur reactiv:
@@ -897,28 +983,6 @@ class MainActivity : AppCompatActivity() {
         // infrastructura [xxx]), ca operatorul sa vada doar sunetul, nu tool-urile.
         val hideForAudio = audioNext && cleanForHide.isNotEmpty() && !cleanForHide.startsWith("[")
         if (!hideForAudio) output.append(Ansi.toSpannable(s))
-        // ...si acumulam pentru voce tot ce e CONTINUT: scoatem doar marcajele structurale
-        // (caseta TASK, You >, AGENT >, footer) si pasii de tool (+-- step ...), dar pastram
-        // TOATA proza raspunsului, oricat de lunga.
-        if (audioNext && cleanForHide.isNotEmpty()) {
-            // Raspunsul agentului vine ca UN SINGUR append (print cu linii noi inauntru),
-            // deci filtram FIEcare linie separat - altfel o singura linie de tool arunca
-            // tot textul (simptom: "audio finish: 285 car." din 1200).
-            for (raw in cleanForHide.split("\n")) {
-                var line = raw.trim()
-                if (line.isEmpty()) continue
-                val drop = line.startsWith("[") || line.contains("TASK #") ||
-                    line.startsWith("\u256D") || line.startsWith("\u2570") || line.startsWith("\u2502") ||
-                    line.startsWith("You >") || line.startsWith("AGENT >") || line.startsWith("+-") ||
-                    line.startsWith("+--") || line.startsWith("tok ") || line.startsWith("sess ") ||
-                    Regex("#\\d+\\s+(done|interrupted)").containsMatchIn(line)
-                if (drop) continue
-                // pasii de tool pot apare in mijlocul liniei: scoatem doar bucata lor
-                line = line.replace(Regex("\\+--\\s*step\\s*\\d+.*?(?=\\s{2,}\\S|$)"), " ")
-                           .replace(Regex("\\s{2,}"), " ").trim()
-                if (line.isNotEmpty()) audioText.append(line).append(' ')
-            }
-        }
         // 🔊: acumulez DOAR liniile care par raspunsul agentului (proza), nu zgomotul de
         // infrastructura (self-heal, adb, term, setup) care umplea citirea vocala.
         val plain = s.replace(Regex("\\u001B\\[[0-9;?]*[a-zA-Z]"), "")
@@ -934,21 +998,44 @@ class MainActivity : AppCompatActivity() {
         if (audioNext && Regex("#\\d+\\s+(done|interrupted)").containsMatchIn(t)) {
             // task terminat in modul audio: rostim raspunsul, fara sa-l afisam
             val say = audioText.toString().trim()
-            audioNext = false; inTask = false; inAgent = false
+            // mod persistent: audioNext rămâne true daca audioMode e pornit; altfel se consuma
+            audioNext = audioMode
+            inTask = false; inAgent = false
             android.util.Log.i("PhononTts", "audio finish: " + say.length + " car. -> speak")
             if (say.isNotEmpty()) {
-                PhononTts.speak(this, say) { st -> android.util.Log.i("PhononTts", st) }
+                PhononTts.speak(this, say) { st ->
+                    android.util.Log.i("PhononTts", st)
+                    if (audioMode) {
+                        // afisez doar mesaje scurte si utile, nu detalii tehnice
+                        val show = when {
+                            st.startsWith("preparing") -> "Loading voice..."
+                            st.startsWith("playing")   -> "Speaking..."
+                            st.startsWith("done")      -> "Ready - just type."
+                            st.startsWith("error")     -> st
+                            st.startsWith("nothing")   -> "Ready - just type."
+                            else -> null
+                        }
+                        if (show != null) audioStatus(show)
+                    }
+                }
             } else {
-                android.util.Log.w("PhononTts", "audio finish: text gol, nimic de rostit")
+                android.util.Log.w("PhononTts", "audio finish: empty text, nothing to speak")
             }
+            audioText.setLength(0)   // urmatorul raspuns porneste curat
         }
         if (t.contains("TASK #") || (t.contains("\u256D") && !inTask)) {
             inTask = true; newTurn = false; inAgent = false; lastAnswer.setLength(0)
+            if (audioNext) { audioText.setLength(0); audioStatus("Working...") }
         } else if (inTask && Regex("#\\d+\\s+(done|interrupted)").containsMatchIn(t)) {
             inTask = false; inAgent = false
         } else if (inTask && Regex("^\\s*AGENT\\s*>\\s*$").containsMatchIn(t)) {
             inAgent = true
+            audioStatus("Preparing the reply...")
         } else if (inTask && inAgent && t.isNotEmpty()) {
+            // modul audio: adunam DOAR textul raspunsului (dupa "AGENT >"), nu tool-urile
+            if (audioNext) audioText.append(t).append(' ')
+        }
+        if (false) {
             if (!isInfra(t)) {
                 lastAnswer.append(t).append('\n')
                 if (lastAnswer.length > ANSWER_CAP) lastAnswer.delete(0, lastAnswer.length - ANSWER_CAP)
@@ -2088,24 +2175,39 @@ class MainActivity : AppCompatActivity() {
         var t = input.text.toString().replace("\r", "").replace("\n", " ").trim()
         if (t.isEmpty()) return
         input.setText("")
-        // ★ /audio: NU trimitem comanda ca atare. Pornim modul audio in aplicatie si trimitem
-        // doar mesajul operatorului; instructiunea de stil o adauga agentul in context.
-        if (t.lowercase() == "/audio" || t.lowercase().startsWith("/audio ")) {
-            val msg = t.substring(6).trim()
+        // ★ /audio = MOD PERSISTENT.
+        //   /audio on  (sau doar /audio) -> de acum TOATE raspunsurile se rostesc si nu se afiseaza
+        //   /audio off                    -> revine la afisarea normala in terminal
+        //   /audio <mesaj>                -> activeaza modul si trimite mesajul
+        val low = t.lowercase()
+        if (low == "/audio on" || low == "/audio" || low == "/audio arm") {
+            audioMode = true; audioNext = true; audioText.setLength(0); inTask = false; inAgent = false
+            appendAnsi("\u001b[38;5;114m[audio] ON: every reply is spoken, nothing is shown. " +
+                       "Type /audio off to go back.\u001b[0m\n")
+            setAudioUi(true)
+            toast("audio mode ON (persistent)")
+            return
+        }
+        if (low == "/audio off" || low == "/text") {
+            audioMode = false; audioNext = false; audioText.setLength(0)
+            appendAnsi("\u001b[38;5;114m[audio] OFF: replies are shown as text again.\u001b[0m\n")
+            setAudioUi(false)
+            toast("audio mode OFF")
+            return
+        }
+        if (low.startsWith("/audio ")) {
+            // "/audio <mesaj>": activeaza modul persistent si trimite mesajul
+            audioMode = true; audioNext = true; audioText.setLength(0); inTask = false; inAgent = false
+            t = t.substring(6).trim()
+            showAudioYou(t)
+            appendAnsi("\u001b[38;5;114m[audio] ON: every reply is spoken, nothing is shown.\u001b[0m\n")
+            setAudioUi(true)
+            if (t.isEmpty()) { toast("audio mode ON (persistent)"); return }
+        } else if (audioMode && !t.startsWith("/")) {
+            // mod persistent: fiecare mesaj nou se duce ca "/audio <mesaj>", ca agentul sa
+            // raspunda in engleza si proza curata, iar aplicatia sa ascunda textul
             audioNext = true; audioText.setLength(0); inTask = false; inAgent = false
-            appendAnsi("\u001b[38;5;114m[audio] ON: the reply is spoken, not shown\u001b[0m\n")
-            if (msg.isEmpty()) {
-                // doar "/audio": NU trimitem nimic agentului acum. Aplicatia tine modul armat
-                // (audioNext=true) si, la urmatorul mesaj, il trimite ca "/audio <mesaj>" -
-                // exact aceeasi cale care functioneaza. Altfel agentul consuma modul pe linia
-                // goala si al doilea mesaj rula ca task normal (text afisat, fara audio).
-                toast("audio mode ARMED - type your message")
-                return
-            }
-            // "/audio <mesaj>": se trimite asa mai departe; agentul adauga instructiunea in context
-        } else if (audioNext && t.isNotEmpty() && !t.startsWith("/")) {
-            // mesajul care urmeaza dupa un "/audio" singur: il prefixam, ca sa mearga pe
-            // aceeasi cale verificata
+            showAudioYou(t)
             t = "/audio " + t
         }
         // ★ ONBOARDING: daca asteptam cheia API, o salvam si pornim agentul.

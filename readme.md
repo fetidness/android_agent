@@ -156,6 +156,20 @@ Comentariile din cod rămân in romana.
 In modul audio, pe ecran nu apare **nimic** din raspunsul agentului: nici textul, nici
 pasi de tool (`+-- step NN [python] ...`), nici footer-ul de tokeni. Se aude doar vocea.
 
+**Modul este persistent:** `/audio on` rămâne activ pana la `/audio off` (alias `/text`),
+deci nu trebuie repetat la fiecare mesaj. Terminalul e inlocuit de un panou curat:
+
+```
+        🔊  AUDIO MODE
+   Every reply is spoken, nothing is shown.
+   You: check debian status
+        Agent is working... please wait.
+     Type /audio off to return to text.
+```
+
+Starea se actualizeaza singura: `Agent is working...` -> `Working...` ->
+`Preparing the reply...` -> `Loading voice...` -> `Speaking...` -> `Ready - just type.`
+
 ### Limite cunoscute (masurate)
 
 - **Fara clonare de voce**: modelul de 31m nu are speaker encoder
