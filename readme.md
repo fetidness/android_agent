@@ -147,6 +147,15 @@ adb exec-out run-as net.sys32.agent cat files/python/agent.py | md5sum
 unzip -p app/build/outputs/apk/debug/app-debug.apk assets/python/agent.py | md5sum
 ```
 
+### Mesaje UI
+
+Toate textele din interfata sunt in **engleza** (cerinta operatorului): butoane, panoul
+de setup, toast-uri, mesajele `[audio]`/`[stop]`/`[tts]` si etichetele din manifest.
+Comentariile din cod rămân in romana.
+
+In modul audio, pe ecran nu apare **nimic** din raspunsul agentului: nici textul, nici
+pasi de tool (`+-- step NN [python] ...`), nici footer-ul de tokeni. Se aude doar vocea.
+
 ### Limite cunoscute (masurate)
 
 - **Fara clonare de voce**: modelul de 31m nu are speaker encoder

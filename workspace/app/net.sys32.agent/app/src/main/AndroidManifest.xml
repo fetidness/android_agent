@@ -1378,7 +1378,7 @@
         <service
             android:name=".AgentAccessibilityService"
             android:exported="false"
-            android:label="Agent (control ecran)"
+            android:label="Agent (screen control)"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService"/>

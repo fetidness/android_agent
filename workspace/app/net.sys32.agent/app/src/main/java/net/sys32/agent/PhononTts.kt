@@ -64,17 +64,17 @@ object PhononTts {
      */
     fun speak(ctx: Context, text: String, onState: (String) -> Unit) {
         val clean = cleanText(text)
-        if (clean.isEmpty()) { onState("nimic de citit"); return }
-        if (!busy.compareAndSet(false, true)) { onState("deja vorbeste"); return }
+        if (clean.isEmpty()) { onState("nothing to read"); return }
+        if (!busy.compareAndSet(false, true)) { onState("already speaking"); return }
         cancel.set(false)
         ctxRef = ctx.applicationContext
         exec.execute {
             var track: android.media.AudioTrack? = null
             try {
-                onState("pregatesc modelul...")
+                onState("preparing model...")
                 ensureModel(ctx)
                 val bin = binPath(ctx)
-                if (!bin.exists()) { onState("lipsește binarul: " + bin.path); return@execute }
+                if (!bin.exists()) { onState("missing binary: " + bin.path); return@execute }
 
                 val sr = 24000
                 track = android.media.AudioTrack.Builder()
@@ -107,7 +107,7 @@ object PhononTts {
                         if (cancel.get()) break
                         if (firstAt == 0L) {
                             firstAt = System.currentTimeMillis() - t0
-                            onState("redau (primul sunet dupa %.0f ms)".format(firstAt.toDouble()))
+                            onState("playing (first sound after %.0f ms)".format(firstAt.toDouble()))
                         }
                         // WRITE_BLOCKING scrie TOT sau cat incape; restul trebuie trimis in bucla,
                         // altfel esantioanele ramase se pierd si sunetul "se opreste" la mijloc.
@@ -142,11 +142,11 @@ object PhononTts {
                 abandonFocus(ctx)
                 writeWavFromPcm(saved.toByteArray())
                 val audioSec = total / 2.0 / 24000.0
-                onState("gata: %.1fs audio, primul sunet in %.0f ms".format(
+                onState("done: %.1fs audio, first sound in %.0f ms".format(
                     audioSec, (if (firstAt == 0L) 0L else firstAt).toDouble()))
             } catch (t: Throwable) {
                 android.util.Log.e(TAG, "eroare", t)
-                onState("eroare: " + (t.message ?: t.javaClass.simpleName))
+                onState("error: " + (t.message ?: t.javaClass.simpleName))
             } finally {
                 runCatching { track?.stop(); track?.release() }
                 busy.set(false)

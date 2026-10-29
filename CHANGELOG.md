@@ -23,6 +23,24 @@
   `buffer golit: playhead=324480/324480`, WAV 13.52 s = generate 13.52 s, iar
   transcrierea contine si ULTIMA propozitie.
 
+#### (c) UI in engleza + fixuri pe modul audio (dupa testul operatorului)
+
+- **Toate mesajele UI traduse in engleza** (cerinta operatorului): `voice stopped`,
+  `nothing to read`, `reading N characters`, `audio mode ARMED - type your message`,
+  `preparing model...`, `playing (first sound after N ms)`, `done: Ns audio`,
+  `already speaking`, `missing binary: <path>`, `[audio] ON: the reply is spoken, not shown`,
+  `[stop] interrupt sent (SIGINT)`, iar in manifest `Agent (screen control)`.
+  Cele 30 de diacritice rămase in cod sunt doar in comentarii.
+- **FIX: se auzea doar o parte din raspuns** (`audio finish: 285 car.` dintr-un raspuns de
+  ~1200). Agentul tipareste raspunsul intr-un SINGUR `print` cu linii noi inauntru, iar
+  filtrul se aplica pe tot blocul: o singura linie cu `TASK #`/`+-` arunca TOT textul.
+  Acum filtrarea se face **linie cu linie**.
+- **FIX: tool-urile se vedeau in modul audio.** In modul audio se ascunde tot ce vine de la
+  agent (mai putin liniile `[infra]`), iar pasii de tool (`+-- step NN [python] ...`) sunt
+  eliminati si din textul rostit.
+- Verificat pe device cu 822 de caractere: 1284480 esantioane = 53.5 s audio,
+  `playhead=1284480/1284480` (redat integral), transcrierea contine si ULTIMA propozitie.
+
 ### 2026-10-29 (d) - VOCE OFFLINE IN APLICATIE (Phonon 31m) + /audio
 
 > **Context:** operatorul a cerut ca raspunsurile agentului sa poata fi ASCULTATE,

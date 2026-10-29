@@ -856,11 +856,11 @@ class MainActivity : AppCompatActivity() {
 
     /** 🔊 citeste cu voce tare ultimul raspuns al agentului (Phonon 31m, offline, in app). */
     private fun speakLastAnswer() {
-        if (PhononTts.isBusy()) { PhononTts.cancel(); toast("voce oprita"); return }
+        if (PhononTts.isBusy()) { PhononTts.cancel(); toast("voice stopped"); return }
         val text = PhononTts.cleanText(lastAnswer.toString().trim())
-        if (text.isEmpty()) { toast("nu am ce citi"); return }
+        if (text.isEmpty()) { toast("nothing to read"); return }
         PhononTts.speak(this, text) { st -> runOnUiThread { if (!isFinishing) btnSpeak.text = if (st.startsWith("gata") || st.startsWith("eroare")) "🔊" else "…" } }
-        toast("citesc ${text.length} caractere")
+        toast("reading ${text.length} characters")
     }
 
     private fun toast(m: String) {
@@ -893,16 +893,31 @@ class MainActivity : AppCompatActivity() {
         // /audio: cat timp modul audio e ARMAT, nimic din ce vine de la agent nu se afiseaza
         // in terminal, cu exceptia liniilor de infrastructura ([...]) pe care le lasam sa curga.
         val cleanForHide = s.replace(Regex("\\u001B\\[[0-9;?]*[a-zA-Z]"), "").trim()
-        val isMarker = cleanForHide.isEmpty() || cleanForHide.startsWith("[") ||
-            cleanForHide.contains("TASK #") || cleanForHide.startsWith("\u256D") ||
-            cleanForHide.startsWith("\u2570") || cleanForHide.startsWith("You >") ||
-            cleanForHide.startsWith("AGENT >") || cleanForHide.startsWith("\u2502")
+        // In modul audio ascundem TOT ce vine de la agent (mai putin liniile de
+        // infrastructura [xxx]), ca operatorul sa vada doar sunetul, nu tool-urile.
         val hideForAudio = audioNext && cleanForHide.isNotEmpty() && !cleanForHide.startsWith("[")
         if (!hideForAudio) output.append(Ansi.toSpannable(s))
-        // modul audio: orice linie de CONTINUT (nu marcaj, nu infrastructura) merge la voce
-        if (audioNext && !isMarker && !cleanForHide.startsWith("[") &&
-            Regex("#\\d+\\s+(done|interrupted)").find(cleanForHide) == null) {
-            audioText.append(cleanForHide).append(' ')
+        // ...si acumulam pentru voce tot ce e CONTINUT: scoatem doar marcajele structurale
+        // (caseta TASK, You >, AGENT >, footer) si pasii de tool (+-- step ...), dar pastram
+        // TOATA proza raspunsului, oricat de lunga.
+        if (audioNext && cleanForHide.isNotEmpty()) {
+            // Raspunsul agentului vine ca UN SINGUR append (print cu linii noi inauntru),
+            // deci filtram FIEcare linie separat - altfel o singura linie de tool arunca
+            // tot textul (simptom: "audio finish: 285 car." din 1200).
+            for (raw in cleanForHide.split("\n")) {
+                var line = raw.trim()
+                if (line.isEmpty()) continue
+                val drop = line.startsWith("[") || line.contains("TASK #") ||
+                    line.startsWith("\u256D") || line.startsWith("\u2570") || line.startsWith("\u2502") ||
+                    line.startsWith("You >") || line.startsWith("AGENT >") || line.startsWith("+-") ||
+                    line.startsWith("+--") || line.startsWith("tok ") || line.startsWith("sess ") ||
+                    Regex("#\\d+\\s+(done|interrupted)").containsMatchIn(line)
+                if (drop) continue
+                // pasii de tool pot apare in mijlocul liniei: scoatem doar bucata lor
+                line = line.replace(Regex("\\+--\\s*step\\s*\\d+.*?(?=\\s{2,}\\S|$)"), " ")
+                           .replace(Regex("\\s{2,}"), " ").trim()
+                if (line.isNotEmpty()) audioText.append(line).append(' ')
+            }
         }
         // 🔊: acumulez DOAR liniile care par raspunsul agentului (proza), nu zgomotul de
         // infrastructura (self-heal, adb, term, setup) care umplea citirea vocala.
@@ -1040,7 +1055,7 @@ class MainActivity : AppCompatActivity() {
             }
             // SIGINT = 2 (Python il prinde ca KeyboardInterrupt); destroy() ar da SIGTERM si ar omori procesul
             android.os.Process.sendSignal(pid, 2)
-            appendAnsi("\u001B[38;5;208m[stop] intrerupere trimisa (SIGINT)...\u001B[0m\n")
+            appendAnsi("\u001B[38;5;208m[stop] interrupt sent (SIGINT)...\u001B[0m\n")
         } catch (e: Throwable) {
             appendAnsi("[stop error: $e]\n")
         }
@@ -2078,13 +2093,13 @@ class MainActivity : AppCompatActivity() {
         if (t.lowercase() == "/audio" || t.lowercase().startsWith("/audio ")) {
             val msg = t.substring(6).trim()
             audioNext = true; audioText.setLength(0); inTask = false; inAgent = false
-            appendAnsi("\u001b[38;5;114m[audio] ON: raspunsul se rosteste si nu se afiseaza\u001b[0m\n")
+            appendAnsi("\u001b[38;5;114m[audio] ON: the reply is spoken, not shown\u001b[0m\n")
             if (msg.isEmpty()) {
                 // doar "/audio": NU trimitem nimic agentului acum. Aplicatia tine modul armat
                 // (audioNext=true) si, la urmatorul mesaj, il trimite ca "/audio <mesaj>" -
                 // exact aceeasi cale care functioneaza. Altfel agentul consuma modul pe linia
                 // goala si al doilea mesaj rula ca task normal (text afisat, fara audio).
-                toast("mod audio ARMAT - scrie mesajul")
+                toast("audio mode ARMED - type your message")
                 return
             }
             // "/audio <mesaj>": se trimite asa mai departe; agentul adauga instructiunea in context
