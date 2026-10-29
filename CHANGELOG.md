@@ -5,6 +5,24 @@
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
 > Ultimul commit inclus: voce offline Phonon + `/audio` (2026-10-29).
 
+
+#### (b) Out of the box: descarcare automata a modelului + buffer drain
+
+- **`fetch_model.sh`** in radacina proiectului: descarca modelul (63 MB) din Hugging Face
+  daca lipseste. Legat ca task Gradle (`fetchModel`) de `preBuild`, deci
+  `gradle assembleDebug` pe o clona noua functioneaza fara pasi manuali.
+  Verificat: model sters -> build -> descarcat automat (38 s) -> BUILD SUCCESSFUL.
+- **`generation_config.json` / `processor_config.json` / `tokenizer_config.json` NU exista
+  in checkpoint** (Hugging Face da 404, iar `curl` fara `--fail` scria "Entry not found").
+  Scriptul le trateaza ca optionale; fisierele obligatorii (config, tokenizer, model.q8.gguf)
+  sunt descarcate cu `--fail`, ca un esec de retea sa opreasca build-ul.
+- **FIX: audio trunchiat la finalul redarii.** Generatorul produce mai repede decat reda
+  difuzorul, deci la sfarsit mai exista audio in buffer, iar `track.stop()` il taia.
+  Dovada: 324480 esantioane generate, dar se auzea ~80%. Acum se asteapta golirea
+  bufferului (`playbackHeadPosition` pana la total) inainte de `stop()`:
+  `buffer golit: playhead=324480/324480`, WAV 13.52 s = generate 13.52 s, iar
+  transcrierea contine si ULTIMA propozitie.
+
 ### 2026-10-29 (d) - VOCE OFFLINE IN APLICATIE (Phonon 31m) + /audio
 
 > **Context:** operatorul a cerut ca raspunsurile agentului sa poata fi ASCULTATE,

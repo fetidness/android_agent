@@ -88,32 +88,26 @@ context, deci nu apare pe ecran in linia `You > ...`.
 Nu foloseste JNI: binarul ruleaza ca proces separat, iar aplicatia reda ce primeste.
 Motivul e in CHANGELOG (2026-10-29): legarea JNI esua in procesul agentului.
 
-### Cum se reface de la zero
+### Out of the box (clona noua)
 
-Modelul **nu se comite** in git (63 MB). Se descarca o singura data:
-
-```bash
-cd /home/gab/android_agent/temp
-mkdir -p phonon/models/phonon-31m-en/voices
-cd phonon/models/phonon-31m-en
-REPO=https://huggingface.co/gradium/phonon-31m-en/resolve/8c64b55ec301728e2d1695bfea87a08a267d0c2d
-for f in config.json generation_config.json processor_config.json tokenizer.json \
-         tokenizer.model model.q8.gguf; do curl -sSL -O "$REPO/$f"; done
-```
-
-Apoi copiaza in proiect:
+Modelul **nu se comite** in git (63 MB), dar **build-ul il descarca singur**:
+`app/build.gradle.kts` leaga task-ul `fetchModel` de `preBuild`, deci
 
 ```bash
-APP=/home/gab/android_agent/workspace/app/net.sys32.agent/app/src/main
-mkdir -p $APP/assets/models/phonon-31m-en/voices
-cp /home/gab/android_agent/temp/phonon/models/phonon-31m-en/*.json \
-   /home/gab/android_agent/temp/phonon/models/phonon-31m-en/model.q8.gguf \
-   $APP/assets/models/phonon-31m-en/
-# vocile (4 .safetensors) vin din catalogul gradium/phonon-voices
+cd workspace/app/net.sys32.agent
+bash build_aab.sh          # sau: gradle assembleDebug
 ```
 
-Voci implicite livrate: `2A2fFf8SkDEJ8nzx` (en), `FXxJ9mANRq6BCTX5` (fr),
-`2A2fFf8SkDEJ8nzx` (de), `b6FvJAiokjdqIti4` (es).
+este suficient. Primul build descarca ~63 MB (o singura data), apoi e instant.
+Fortare re-descarcare: `bash fetch_model.sh --force`.
+
+Scriptul descarca doar fisierele obligatorii cu `--fail` (config, tokenizer,
+`model.q8.gguf`), ca un esec de retea sa opreasca build-ul, plus 4 voci. Fisierele
+`generation_config.json` / `processor_config.json` / `tokenizer_config.json` **nu exista**
+in checkpoint (HF da 404) si sunt tratate ca optionale.
+
+Voci livrate: `NbpkqMVS3CJeq2j8` (Zoey, en), `FXxJ9mANRq6BCTX5` (Noemie, fr),
+`2A2fFf8SkDEJ8nzx` (Nele, de), `b6FvJAiokjdqIti4` (Noa, es).
 
 ### Rebuild binarul nativ
 
@@ -163,6 +157,8 @@ unzip -p app/build/outputs/apk/debug/app-debug.apk assets/python/agent.py | md5s
 - **Doar CPU**: binarele oficiale nu includ CUDA/Vulkan
   (`device 'cuda' is not available in this build`).
 - Vocea citeste **doar raspunsul ultimului task**, nu tot istoricul conversatiei.
+- Generatorul e mai rapid decat redarea, deci la final audio-ul se acumuleaza in buffer;
+  `stop()` se da numai dupa golirea lui (`playbackHeadPosition`), altfel se taie finalul.
 
 ## 🚀 SETUP AUTOMAT (2026-10-21) - INSTALAREA APK = MEDIU COMPLET FUNCTIONAL
 

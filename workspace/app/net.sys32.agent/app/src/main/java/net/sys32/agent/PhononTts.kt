@@ -124,6 +124,20 @@ object PhononTts {
                 val errText = p.errorStream.bufferedReader().readText().trim()
                 p.waitFor()
                 if (errText.isNotEmpty()) android.util.Log.i(TAG, "binar: " + errText.take(200))
+                // Generatorul produce mai repede decat reda difuzorul, deci la final mai exista
+                // audio in buffer. track.stop() il taiа instant -> "sunetul se trunchiaza".
+                // Asteptam sa se goleasca bufferul inainte de stop().
+                run {
+                    val totalFrames = saved.size() / 2
+                    val deadline = System.currentTimeMillis() + 30_000
+                    while (track != null && System.currentTimeMillis() < deadline) {
+                        val played = try { track.playbackHeadPosition } catch (_: Exception) { totalFrames }
+                        if (played >= totalFrames - 240) break     // ~10 ms ramase
+                        Thread.sleep(20)
+                    }
+                    android.util.Log.i(TAG, "buffer golit: playhead=" +
+                        (try { track.playbackHeadPosition } catch (_: Exception) { -1 }) + "/" + totalFrames)
+                }
                 track.stop(); track.release(); track = null
                 abandonFocus(ctx)
                 writeWavFromPcm(saved.toByteArray())

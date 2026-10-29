@@ -33,6 +33,15 @@ android {
     }
 }
 
+// Modelul vocal (63 MB) NU e in git: se descarca automat inainte de build daca lipseste,
+// ca o clona noua sa functioneze out of the box (vezi fetch_model.sh din radacina proiectului).
+val fetchModel = tasks.register<Exec>("fetchModel") {
+    workingDir = rootProject.projectDir
+    commandLine("bash", "fetch_model.sh")
+}
+
+tasks.named("preBuild") { dependsOn(fetchModel) }
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
