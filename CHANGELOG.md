@@ -6,6 +6,57 @@
 > Ultimul commit inclus: push-to-talk Whisper offline + fix redare voce (2026-10-31).
 
 
+### 2026-10-31 (b) - o clona noua nu putea construi: `bootstrap_binaries.sh`
+
+> **Context:** intrebarea operatorului "daca o persoana face clone, ii lipsesc multe din toolchain,
+> ce se intampla?" a scos la iveala un gol real: repo-ul are doar sursele, iar binarele
+> (3,6 GB) sunt ignorate de `.gitignore`. `fetch_whisper.sh` si `fetch_model.sh` acopereau doar
+> 2 din 6 categorii.
+
+#### Ce lipsea la o clona (masurat, disc vs `origin/master`)
+
+| Ce | Pe disc | In clona |
+|---|---|---|
+| `assets/toolchain/` | 8 intrari / 1056 MB | **0** |
+| `assets/android_build/` | 7 fisiere / 399 MB | **0** |
+| `jniLibs/arm64-v8a/` | 150 fisiere / 435 MB | **2** |
+| `assets/models/` (voce) | 66 MB | **0** |
+| `assets/proot/` | 122 MB | **1** |
+| `local.properties` (sdk.dir) | prezent | **lipseste** (e in .gitignore) |
+
+#### `bootstrap_binaries.sh`
+
+- extrage din APK toate cele 6 categorii: `jniLibs` (148 binare), `assets/toolchain` (6077
+  fisiere), `assets/models` (voce), `assets/whisper` (model STT), `assets/proot`,
+  `assets/android_build` (build PE TELEFON: JDK/Gradle/build-tools)
+- `--from-device` ia APK-ul instalat prin adb; altfel primeste calea catre APK ca argument
+- genereaza `local.properties` cu `sdk.dir` (fara el Gradle da "SDK location not found")
+- idempotent: sare peste ce exista deja cu dimensiunea corecta
+- daca modelul Whisper nu e in APK, il descarca cu `fetch_whisper.sh`
+
+#### Bug gasit la propriul script (dovedit, nu teoretic)
+
+- `unzip -Z1 "$APK" | grep -q '^assets/whisper/models/'` sub `set -o pipefail` returna **fals**:
+  `grep -q` iese la primul match -> SIGPIPE pe `unzip` -> `pipefail` propaga eroarea. Efectul:
+  scriptul raporta "nu e in APK" si descarca 1,5 GB degeaba. Fix: lista de intrari calculata
+  O SINGURA DATA in `$LIST` si verificata cu `grep -q` pe fisier.
+
+#### Verificat pe o clona REALA (nu pe proiectul de dezvoltare)
+
+```
+git clone --depth 1 git@github.com:fetidness/android_agent.git   -> 95 MB
+bash bootstrap_binaries.sh <apk>  -> toate cele 6 categorii extrase
+gradle --offline clean assembleDebug -> BUILD SUCCESSFUL in 50s
+APK rezultat: 2,67 GB (original 2,68 GB); whisper, libc++, ptts, proot, phonon,
+              android_build si 6077 fisiere de toolchain toate prezente
+```
+
+#### Raman deschise
+
+- `build_toolchain.sh` exista in git, dar regenerarea de la zero a toolchain-ului (1 GB) nu a
+  fost re-testata in aceasta sesiune.
+- Pasul de bootstrap cere APK-ul (sau adb). Fara el nu exista alta sursa pentru binare.
+
 ### 2026-10-31 - PUSH-TO-TALK (Whisper offline) in `/audio on`
 
 > **Context:** operatorul a cerut sa poata VORBI in loc sa tasta, cu transcriere locala, iar apoi

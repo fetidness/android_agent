@@ -150,6 +150,51 @@ Verificat pe SM-A366B cu `pm uninstall` + `pm install` (datele șterse complet):
   `sendLine()`), stările afișate, blocarea tastaturii în modul audio
 - `app/src/main/assets/whisper/models/ggml-medium.bin` — modelul STT (unicul livrat)
 
+### Ce NU e în git și cum se aduce (clonă nouă)
+
+Repo-ul conține **doar sursele** (~95 MB). Binarele sunt ignorate de `.gitignore` pentru că
+însumă ~3,6 GB. O clonă nouă **nu poate construi** până nu le aduce:
+
+| Ce | Mărime | De unde | Cine îl aduce |
+|---|---|---|---|
+| `assets/toolchain/` (clang, lld, sysroot, rust, cmake, perl) | 1056 MB | APK | `bootstrap_binaries.sh` |
+| `assets/android_build/` (JDK, Gradle, build-tools — build PE TELEFON) | 399 MB | APK | `bootstrap_binaries.sh` |
+| `jniLibs/arm64-v8a/` (148 binare) | 430 MB | APK | `bootstrap_binaries.sh` |
+| `assets/whisper/models/ggml-medium.bin` | 1462 MB | APK sau Hugging Face | `bootstrap_binaries.sh` / `fetch_whisper.sh` |
+| `assets/models/phonon-31m-en/` (voce) | 66 MB | APK sau Hugging Face | `bootstrap_binaries.sh` / `fetch_model.sh` |
+| `assets/proot/` | 122 MB | APK | `bootstrap_binaries.sh` |
+| `local.properties` (`sdk.dir`) | — | generat | `bootstrap_binaries.sh` |
+
+```bash
+cd workspace/app/net.sys32.agent
+
+# varianta 1: din APK-ul existent (cel mai simplu, dacă îl ai)
+bash bootstrap_binaries.sh /cale/catre/app-debug.apk
+
+# varianta 2: direct de pe telefon, prin adb (APK-ul instalat)
+bash bootstrap_binaries.sh --from-device
+
+# apoi build-ul normal
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+  /home/gab/Work/Android/gradle-8.11.1/bin/gradle --offline assembleDebug
+```
+
+`bootstrap_binaries.sh` este **idempotent** (sare peste ce există deja) și, dacă în APK nu găsește
+modelul Whisper, îl descarcă singur cu `fetch_whisper.sh`.
+
+#### Verificat pe o clonă reală (2026-10-31)
+
+```
+git clone --depth 1  -> 95 MB (doar surse)
+bash bootstrap_binaries.sh <apk>  -> jniLibs 148, toolchain 6077, voce 63M,
+                                    whisper din APK (fără descărcare), proot, android_build 7,
+                                    local.properties generat
+gradle --offline clean assembleDebug -> BUILD SUCCESSFUL
+APK: 2,67 GB (originalul 2,68 GB), toate componentele critice prezente
+```
+
+---
+
 ### Rebuild
 
 ```bash
