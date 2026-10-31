@@ -66,32 +66,57 @@ class PushToTalk(
     /** filesDir/models/whisper/ggml-<name>.bin; copied from assets once when missing (streamed). */
     private fun modelFile(name: String): File = File(File(File(ctx.filesDir, "models"), "whisper"), "ggml-$name.bin")
 
+    /** Cate octeti are asset-ul (available() nu da dimensiunea unui asset comprimat/streamat). */
+    private fun assetSize(path: String): Long = try {
+        ctx.assets.openFd(path).use { it.length }
+    } catch (_: Exception) { 0L }
+
     private fun ensureModel(name: String, say: (String) -> Unit): File? {
         val f = modelFile(name)
-        if (f.exists() && f.length() > 100_000_000L) return f
+        val path = "whisper/models/ggml-$name.bin"
+        val expected = assetSize(path)
+        if (f.exists() && (expected == 0L || f.length() == expected)) return f
         f.parentFile?.mkdirs()
         if (f.exists()) f.delete()
         val tmp = File(f.parentFile, f.name + ".part")
         try {
-            ctx.assets.open("whisper/models/ggml-$name.bin").use { inp ->
+            ctx.assets.open(path).use { inp ->
                 val bos = java.io.BufferedOutputStream(FileOutputStream(tmp), 1 shl 20)
                 val buf = ByteArray(1 shl 20)
-                var lastPct = -10
                 var done = 0L
-                val total = inp.available().toLong().coerceAtLeast(1L)
+                var lastShown = -1L
+                val t0 = System.currentTimeMillis()
                 while (true) {
                     val n = inp.read(buf); if (n <= 0) break
                     bos.write(buf, 0, n); done += n
-                    val pct = (done * 100 / total).toInt()
-                    if (pct >= lastPct + 10) { lastPct = pct; say("unpacking whisper $name: $pct%") }
+                    // progres la fiecare 2% SAU la fiecare 50 MB: 1.5 GB nu trebuie sa para blocat
+                    val pct = if (expected > 0) (done * 100 / expected) else -1
+                    val step = if (expected > 0) (expected / 50).coerceAtLeast(1L) else (50L shl 20)
+                    val duePct = pct >= 0 && pct % 2L == 0L && pct != lastShown
+                    val dueBytes = done - lastShown * step > step
+                    if (duePct || dueBytes) {
+                        lastShown = pct.toLong()
+                        val mb = done / (1L shl 20)
+                        val tot = expected / (1L shl 20)
+                        val secs = ((System.currentTimeMillis() - t0) / 1000).coerceAtLeast(1)
+                        say(if (tot > 0) "Preparing voice input: $mb / $tot MB  ($pct%)  -  one time only"
+                            else "Preparing voice input: $mb MB  -  one time only")
+                        Log.i("PTT", "unpack $name: $mb/$tot MB in ${secs}s")
+                    }
                 }
                 bos.flush(); bos.close()
             }
             if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
+            if (expected > 0 && f.length() != expected) {
+                Log.w("PTT", "size mismatch after unpack: ${f.length()} != $expected")
+                f.delete(); return null
+            }
+            say("Voice input ready (${f.length() / (1L shl 20)} MB).", "#98C379")
             return f
         } catch (e: Exception) {
-            Log.w("PTT", "model asset missing for $name: $e")
+            Log.w("PTT", "model asset could not be unpacked for $name: $e")
             tmp.delete()
+            say("ERROR: cannot prepare the voice model: ${e.message}", "#E06C75")
             return null
         }
     }
@@ -259,16 +284,23 @@ class PushToTalk(
         act.runOnUiThread { if (container.visibility == View.VISIBLE) step.text = msg.take(150) }
     }
 
+    @Volatile private var preparing = false
+
     fun show() {
         container.visibility = View.VISIBLE
         Thread {
             val binOk = native("libwhispercli_exec.so").exists()
-            val mOk = modelFile(modelName).exists()
-            act.runOnUiThread {
-                if (!binOk) status.text = "ERROR: whisper binary missing from the APK"
-                else if (!mOk) status.text = "unpacking whisper $modelName on first use (one time)..."
-            }
-        }.apply { isDaemon = true; start() }
+            val expected = assetSize("whisper/models/ggml-$modelName.bin")
+            val have = modelFile(modelName)
+            val ready = have.exists() && (expected == 0L || have.length() == expected)
+            if (!binOk) { act.runOnUiThread { status.text = "ERROR: whisper binary missing from the APK" }; return@Thread }
+            if (ready) { act.runOnUiThread { status.text = "Ready - hold the button and speak." }; return@Thread }
+            // prima folosire: extrag modelul ACUM, cu progres vizibil (nu la prima apasare)
+            if (preparing) return@Thread
+            preparing = true
+            try { ensureModel(modelName) { m -> act.runOnUiThread { status.text = m; act.audioPanelStatus(m) } } }
+            finally { preparing = false; act.runOnUiThread { if (container.visibility == View.VISIBLE) status.text = "Ready - hold the button and speak." } }
+        }.start()
     }
     fun hide() {
         if (recording) stopRecordingAndTranscribe()
