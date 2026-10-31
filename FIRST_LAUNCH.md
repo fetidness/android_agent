@@ -78,13 +78,53 @@ binare mari — nu încap în git:
 
 Toate se află **într-un APK deja construit**. De aceea ai nevoie de unul.
 
-### De unde iei APK-ul
+### De unde iei APK-ul — link direct
 
-Îl uploadează autorul repo-ului într-un loc public (GitHub Releases, Hugging Face,
-Google Drive — orice link direct de descărcare). Fișierul e de ordinul
-**2,7 GB** (`app-debug.apk` / `net.sys32.agent.apk`).
+**Descarcă de aici:**
 
-> **Nu ai unul?** Nu poți face bootstrap de la zero, pentru că toolchain-ul nativ
+```
+https://sys32.net/dist/net.sys32.agent.apk
+```
+
+```bash
+mkdir -p dist
+curl -L -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
+```
+
+Sau cu reluare din locul unde s-a întrerupt (recomandat pentru 2,4 GB):
+
+```bash
+curl -L -C - -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
+```
+
+Sau cu `wget`:
+
+```bash
+wget -c -O dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
+```
+
+**Mărime:** 2 675 243 215 bytes (2,4 GB)
+
+**Verifică integritatea** după descărcare — dacă hash-ul nu corespunde, descărcarea
+s-a stricat și bootstrap-ul va eșua în moduri greu de diagnosticat:
+
+```bash
+sha256sum dist/net.sys32.agent.apk
+# asteptat:
+# d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
+```
+
+```bash
+# macOS
+shasum -a 256 dist/net.sys32.agent.apk
+```
+
+```powershell
+# Windows
+Get-FileHash dist\net.sys32.agent.apk -Algorithm SHA256
+```
+
+> **Nu ai APK-ul?** Nu poți face bootstrap de la zero, pentru că toolchain-ul nativ
 > (clang, sysroot, Rust) ar trebui compilat de la sursă — proces de câteva ore pe
 > un laptop puternic. APK-ul e calea normală, nu o scurtătură.
 
@@ -100,8 +140,7 @@ android_agent/
 
 ```bash
 mkdir -p dist
-cp /cale/catre/net.sys32.agent.apk dist/
-ls -lh dist/                     # verifică: ~2,7 GB
+ls -lh dist/net.sys32.agent.apk   # verifică: 2,4 GB
 ```
 
 `dist/` e în `.gitignore` — APK-ul rămâne local, nu se urcă în git.
@@ -654,7 +693,9 @@ apoi rebuild. Verifică: `unzip -l app-debug.apk | grep -c 'assets/toolchain/'`.
 ```bash
 # --- pe laptop ---
 git clone https://github.com/fetidness/android_agent.git && cd android_agent
-mkdir -p dist && cp /cale/net.sys32.agent.apk dist/
+mkdir -p dist
+curl -L -C - -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
+sha256sum dist/net.sys32.agent.apk                    # d9e4bd32...bfe44c
 bash tools/bootstrap_binaries.sh                      # extrage binarele din APK
 
 cd workspace/app/net.sys32.agent
