@@ -27,6 +27,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    androidResources {
+        // modelele whisper (.bin) NU se comprima: altfel prima extragere e lenta
+        noCompress += listOf("bin", "gguf")
+    }
     packaging {
         jniLibs { useLegacyPackaging = true }
         // .so livrat precompilat + wrapper-ul JNI compilat din surse

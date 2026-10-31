@@ -43,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStop: Button
     private lateinit var btnSpeak: Button
     private lateinit var audioPanel: LinearLayout
+    private lateinit var ptt: PushToTalk
     private lateinit var audioTitle: TextView
     private lateinit var audioSub: TextView
     private lateinit var audioState: TextView
@@ -60,6 +61,8 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var audioNext = false
     // mod persistent: /audio on -> toate raspunsurile se rostesc pana la /audio off
     @Volatile private var audioMode = false
+    // operatorul tine apasat HOLD TO TALK: nimic nu are voie sa inceapa sa vorbeasca
+    @Volatile private var userTalking = false
     private val audioText = StringBuilder()
 
     /** Arata in panoul audio ce a scris operatorul si ca agentul lucreaza. */
@@ -78,13 +81,46 @@ class MainActivity : AppCompatActivity() {
             audioPanel.visibility = if (on) View.VISIBLE else View.GONE
             scroll.visibility = if (on) View.GONE else View.VISIBLE
             if (on) audioState.text = "Ready - just type."
+            if (on) ptt.show() else ptt.hide()
         }
+    }
+
+    /** Push-to-talk (Whisper offline) in modul /audio on - vezi PushToTalk.kt. */
+    private fun buildPushToTalk(frame: android.widget.FrameLayout) {
+        ptt = PushToTalk(this, onPress = {
+            // barge-in imediat in UI: operatorul vrea sa vorbeasca peste agent
+            userTalking = true
+            stopAgentVoice("Listening...")
+        }, onRelease = { userTalking = false }) { text ->
+            userTalking = false
+            // orice mesaj vocal nou intrerupe vocea veche, ca sa nu se suprapuna
+            stopAgentVoice("Interrupted - listening...")
+            // vocea intra in agent EXACT ca un mesaj tastat: se vede in caseta si costa la fel
+            input.setText(text)
+            newTurn = true; inTask = false; inAgent = false
+            showAudioYou(text)
+            sendLine()
+        }
+        ptt.build(frame)
+    }
+
+    /** Starea aratata in panoul principal al modului audio (apelata si de push-to-talk). */
+    fun audioPanelStatus(msg: String) {
+        if (!audioMode) return
+        runOnUiThread { if (audioMode) audioState.text = msg }
     }
 
     /** Starea vocii, afisata pe panoul audio (nu in terminal). */
     private fun audioStatus(msg: String) {
         if (!audioMode) return
         runOnUiThread { audioState.text = msg }
+    }
+
+    /** Opreste vocea agentului (barge-in): operatorul vrea sa vorbeasca din nou. */
+    fun stopAgentVoice(reason: String) {
+        if (!PhononTts.isBusy()) return
+        PhononTts.cancel()
+        runOnUiThread { if (audioMode) audioState.text = reason }
     }
 
     /** /audio sau /audio <mesaj>: raspunsul se rosteste, nu se afiseaza. */
@@ -448,6 +484,7 @@ class MainActivity : AppCompatActivity() {
         val frame = FrameLayout(this)
         frame.addView(root, ViewGroup.LayoutParams(-1, -1))
         buildSetupPanel(frame)
+        buildPushToTalk(frame)
         setContentView(frame)
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
@@ -1003,6 +1040,7 @@ class MainActivity : AppCompatActivity() {
             inTask = false; inAgent = false
             android.util.Log.i("PhononTts", "audio finish: " + say.length + " car. -> speak")
             if (say.isNotEmpty()) {
+                if (userTalking) { audioStatus("Ready - just type."); audioText.setLength(0); return }
                 PhononTts.speak(this, say) { st ->
                     android.util.Log.i("PhononTts", st)
                     if (audioMode) {

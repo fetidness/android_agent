@@ -20,12 +20,18 @@ object PhononTts {
     private val busy = AtomicBoolean(false)
     private val cancel = AtomicBoolean(false)
     @Volatile private var player: MediaPlayer? = null
+    @Volatile private var track: android.media.AudioTrack? = null
+    @Volatile private var proc: Process? = null
     @Volatile private var lastWav: File? = null
     @Volatile private var ctxRef: Context? = null
 
     fun isBusy() = busy.get()
     fun cancel() {
         cancel.set(true)
+        queue.clear()                                  // nimic vechi nu mai pleacă
+        runCatching { proc?.destroyForcibly() }; proc = null
+        // oprirea redării trebuie să fie INSTANTANEE: stop() lasă în buffer până la ~4 s
+        runCatching { track?.pause(); track?.flush(); track?.stop() }
         runCatching { player?.stop(); player?.release() }
         player = null
     }
@@ -103,7 +109,6 @@ object PhononTts {
     }
 
     private fun runBlockingSpeech(ctx: Context, clean: String, onState: (String) -> Unit) {
-            var track: android.media.AudioTrack? = null
             try {
                 onState("preparing model...")
                 ensureModel(ctx)
@@ -111,7 +116,7 @@ object PhononTts {
                 if (!bin.exists()) { onState("missing binary: " + bin.path); return }
 
                 val sr = 24000
-                track = android.media.AudioTrack.Builder()
+                val tr0 = android.media.AudioTrack.Builder()
                     .setAudioAttributes(android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
@@ -121,8 +126,9 @@ object PhononTts {
                         .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
                     .setBufferSizeInBytes(sr * 2 * 4)   // ~4 s de buffer
                     .setTransferMode(android.media.AudioTrack.MODE_STREAM).build()
-                    track.play()
-                    requestFocus(ctx)
+                track = tr0
+                tr0.play()
+                requestFocus(ctx)
 
                 val t0 = System.currentTimeMillis()
                 // TOT textul dintr-o singura bucata: engine-ul citeste pana la ultimul cuvant
@@ -131,6 +137,7 @@ object PhononTts {
                         pb.environment()["LD_LIBRARY_PATH"].orEmpty()
                 pb.redirectErrorStream(false)
                 val p = pb.start()
+                proc = p
                 var firstAt = 0L
                 var total = 0L
                 val saved = java.io.ByteArrayOutputStream()
@@ -145,9 +152,10 @@ object PhononTts {
                         }
                         // WRITE_BLOCKING scrie TOT sau cat incape; restul trebuie trimis in bucla,
                         // altfel esantioanele ramase se pierd si sunetul "se opreste" la mijloc.
+                        val tr = track ?: break
                         var off = 0
                         while (off < n) {
-                            val w = track.write(buf, off, n - off, android.media.AudioTrack.WRITE_BLOCKING)
+                            val w = tr.write(buf, off, n - off, android.media.AudioTrack.WRITE_BLOCKING)
                             if (w <= 0) break
                             off += w
                         }
@@ -156,7 +164,7 @@ object PhononTts {
                     }
                 }
                 val errText = p.errorStream.bufferedReader().readText().trim()
-                p.waitFor()
+                if (cancel.get()) { runCatching { p.waitFor() } }
                 if (errText.isNotEmpty()) android.util.Log.i(TAG, "binar: " + errText.take(200))
                 // Generatorul produce mai repede decat reda difuzorul, deci la final mai exista
                 // audio in buffer. track.stop() il taiа instant -> "sunetul se trunchiaza".
@@ -165,15 +173,17 @@ object PhononTts {
                     val totalFrames = saved.size() / 2
                     val deadline = System.currentTimeMillis() + 30_000
                     while (track != null && System.currentTimeMillis() < deadline) {
-                        val played = try { track.playbackHeadPosition } catch (_: Exception) { totalFrames }
+                        val t2 = track ?: break
+                        val played = try { t2.playbackHeadPosition } catch (_: Exception) { totalFrames }
                         if (played >= totalFrames - 240) break     // ~10 ms ramase
                         Thread.sleep(20)
                     }
                     android.util.Log.i(TAG, "buffer golit: playhead=" +
-                        (try { track.playbackHeadPosition } catch (_: Exception) { -1 }) + "/" + totalFrames)
+                        (try { track?.playbackHeadPosition } catch (_: Exception) { -1 }) + "/" + totalFrames)
                 }
-                track.stop(); track.release(); track = null
+                track?.stop(); track?.release(); track = null
                 abandonFocus(ctx)
+                if (cancel.get()) { onState("cancelled"); return }
                 writeWavFromPcm(saved.toByteArray())
                 val audioSec = total / 2.0 / 24000.0
                 onState("done: %.1fs audio, first sound in %.0f ms".format(
@@ -182,7 +192,10 @@ object PhononTts {
                 android.util.Log.e(TAG, "eroare", t)
                 onState("error: " + (t.message ?: t.javaClass.simpleName))
             } finally {
-                runCatching { track?.stop(); track?.release() }
+                runCatching { track?.release() }
+                track = null
+                proc?.let { if (!cancel.get()) runCatching { it.waitFor() } }
+                proc = null
             }
     }
 
