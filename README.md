@@ -17,9 +17,11 @@ is the operator.
 **Mandatory requirements, before anything else:**
 
 1. **ADB running on the phone** — the app talks to the Android system through `adbd`
-   on `127.0.0.1:5555`. Without ADB, half of the capabilities do not exist: no
-   `pm install`, no `dumpsys`, no `settings put`, no APK installation, no UI
-   automation. See [Step 5](#step-5--the-phone-developer-mode--usb-debugging) and
+   on `127.0.0.1:5555`. Without ADB, **you cannot even install this app**: the 2.4 GB
+   APK must go through `adb push` + `pm install`, because Android refuses to install it
+   from the UI or from `/sdcard`. And without ADB half the capabilities do not exist
+   either: no `pm install`, no `dumpsys`, no `settings put`, no UI automation.
+   See [Step 5](#step-5--the-phone-developer-mode--usb-debugging) and
    [Step 6](#step-6--connection-adb--tcpip-5555).
 2. **DeepSeek API key** — the agent is driven by a language model. Without a key the
    app starts and extracts its environment, but **it cannot think**: you get no answer
@@ -48,7 +50,7 @@ Nothing has to be compiled.
 **It still requires setup on the phone** — a precompiled APK removes the build step,
 not the configuration:
 
-- ADB must be reachable (developer mode + USB debugging + `adb tcpip 5555`)
+- **ADB is MANDATORY** — the APK can be installed no other way (see below)
 - all runtime permissions must be granted on first launch
 - a DeepSeek API key must be entered
 
@@ -56,6 +58,39 @@ See [Step 5](#step-5--the-phone-developer-mode--usb-debugging),
 [Step 6](#step-6--connection-adb--tcpip-5555),
 [Step 7](#step-7--installation) and
 [Step 8](#step-8--first-launch-inside-the-app). Skip Steps 1-4 entirely.
+
+#### Mandatory: the precompiled APK is installed ONLY through ADB
+
+**You cannot install it by tapping the file on the phone.** No file manager, no
+"Install from unknown sources", no copying the APK to the device and opening it. That
+path does not work for this app, for two independent reasons:
+
+1. **Size — 2.4 GB.** The Android UI installer is built for apps of tens or hundreds of
+   MB. At this size it runs out of memory and time and aborts with a generic
+   **"App not installed."**, with no useful detail.
+2. **Location — Android 16 refuses APKs from `/sdcard`.** Even a small APK fails when
+   opened from `Downloads`, because the file has the SELinux context
+   `u:object_r:fuse:s0` and `system_server` cannot read it.
+
+So the phone must be reachable over ADB, and the install runs through `pm install`:
+
+```bash
+# one-time on the phone: enable developer mode -> USB debugging, then plug the cable
+adb tcpip 5555                                    # optional: go wireless afterwards
+adb connect 192.168.1.100:5555                    # optional: no cable needed
+
+adb push net.sys32.agent.apk /data/local/tmp/agent.apk
+adb shell pm install -r -g /data/local/tmp/agent.apk
+# -> Success
+```
+
+`/data/local/tmp` is the **only** directory `pm install` accepts — the app's own
+storage is not even readable by `system_server`. Full detail and four install variants
+(USB, Wi-Fi, download-on-phone, from inside the app) in
+[Step 7](#step-7--installation).
+
+> **Bottom line:** no ADB, no installation. A phone without ADB cannot run this app,
+> precompiled or not.
 
 ### Option 2 — clone the repo and build from source
 
