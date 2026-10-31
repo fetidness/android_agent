@@ -147,10 +147,15 @@ Onest, ca să nu pierzi timp:
 
 | Cerință | De ce e obligatorie | Unde se rezolvă |
 |---|---|---|
-| **ADB pornit** | jumătate din capabilități trec prin `adbd` | Pasul 5 + 6 |
+| **ADB pornit** | jumătate din capabilități trec prin `adbd` și **numai prin el se poate instala APK-ul** | Pasul 5 + 6 |
 | **Cheie DeepSeek** | fără model, agentul nu poate gândi | Pasul 8 |
 
 Restul sunt condiții tehnice normale, enumerate mai jos.
+
+> **APK-ul se instalează EXCLUSIV prin ADB.** Are 2,4 GB, iar Android nu poate instala
+> din interfață un fișier de această mărime — nici din `Downloads`, din cauza contextului
+> SELinux. Nu există scurtătură prin „tap pe APK". Toate metodele trec prin
+> `adb push` + `pm install`; patru variante, în Pasul 7.
 
 ### Pe telefon
 
@@ -620,14 +625,24 @@ adb shell whoami                       # shell
 
 ## Pasul 7 — Instalare
 
-### ⚠ Nu instala APK-ul din Downloads
+### Instalarea se face EXCLUSIV prin ADB
 
-**Aceasta e cea mai costisitoare capcană**, dovedită pe Android 16:
+**Nu poți instala acest APK atingându-l pe ecran. Nu e o preferință, e o limită tehnică.**
 
-Copiezi APK-ul în `Downloads`, apeși pe el, dai *Install* → **„App not installed."**
-fără niciun motiv vizibil. Nu e APK-ul stricat și nu e spațiul pe disc.
+Două motive independente, ambele de netrecut:
 
-Motivul real (mesajul ascuns de interfață):
+**1. Mărimea — 2,4 GB (2 675 243 215 bytes).**
+
+Instalatorul de sistem din Android deschide APK-ul, citește manifestul și îl copiază
+în stocarea internă. Pentru un fișier de 2,4 GB, procesul depășește memoria și timpul
+alocate și se oprește cu **„App not installed."** fără alt detaliu. Pe Android modern,
+instalarea din interfață e proiectată pentru aplicații de zeci sau sute de MB, nu pentru
+gigabaiți.
+
+**2. Locația — Android 16 nu permite instalarea din `/sdcard`.**
+
+Chiar dacă fișierul ar fi mic, tot ar eșua. Copiezi APK-ul în `Downloads`, apeși pe el,
+dai *Install* → același mesaj generic. Motivul real, ascuns de interfață:
 
 ```
 System server has no access to read file context u:object_r:fuse:s0
@@ -635,14 +650,21 @@ Error: Can't open file: /sdcard/Download/app-debug.apk
 Consider using a file under /data/local/tmp/
 ```
 
-Android 16 **nu permite instalarea unui APK din `/sdcard`** (context SELinux
+Android 16 blochează instalarea unui APK din stocarea partajată (context SELinux
 `u:object_r:fuse:s0`). `/data/local/tmp` e citibil de `system_server`, deci merge.
 
-### Instalarea corectă
+**Concluzia:** `adb` nu e o comoditate pentru developeri. E **singura cale** prin care
+APK-ul ajunge instalat pe telefon.
+
+---
+
+### Varianta A — instalare prin USB (cea mai simplă)
 
 ```bash
+# 1. trimite APK-ul pe telefon
 adb push app/build/outputs/apk/debug/app-debug.apk /data/local/tmp/agent.apk
 
+# 2. instalează
 adb shell pm install -r -g /data/local/tmp/agent.apk
 # -> Success
 ```
@@ -651,7 +673,73 @@ Flag-uri:
 - `-r` — reinstalează păstrând datele
 - `-g` — acordă toate permisiunile runtime dintr-un foc
 
-**Durează 2-5 minute** pentru 2,4 GB. Nu întrerupe.
+**Durează 2-5 minute** pentru 2,4 GB. Nu întrerupe transferul.
+
+### Varianta B — instalare prin Wi-Fi (fără cablu)
+
+Dacă ai făcut deja [Pasul 6](#pasul-6--conexiunea-adb--tcpip-5555), `adb` merge prin rețea
+și nu mai ai nevoie de cablu:
+
+```bash
+adb connect 192.168.1.100:5555
+adb devices                          # verifică: apare intrarea IP, stare "device"
+
+adb push app/build/outputs/apk/debug/app-debug.apk /data/local/tmp/agent.apk
+adb shell pm install -r -g /data/local/tmp/agent.apk
+```
+
+**Recomandat pe Wi-Fi 5 GHz** — pentru 2,4 GB, diferența față de USB 2.0 e vizibilă.
+Dezavantaj: dacă rețeaua cade la mijlocul transferului, o iei de la capăt.
+
+### Varianta C — descărcare direct pe telefon (fără laptop)
+
+Dacă nu vrei să transferi 2,4 GB prin adb, poți descărca APK-ul **direct pe telefon**.
+`curl` există pe device, în `/system/bin/curl`.
+
+```bash
+# pe telefon, în terminalul aplicației sau din Termux:
+curl -L -o /data/local/tmp/agent.apk https://sys32.net/dist/net.sys32.agent.apk
+
+# aceeași verificare de integritate ca pe laptop:
+sha256sum /data/local/tmp/agent.apk
+# asteptat: d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
+
+# apoi instalează:
+pm install -r -g /data/local/tmp/agent.apk
+```
+
+Din interiorul aplicației, același lucru prin canalul ADB:
+
+```python
+import adb_client
+adb_client.shared().shell('curl -L -o /data/local/tmp/agent.apk https://sys32.net/dist/net.sys32.agent.apk')
+adb_client.shared().shell('pm install -r -g /data/local/tmp/agent.apk')
+```
+
+> **De ce nu direct în `Downloads`:** două motive, ambele măsurate.
+> (1) `pm install` refuză orice cale din `/sdcard` (context SELinux `fuse:s0`).
+> (2) Stocarea proprie a aplicației (`/data/data/net.sys32.agent/`) **nu e citibilă nici
+> măcar din shell** — `ls` dă `Permission denied`, deci `system_server` nu poate deschide
+> un APK de acolo.
+>
+> `/data/local/tmp` are contextul `u:object_r:shell_data_file:s0` și e **singurul loc**
+> din care `pm install` funcționează. De aceea toate variantele converg acolo.
+
+### Varianta D — direct din aplicație (post-instalare)
+
+Odată aplicația instalată și ADB funcțional, agentul însuși poate instala APK-uri,
+inclusiv pe el: tool-ul `build_apk` are `action=install`, care duce APK-ul în
+`/data/local/tmp` și rulează `pm install` ca `uid=2000`.
+
+---
+
+### Ce se întâmplă în timpul instalării
+
+1. `pm install` copiază APK-ul în stocarea internă a aplicației
+2. **La prima lansare**, aplicația extrage din APK ~1,5 GB (toolchain, Debian, modele)
+3. Abia după extracție are loc efectiv ~**4-5 GB** — de aici cerința de 8 GB liberi
+
+Nu întrerupe instalarea și nu închide aplicația la prima pornire.
 
 ### Verificare
 
