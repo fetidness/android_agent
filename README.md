@@ -231,29 +231,35 @@ command costs zero tokens unless noted.
   `/spin` turns it back on.
 - **`/watch [sec]`** — one status line every N seconds, **only while a job runs**. Costs
   0 tokens (it writes to the screen, not into the model context).
-- **`/audio`** — **turn audio mode ON**. The next reply is spoken aloud, with no
-  formatting: clean prose, no markdown, no lists, no code blocks, no emoji. The answer is
-  also **not printed on screen** — you listen to it instead of reading it.
-  The model is instructed to answer in **English only** in audio mode, regardless of the
-  language you wrote in, because that is what the voice engine pronounces cleanly.
+- **`/audio on`** — **turn on persistent audio mode.** Every reply from then on is
+  spoken aloud and **not printed on screen**: clean prose, no markdown, no lists, no code
+  blocks, no emoji. An `AUDIO MODE` panel appears with a push-to-talk button and an
+  `EXIT AUDIO MODE` control. The model is instructed to answer in **English only** while
+  audio mode is on, regardless of the language you write in — that is what the voice
+  engine pronounces cleanly.
 
   ```
-  /audio              ->  [audio] ON: the next reply is spoken, without formatting
-  <your question>     ->  the reply is spoken aloud
+  /audio on           ->  [audio] ON: every reply is spoken, nothing is shown.
+  <anything>          ->  spoken aloud, not displayed
+  /audio off          ->  back to normal text output
   ```
 
-- **`/audio <text>`** — a one-off: ask that question and speak the answer, without
-  leaving audio mode on for the next turn.
+- **`/audio`** (with no argument, or `/audio arm`) — same thing: turns persistent audio
+  mode on.
+
+- **`/audio <message>`** — turns audio mode on **and** sends that message immediately.
 
   ```
   /audio what is my battery level
   ```
 
-> **This is the command that makes the phone hands-free.** With a headset or just the
-> speaker, you can work without looking at the screen. Paired with push-to-talk (the
-> voice button, Whisper local STT), the whole loop stays on the device: you speak, it
-> transcribes locally, the agent acts, the answer is spoken back by Phonon. Nothing is
-> uploaded — no audio, no text.
+- **`/audio off`** — leave audio mode. Alias: `/text`.
+
+> **This is what makes the phone hands-free.** With a headset or just the speaker you can
+> work without looking at the screen. Combined with push-to-talk (the voice button in the
+> audio panel, Whisper local STT), the whole loop stays on the device: you speak, it
+> transcribes locally, the agent acts, the answer comes back through Phonon. Nothing is
+> uploaded — no audio, no text, no cloud.
 
 - **`/todo`** — show the current task list.
 - **`/help`**, **`/?`** — the command list.
