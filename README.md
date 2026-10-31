@@ -32,6 +32,98 @@ Without these two, the rest of this document will not help you.
 
 ---
 
+## Why this app is unusual
+
+Not "another AI app". What follows is what actually runs on the phone, measured — not
+marketing.
+
+### It carries its own compiler
+
+Most mobile AI apps send a request and print the answer. This one **compiles code on the
+device**: clang 21 + lld + Android sysroot + NDK, Rust (rustc + cargo), CMake, ninja,
+make, perl, FLANG for Fortran.
+
+The practical consequence: `pip_install` builds C/C++ extensions **natively on the
+phone**. lxml, numpy, Pillow, zstandard were each verified end-to-end this way. And
+`build_apk` compiles **entire Android APKs on the phone** — Gradle + AGP + JDK + aapt2,
+offline, no PC.
+
+That is the first thing that makes it different: it is not a consumer of software, it
+is a producer of it.
+
+### A real Linux, that is not cut off from Android
+
+Inside the app runs **Debian 13 arm64 through proot** — a working `apt`, `gcc`,
+`python3`, `git`, `nano`, `htop`.
+
+The usual assumption is that a Linux container on Android is blind to the hardware. Here
+it is not. Through an internal bridge (TCP loopback, one JSON line per request) Debian
+reaches the Android SDK:
+
+```
+eval call ctx.getSystemService(wifi)   ->  android.net.wifi.WifiManager  (real object)
+sensors read accelerometer             ->  live x/y/z values
+```
+
+So a Python script inside Debian can read sensors, take a photo, control the UI. Not a
+sandbox pretending to be a computer — a Linux that kept its hands on the phone.
+
+### It speaks to Android services at protocol level
+
+Not through an API someone wrapped for it. The app opens `/dev/binder` directly and
+performs **IPC calls against Android system services**: 466 services enumerated, AIDL
+descriptors resolved, real calls verified against `display`, `input`,
+`batteryproperties`. A second path (reflection) reaches **any class and method in the
+SDK**, including live objects and listeners.
+
+This is the layer where most "AI phone assistants" stop and hand you a settings deep
+link. Here it is an actual call.
+
+### Three independent ways to reach the system
+
+Redundancy is deliberate, because each one fails where another works:
+
+- **ADB** (`uid=2000` shell) — `pm install`, `dumpsys`, `settings put`, `input`,
+  `screencap`, `logcat`. This is system-administrator reach from inside a normal app.
+- **Reflection** — anything the SDK exposes to an app, including classes without a
+  convenient wrapper.
+- **Native Binder** — no adb, no bridge, straight to the service.
+
+When ADB is not authorised, reflection still works. When a service is lazy and not
+registered, reflection instantiates it. When you need `pm install`, only ADB will do.
+
+### Voice that never leaves the phone
+
+`/audio on` gives hands-free operation, and **nothing is uploaded**:
+
+- **Whisper `medium`** (1.5 GB) via natively compiled `whisper.cpp`. `medium` and not
+  `small` for a measured reason — `small` mangles Romanian words.
+- **Phonon 31m** (61 MB) for offline text-to-speech.
+
+Both run locally. No network dependency, no audio sent anywhere.
+
+### It maintains itself
+
+- **Self-heal** on every start: dead symlinks after an APK update, truncated packages
+  shadowing the app zip, CA bundle, git identity, sysconfig paths — repaired
+  automatically.
+- **Persistent memory**: lessons written to `memory.md`, loaded at start.
+- **Skills**: 12 saved procedures that load only when relevant, so a past session's
+  hard-won knowledge does not have to be rediscovered.
+
+### Numbers, not adjectives
+
+Every claim above comes with a measurement in
+[TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md) — on a Samsung SM-A366B, Android 16,
+no root. Including the ones that did not work out, and the conclusions that were wrong
+and later corrected.
+
+**45 slash commands, 22 tools, 12 skills, 466 binder services, 8439 toolchain files,
+2.4 GB APK.** The size is the honest part: everything listed here is actually inside the
+file you download.
+
+---
+
 ## Two ways to get the app — pick one
 
 ### Option 1 — the precompiled APK (recommended, works out of the box)
