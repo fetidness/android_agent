@@ -111,6 +111,56 @@ Both run locally. No network dependency, no audio sent anywhere.
 - **Skills**: 12 saved procedures that load only when relevant, so a past session's
   hard-won knowledge does not have to be rediscovered.
 
+### It writes its own skills and memories
+
+This is not a static tool. After working, the agent decides by itself what is worth
+keeping — and saves it without being asked.
+
+**Skills are saved automatically** (`/autoskill`, ON by default, threshold 6 tool steps).
+When a task takes 6 or more tool steps, the agent gets one extra turn that asks a single
+question: *did this produce a reusable procedure or a pitfall worth keeping?*
+
+- If yes → it writes `skills/<kebab-name>/SKILL.md` with the format `When to Use` →
+  `Method` (exact commands) → `Pitfalls` (trap → fix)
+- If the topic is already covered → it **patches the existing skill** instead of creating
+  a near-duplicate
+- If the task was routine → it answers exactly `SKIP` and writes nothing
+
+The rule enforced in the prompt is strict: *cite only commands and errors you really
+ran; never invent paths, packages or flags.* That is why skills are worth loading — they
+contain what actually worked **on this device**, not generic advice.
+
+Next session, the skills index is injected into the system prompt. When a task looks
+even partially relevant, the matching skill is loaded and followed.
+
+**Memory is reviewed autonomously** (`/auto-learn`, ON by default, every 10 turns). An
+isolated review pass looks at the recent conversation and decides whether anything
+durable emerged:
+
+- **What belongs in memory**: durable facts true in *every* session — how the operator
+  works and what they expect, plus facts about this device (hardware quirks,
+  Android/SELinux behaviour, adb powers and limits, working paths)
+- **What does not**: procedures (those are skills), transient errors, one-off task
+  narratives, negative claims about tools, environment misses the operator can fix
+- **Format**: one line per lesson, telegraphic —
+  `TRAP: what failed -> error -> cause -> fix`, `OK: what works`, `DEAD: what does not -> proof`,
+  `P: path -> artifact`, `RULE: 1 -> 2 -> 3`
+
+Before writing, it re-reads the current `memory.md` and refuses to add a fact already
+covered, even in different words. If a bullet went stale, it is fixed in place.
+
+**You can also trigger both manually:**
+
+- **`/learn`** — update memory now, on demand
+- **`/autoskill [N]`** — toggle self-saving skills, optionally change the step threshold
+- **`/auto-learn [N]`** — toggle the autonomous memory review, optionally change the interval
+- **`/skill [name]`** — list saved skills, or load one into context
+- **`/curator`** — archive skills that are no longer used (recoverable in `skills_archive/`)
+- **`/mem`** — memory statistics: size, bullets, density, lint
+
+Everything is plain text on disk, in the app's private storage — inspectable and
+editable by you at any time, no database, no lock-in.
+
 ### Numbers, not adjectives
 
 Every claim above comes with a measurement in
@@ -124,7 +174,79 @@ file you download.
 
 ---
 
+## Command reference
+
+Type `/help` (or `/?`) in the app for this list. Everything below runs locally — a slash
+command costs zero tokens unless noted.
+
+### Memory and learning
+
+- **`/learn`** — update memory now (manual learning). Reviews the session and appends
+  durable facts to `memory.md`.
+- **`/autoskill [N]`** — toggle self-saving skills. `N` = minimum tool steps before the
+  agent considers writing one (default 6, currently ON). The agent may answer `SKIP`.
+- **`/auto-learn [N]`** — toggle the autonomous memory review that runs every N turns
+  (default 10, currently ON). Alias: `/autolearn`.
+- **`/skill [name]`** — with no argument, list saved skills; with a name, load that
+  skill's full text into context.
+- **`/curator`** — archive skills that are no longer used. Recoverable in
+  `skills_archive/`.
+- **`/mem`** — memory statistics: size, bullet count, density, lint warnings.
+
+### Context and cost
+
+- **`/ctx`** — context window usage, token counts, cache hit ratio, and how many archives
+  and tool logs are on disk. *Nothing is ever deleted, only moved to disk.*
+- **`/compact`** — compress the context now. **Disabled by the operator** in this build:
+  the context is never compressed automatically, so the memory loaded at startup stays
+  intact until `/reset`.
+- **`/insights`** — tokens, cache, estimated cost, most-used tools.
+- **`/title`** — show this session's title (derived from your first message).
+- **`/reset`** — erase the conversation history.
+
+### Execution and environment
+
+- **`/run <script.py>`** — run a script from the workspace **with the app's rights**
+  (`uid=app`). Cannot see `/data/local/tmp`.
+- **`/run_su <script>`** — run a script with **shell rights** (`uid=2000`). Needed for
+  `/data/local/tmp`, the native toolchain, llama.cpp, GGUF models, compiled binaries.
+- **`/heal`** — repair the environment now: launchers, shadowed packages, `pip.conf`.
+  Costs 0 tokens.
+- **`/audit`** — report what is broken right now, **without repairing it**. 0 tokens.
+- **`/selfheal`** — show or hide the "environment healthy" line at startup. Alias:
+  `/self-heal`. 0 tokens.
+- **`/where`** — show every location: home, workspace, memory, context, logs, archive.
+
+### Safety
+
+- **`/safe`** — guardrails ON (the default). Refuses hardline commands and writes to
+  system or credential paths.
+- **`/unsafe`** — guardrails OFF, runs anything. **Not saved to disk**: a restart returns
+  to SAFE. Redaction of secrets in tool output stays ON regardless.
+
+### Interface
+
+- **`/verbose`** — toggle full code and output of every step.
+- **`/nospin`** — no live status line at all; clean scrollback (best on a phone).
+  `/spin` turns it back on.
+- **`/watch [sec]`** — one status line every N seconds, **only while a job runs**. Costs
+  0 tokens (it writes to the screen, not into the model context).
+- **`/audio [text]`** — the reply is spoken as clean prose, not printed. Pairs with
+  `/audio on` for hands-free voice mode.
+- **`/todo`** — show the current task list.
+- **`/help`**, **`/?`** — the command list.
+- **`/exit`**, **`/quit`** — leave (an empty line does nothing, it does not quit).
+
+> **`/safe` vs `/unsafe` in practice:** the guardrails block writes to `/system`,
+> `/vendor`, `/proc`, `/sys`, `/dev/block`, `/data/system` and similar, plus any path
+> that looks like a credential file — including paths *built from variables*. The refusal
+> is visible (yellow). You can unlock with `/unsafe`; every hardline command then runs
+> with a red `[UNSAFE]` audit line in the log.
+
+---
+
 ## Do not update your phone's OS
+
 
 This is the section to read before anything else if you are about to accept a system
 update.
