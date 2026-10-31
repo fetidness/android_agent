@@ -1,197 +1,203 @@
-# FIRST LAUNCH — de la clona la aplicația care rulează
+# FIRST LAUNCH — from clone to a running application
 
 ---
 
-## Ce este acest agent
+## What this agent is
 
-`net.sys32.agent` **nu este un chatbot în browser și nu este un client subțire**. Este un
-agent AI autonom care rulează **efectiv pe telefon** și care are acces la telefonul tău la
-un nivel pe care aproape nicio aplicație normală nu îl are.
+`net.sys32.agent` **is not a browser chatbot and it is not a thin client**. It is an
+autonomous AI agent that runs **on the phone itself**, with access to your device at a
+level almost no ordinary app has.
 
-Când îi ceri ceva, nu trimite cererea undeva ca să îți dea un text înapoi — **execută**.
-Citește senzori, ia un fix GPS real, deschide camera, compilează cod, instalează aplicații,
-scrie pe ecran, citește notificările altor aplicații, intră în terminal Linux și rulează
-comenzi acolo. Aplicația e terminalul; agentul e operatorul.
+When you ask it for something, it does not forward the request somewhere to get text
+back — it **executes**. It reads sensors, takes a real GPS fix, opens the camera,
+compiles code, installs apps, writes to the screen, reads other apps' notifications,
+drops into a Linux terminal and runs commands there. The app is the terminal; the agent
+is the operator.
 
-**Cerințe obligatorii, înainte de orice:**
+**Mandatory requirements, before anything else:**
 
-1. **ADB pornit pe telefon** — aplicația comunică cu sistemul Android prin `adbd` pe
-   `127.0.0.1:5555`. Fără ADB, jumătate din capabilități nu există: fără `pm install`,
-   fără `dumpsys`, fără `settings put`, fără instalare de APK-uri, fără instrumentarea
-   interfeței. Vezi [Pasul 5](#pasul-5--telefonul-developer-mode--usb-debugging) și
-   [Pasul 6](#pasul-6--conexiunea-adb--tcpip-5555).
-2. **Cheie API DeepSeek** — agentul este condus de un model de limbaj. Fără cheie,
-   aplicația pornește, își extrage mediul, dar **nu poate gândi**: nu primești niciun
-   răspuns. Cheia se obține de la <https://platform.deepseek.com> și se introduce la
-   prima lansare. Vezi [Pasul 8](#pasul-8--prima-lansare-în-aplicație).
+1. **ADB running on the phone** — the app talks to the Android system through `adbd`
+   on `127.0.0.1:5555`. Without ADB, half of the capabilities do not exist: no
+   `pm install`, no `dumpsys`, no `settings put`, no APK installation, no UI
+   automation. See [Step 5](#step-5--the-phone-developer-mode--usb-debugging) and
+   [Step 6](#step-6--connection-adb--tcpip-5555).
+2. **DeepSeek API key** — the agent is driven by a language model. Without a key the
+   app starts and extracts its environment, but **it cannot think**: you get no answer
+   to any command. Get a key at <https://platform.deepseek.com> and enter it on first
+   launch. See [Step 8](#step-8--first-launch-inside-the-app).
 
-Fără aceste două lucruri, restul documentului nu te ajută la nimic.
+Without these two, the rest of this document will not help you.
 
 ---
 
-## Ce poate face
+## What it can do
 
-### Android complet, prin ADB (uid 2000)
+### Full Android access, through ADB (uid 2000)
 
-Agentul are un client ADB scris în Python, care intră în `adbd` pe loopback. Rezultatul
-este **shell privilegiat** (`uid=2000(shell)`) în interiorul aplicației:
+The agent ships a Python ADB client that authenticates into `adbd` over loopback. The
+result is a **privileged shell** (`uid=2000(shell)`) inside the app:
 
 - `pm install` / `uninstall` / `grant` / `revoke` / `clear`
-- `settings put global` — modifică setările sistemului și citește înapoi
-- `dumpsys` complet — activity, battery, wifi, sensorservice, package
-- `input tap` / `swipe` / `keyevent` — controlează orice aplicație, fără accessibility
+- `settings put global` — changes system settings and reads them back
+- full `dumpsys` — activity, battery, wifi, sensorservice, package
+- `input tap` / `swipe` / `keyevent` — controls any app, without accessibility
 - `screencap`, `uiautomator dump`, `logcat`, `am start` / `force-stop`
-- `service call` — apeluri directe în serviciile de sistem
+- `service call` — direct calls into system services
 
-Pe deasupra, un al doilea canal: **reflection**. Evaluatorul din `Reflection.kt` dă
-acces la **orice clasă și metodă din SDK-ul Android** — `getSystemService`, apeluri pe
-obiecte, instanțiere de clase, listeners. Nu ești limitat la ce are un API pregătit.
+On top of that, a second channel: **reflection**. The evaluator in `Reflection.kt`
+gives access to **any class and method in the Android SDK** — `getSystemService`,
+calls on live objects, object instantiation, listeners. You are not limited to
+whatever a prepared API happens to expose.
 
-### Binder nativ — fără adb, fără bridge
+### Native Binder — no adb, no bridge
 
-Aplicația deschide `/dev/binder` direct și vorbește cu serviciile Android la nivel de
-protocol. **466 servicii** enumerate, descriptori AIDL rezolvați, apeluri reale verificate
-(`display`, `input`, `batteryproperties`). Nu e o listă cosmetică: sunt apeluri IPC.
+The app opens `/dev/binder` directly and speaks to Android services at protocol level.
+**466 services** enumerated, AIDL descriptors resolved, real calls verified
+(`display`, `input`, `batteryproperties`). This is not a cosmetic list: these are
+actual IPC calls.
 
-### Debian 13 complet funcțional, cu acces TOTAL la Android
+### A fully functional Debian 13, with TOTAL access to Android
 
-În aplicație există un **terminal Linux real** — Debian 13 arm64, prin proot. Nu o
-emulare, nu un sandbox gol: `apt`, `gcc`, `python3`, `git`, `nano`, `htop` funcționale.
+Inside the app there is a **real Linux terminal** — Debian 13 arm64, through proot.
+Not an emulation, not an empty sandbox: working `apt`, `gcc`, `python3`, `git`, `nano`,
+`htop`.
 
-Lucrul important, și cel care surprinde: **Debian-ul nu este orb la Android.** Are acces
-la hardware și la SDK prin bridge-ul intern (AndroidBridge, TCP loopback):
+The important part, and the one that surprises people: **Debian is not blind to
+Android.** It reaches the hardware and the SDK through the internal bridge
+(AndroidBridge, TCP loopback):
 
-- `eval call ctx.getSystemService(wifi)` → `android.net.wifi.WifiManager` real
-- senzori cu valori **live**, baterie, cameră, clipboard, interfață
-- reflexie arbitrară — aceleași capabilități ca agentul, din interiorul Linux-ului
+- `eval call ctx.getSystemService(wifi)` → a real `android.net.wifi.WifiManager`
+- sensors with **live** values, battery, camera, clipboard, UI
+- arbitrary reflection — the same capabilities as the agent, from inside Linux
 
-Deci poți scrie un script Python în Debian care citește senzori și controlează telefonul.
-Ce **nu** poate Debian: să citească `/data/data/<alt pachet>` (SELinux) și să obțină root
-(nu există `su` pe device). În rest, accesul e complet.
+So you can write a Python script in Debian that reads sensors and controls the phone.
+What Debian **cannot** do: read `/data/data/<other package>` (SELinux) and obtain root
+(there is no `su` on the device). Otherwise, access is complete.
 
-### Mod audio — vorbești, nu tastezi
+### Audio mode — you speak, you don't type
 
-`/audio on` deschide ecranul vocal. Ții apăsat butonul, vorbești, eliberezi.
+`/audio on` opens the voice screen. Hold the button, speak, release.
 
-**Speech-to-text: Whisper, local.** Modelul `medium` (1,5 GB) rulează **pe telefon**,
-prin `whisper.cpp` compilat nativ. Nimic nu pleacă în cloud. Ales `medium` și nu `small`
-dintr-un motiv măsurat: `small` strică cuvintele românești.
+**Speech-to-text: Whisper, local.** The `medium` model (1.5 GB) runs **on the phone**,
+via natively compiled `whisper.cpp`. Nothing leaves the device. `medium` was chosen
+over `small` for a measured reason: `small` mangles Romanian words.
 
-**Text-to-speech: Phonon, local.** Model 31m (61 MB), voce offline. Răspunsul e rostit,
-nu afișat.
+**Text-to-speech: Phonon, local.** A 31m model (61 MB), offline voice. The reply is
+spoken, not printed.
 
-Ambele sunt **offline și private**. Nu depind de rețea după setup.
+Both are **offline and private**. They do not depend on the network after setup.
 
-### Toolchain de compilare nativ
+### Native compilation toolchain
 
-Pe telefon există un toolchain complet, în interiorul aplicației:
+A complete toolchain lives on the phone, inside the app:
 
-- **clang 21**, lld, sysroot Android, NDK
+- **clang 21**, lld, Android sysroot, NDK
 - **Rust** (`rustc` 1.98.1, `cargo`), **maturin**
 - **CMake 3.31.6**, **ninja**, **make**, **perl**
-- **FLANG** (Fortran) — funcțional prin wrapper-ul din `files/tmp`
+- **FLANG** (Fortran) — functional through the wrapper in `files/tmp`
 
-Consecința: aplicația **compilează cod pe telefon**, inclusiv extensii C/C++ pentru
-Python (`pip_install` cu compilare nativă) și **APK-uri întregi** (`build_apk` — Gradle +
-AGP + JDK + aapt2, toate pe device, fără PC).
+The consequence: the app **compiles code on the phone**, including C/C++ extensions for
+Python (`pip_install` with native compilation) and **entire APKs** (`build_apk` —
+Gradle + AGP + JDK + aapt2, all on device, no PC).
 
-### 22 de tool-uri, un agent
+### 22 tools, one agent
 
-Agentul are la dispoziție: `python`, `bash`, `smart`, `read`, `multi`, `run_code`,
+The agent has at its disposal: `python`, `bash`, `smart`, `read`, `multi`, `run_code`,
 `todo`, `skill`, `scraper`, `android`, `androidapi`, `adbsh`, `binder`, `bridge`,
 `terminal`, `build_apk`, `toolchain`, `bg`, `delegate`, `moa`, `look`, `help`.
 
-Relevante pentru putere: **`delegate`** (subagenți izolați, în paralel), **`moa`**
-(mai multe încercări independente pe o întrebare grea), **`bg`** (job-uri lungi în
-fundal), **`run_code`** (un singur script care cheamă celelalte tool-uri).
+The ones that matter for raw power: **`delegate`** (isolated subagents, in parallel),
+**`moa`** (several independent attempts at a hard question), **`bg`** (long jobs in the
+background), **`run_code`** (one script calling the other tools).
 
-### Web, memorie, auto-învățare
+### Web, memory, self-learning
 
-- **`scraper`** — lxml, parsel, trafilatura, quickjs, feedparser, toate native pe device
-- **Skills** — proceduri salvate care se încarcă automat când sunt relevante
-- **Memory** — lecții persistente, scrise la `/learn`
-- **Auto-heal** — repară singur mediul la fiecare pornire (symlink-uri moarte, pachete
-  trunchiate, CA bundle, identitate git)
+- **`scraper`** — lxml, parsel, trafilatura, quickjs, feedparser, all native on device
+- **Skills** — saved procedures that load automatically when relevant
+- **Memory** — persistent lessons, written via `/learn`
+- **Self-heal** — repairs its own environment on every start (dead symlinks, truncated
+  packages, CA bundle, git identity)
 
-### Ce NU poate face
+### What it CANNOT do
 
-Onest, ca să nu pierzi timp:
+Honestly, so you don't waste time:
 
-- **Nu are root.** Nu există `su` pe device; build `user`, `ro.secure=1`
-- **Nu citește `/data/data/<alt pachet>`** — SELinux `untrusted_app` / `shell:s0`
-- **Nu face ARP sau SYN scan** — CapEff=0, capabilitățile sunt zero în orice context
-- **Nu rulează cod Java propriu din shell** — ART face `chown` la pornire, blocat structural
-
----
-
-## Cuprins
-
-1. [De ce ai nevoie](#2-de-ce-ai-nevoie)
-2. [Pasul 0 — APK-ul original (OBLIGATORIU)](#pasul-0--apk-ul-original-obligatoriu)
-3. [Pasul 1 — Clonare](#pasul-1--clonare)
-4. [Pasul 2 — Bootstrap (scriptul .sh)](#pasul-2--bootstrap-scriptul-sh)
-5. [Pasul 3 — Mediul de build pe laptop](#pasul-3--mediul-de-build-pe-laptop)
-6. [Pasul 4 — Build APK](#pasul-4--build-apk)
-7. [Pasul 5 — Telefonul: developer mode + USB debugging](#pasul-5--telefonul-developer-mode--usb-debugging)
-8. [Pasul 6 — Conexiunea: adb + tcpip 5555](#pasul-6--conexiunea-adb--tcpip-5555)
-9. [Pasul 7 — Instalare](#pasul-7--instalare)
-10. [Pasul 8 — Prima lansare în aplicație](#pasul-8--prima-lansare-în-aplicație)
-11. [Verificare finală](#verificare-finală)
-12. [Depanare rapidă](#depanare-rapidă)
+- **No root.** There is no `su` on the device; `user` build, `ro.secure=1`
+- **Cannot read `/data/data/<other package>`** — SELinux `untrusted_app` / `shell:s0`
+- **No ARP or SYN scan** — CapEff=0, capabilities are zero in every context
+- **Cannot run its own Java code from a shell** — ART does `chown` at startup,
+  structurally blocked
 
 ---
 
-## 1. De ce ai nevoie
+## Table of contents
 
-### Două lucruri fără care nu funcționează nimic
+1. [What you need](#1-what-you-need)
+2. [Step 0 — The original APK (MANDATORY)](#step-0--the-original-apk-mandatory)
+3. [Step 1 — Clone](#step-1--clone)
+4. [Step 2 — Bootstrap (the .sh script)](#step-2--bootstrap-the-sh-script)
+5. [Step 3 — Build environment on the laptop](#step-3--build-environment-on-the-laptop)
+6. [Step 4 — Build the APK](#step-4--build-the-apk)
+7. [Step 5 — The phone: developer mode + USB debugging](#step-5--the-phone-developer-mode--usb-debugging)
+8. [Step 6 — Connection: adb + tcpip 5555](#step-6--connection-adb--tcpip-5555)
+9. [Step 7 — Installation](#step-7--installation)
+10. [Step 8 — First launch inside the app](#step-8--first-launch-inside-the-app)
+11. [Final verification](#final-verification)
+12. [Quick troubleshooting](#quick-troubleshooting)
 
-| Cerință | De ce e obligatorie | Unde se rezolvă |
+---
+
+## 1. What you need
+
+### Two things without which nothing works
+
+| Requirement | Why it is mandatory | Where to solve it |
 |---|---|---|
-| **ADB pornit** | jumătate din capabilități trec prin `adbd` și **numai prin el se poate instala APK-ul** | Pasul 5 + 6 |
-| **Cheie DeepSeek** | fără model, agentul nu poate gândi | Pasul 8 |
+| **ADB running** | half the capabilities go through `adbd`, and **the APK can ONLY be installed this way** | Step 5 + 6 |
+| **DeepSeek API key** | without a model, the agent cannot think | Step 8 |
 
-Restul sunt condiții tehnice normale, enumerate mai jos.
+The rest are ordinary technical conditions, listed below.
 
-> **APK-ul se instalează EXCLUSIV prin ADB.** Are 2,4 GB, iar Android nu poate instala
-> din interfață un fișier de această mărime — nici din `Downloads`, din cauza contextului
-> SELinux. Nu există scurtătură prin „tap pe APK". Toate metodele trec prin
-> `adb push` + `pm install`; patru variante, în Pasul 7.
+> **The APK is installed EXCLUSIVELY through ADB.** It is 2.4 GB, and Android cannot
+> install a file that size from the UI — nor from `Downloads`, because of the SELinux
+> context. There is no "tap the APK" shortcut. All methods go through
+> `adb push` + `pm install`; four variants, in Step 7.
 
-### Pe telefon
+### On the phone
 
-- **Android 8.0+** (`minSdk 26`); teste făcute pe Android 16 (`targetSdk 36`)
-- **arm64-v8a** (orice telefon modern). Există și x86_64 pentru emulator
-- **~8 GB spațiu liber** — APK-ul are 2,4 GB, iar la prima lansare se mai extrage
-  încă ~1,5 GB în stocarea internă a aplicației
-- **~4 GB RAM** recomandat
+- **Android 8.0+** (`minSdk 26`); tested on Android 16 (`targetSdk 36`)
+- **arm64-v8a** (any modern phone). x86_64 also exists for the emulator
+- **~8 GB free space** — the APK is 2.4 GB, and the first launch extracts another
+  ~1.5 GB into the app's internal storage
+- **~4 GB RAM** recommended
 
-### Pe laptop
+### On the laptop
 
-- **Windows / macOS / Linux** — build-ul e identic, doar căile diferă
-- **~15 GB spațiu liber** (repo + APK + Gradle cache)
-- **Internet** pentru prima build (dependențele Gradle, ~500 MB o singură dată)
+- **Windows / macOS / Linux** — the build is identical, only paths differ
+- **~15 GB free space** (repo + APK + Gradle cache)
+- **Internet** for the first build (Gradle dependencies, ~500 MB once)
 
 ---
 
-## Pasul 0 — APK-ul original (OBLIGATORIU)
+## Step 0 — The original APK (MANDATORY)
 
-**Asta e partea care nu se poate sări.** Din repo **lipsesc intenționat** fișierele
-binare mari — nu încap în git:
+**This is the part that cannot be skipped.** The large binary files are **deliberately
+absent** from the repo — they don't fit in git:
 
-| Ce lipsește | Mărime | De unde vine |
+| What is missing | Size | Where it comes from |
 |---|---|---|
-| `assets/toolchain/` | ~1056 MB | extras din APK-ul original |
-| `assets/android_build/` | ~399 MB | extras din APK-ul original |
-| `assets/models/` (voce) | ~63 MB | extras din APK-ul original |
-| `assets/whisper/models/` | 1,5 GB | extras din APK **sau** descărcat |
-| `assets/proot/` | ~var | extras din APK-ul original |
-| `jniLibs/*.so` | ~24 MB | extras din APK-ul original |
+| `assets/toolchain/` | ~1056 MB | extracted from the original APK |
+| `assets/android_build/` | ~399 MB | extracted from the original APK |
+| `assets/models/` (voice) | ~63 MB | extracted from the original APK |
+| `assets/whisper/models/` | 1.5 GB | extracted from the APK **or** downloaded |
+| `assets/proot/` | ~var | extracted from the original APK |
+| `jniLibs/*.so` | ~24 MB | extracted from the original APK |
 
-Toate se află **într-un APK deja construit**. De aceea ai nevoie de unul.
+All of them live **inside an already built APK**. That is why you need one.
 
-### De unde iei APK-ul — link direct
+### Where to get the APK — direct link
 
-**Descarcă de aici:**
+**Download it here:**
 
 ```
 https://sys32.net/dist/net.sys32.agent.apk
@@ -202,26 +208,26 @@ mkdir -p dist
 curl -L -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
 ```
 
-Sau cu reluare din locul unde s-a întrerupt (recomandat pentru 2,4 GB):
+Or with resume from where it stopped (recommended for 2.4 GB):
 
 ```bash
 curl -L -C - -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
 ```
 
-Sau cu `wget`:
+Or with `wget`:
 
 ```bash
 wget -c -O dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
 ```
 
-**Mărime:** 2 675 243 215 bytes (2,4 GB)
+**Size:** 2,675,243,215 bytes (2.4 GB)
 
-**Verifică integritatea** după descărcare — dacă hash-ul nu corespunde, descărcarea
-s-a stricat și bootstrap-ul va eșua în moduri greu de diagnosticat:
+**Verify integrity** after downloading — if the hash does not match, the download is
+corrupted and bootstrap will fail in ways that are hard to diagnose:
 
 ```bash
 sha256sum dist/net.sys32.agent.apk
-# asteptat:
+# expected:
 # d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
 ```
 
@@ -235,50 +241,50 @@ shasum -a 256 dist/net.sys32.agent.apk
 Get-FileHash dist\net.sys32.agent.apk -Algorithm SHA256
 ```
 
-> **Nu ai APK-ul?** Nu poți face bootstrap de la zero, pentru că toolchain-ul nativ
-> (clang, sysroot, Rust) ar trebui compilat de la sursă — proces de câteva ore pe
-> un laptop puternic. APK-ul e calea normală, nu o scurtătură.
+> **No APK?** You cannot bootstrap from scratch, because the native toolchain
+> (clang, sysroot, Rust) would have to be compiled from source — a process of several
+> hours on a powerful laptop. The APK is the normal path, not a shortcut.
 
-### Unde îl pui
+### Where to put it
 
-**Exact în `dist/`**, la rădăcina repo-ului, clonat:
+**Exactly in `dist/`**, at the root of the cloned repo:
 
 ```
 android_agent/
 └── dist/
-    └── net.sys32.agent.apk      <- AICI (numele nu contează, dar extensia da)
+    └── net.sys32.agent.apk      <- HERE (the name does not matter, the extension does)
 ```
 
 ```bash
 mkdir -p dist
-ls -lh dist/net.sys32.agent.apk   # verifică: 2,4 GB
+ls -lh dist/net.sys32.agent.apk   # check: 2.4 GB
 ```
 
-`dist/` e în `.gitignore` — APK-ul rămâne local, nu se urcă în git.
+`dist/` is in `.gitignore` — the APK stays local, it is not uploaded to git.
 
-### Verifică APK-ul ÎNAINTE de bootstrap
+### Verify the APK BEFORE bootstrap
 
-Un APK trunchiat (descărcare întreruptă) produce erori criptice mai târziu. Testează-l:
+A truncated APK (interrupted download) produces cryptic errors later. Test it:
 
 ```bash
 unzip -t dist/net.sys32.agent.apk | tail -3
-# așteptat: "No errors detected in compressed data of dist/net.sys32.agent.apk."
+# expected: "No errors detected in compressed data of dist/net.sys32.agent.apk."
 ```
 
-Dacă `unzip -t` raportează erori → **reia descărcarea**. Nu continua.
+If `unzip -t` reports errors → **download again**. Do not continue.
 
 ---
 
-## Pasul 1 — Clonare
+## Step 1 — Clone
 
 ```bash
 git clone https://github.com/fetidness/android_agent.git
 cd android_agent
 ```
 
-Repo-ul are ~100 MB (istoricul) și ~1400 fișiere.
+The repo is ~100 MB (history) with ~1400 files.
 
-Dacă folosești SSH:
+If you use SSH:
 
 ```bash
 git clone git@github.com:fetidness/android_agent.git
@@ -286,71 +292,75 @@ git clone git@github.com:fetidness/android_agent.git
 
 ---
 
-## Pasul 2 — Bootstrap (scriptul .sh)
+## Step 2 — Bootstrap (the .sh script)
 
-Acesta e **singurul pas greu** și face tot: extrage binarele din APK în locurile
-corecte în arborele de surse.
+This is **the only hard step**, and it does everything: it extracts the binaries from
+the APK into the correct places in the source tree.
 
-### Rulează
+### Run it
 
 ```bash
 cd android_agent
 bash tools/bootstrap_binaries.sh
 ```
 
-Scriptul caută automat cel mai recent `.apk` din `dist/` — **nu are nevoie de telefon,
-nu are nevoie de adb**. Poți rula totul pe laptop, offline după ce ai APK-ul.
+The script looks for the most recent `.apk` in `dist/` automatically — **it does not
+need a phone, it does not need adb**. You can run the whole thing on the laptop,
+offline once you have the APK.
 
-### Ce face, în ordine
+### What it does, in order
 
-| # | Extrage | Destinație | Mărime |
+| # | Extracts | Destination | Size |
 |---|---|---|---|
 | 1 | `lib/arm64-v8a/*` | `app/src/main/jniLibs/arm64-v8a/` | ~24 MB |
 | 2 | `assets/toolchain/*` | `app/src/main/assets/toolchain/` | ~1056 MB |
 | 3 | `assets/models/*` | `app/src/main/assets/models/` | ~63 MB |
-| 4 | `assets/whisper/models/*` | `app/src/main/assets/whisper/models/` | 1,5 GB |
+| 4 | `assets/whisper/models/*` | `app/src/main/assets/whisper/models/` | 1.5 GB |
 | 5 | `assets/proot/*` | `app/src/main/assets/proot/` | — |
 | 6 | `assets/android_build/*` | `app/src/main/assets/android_build/` | ~399 MB |
 
-După ce extrage, scrie `local.properties` cu `sdk.dir=` (dacă detectează un Android SDK).
+After extracting, it writes `local.properties` with `sdk.dir=` (if it detects an
+Android SDK).
 
-### Trei reguli de care depinde totul
+### Three rules everything depends on
 
-1. **Se rulează din orice director.** Scriptul își calculează singur rădăcina
-   (`$(dirname $0)/..`). Nu-l muta din `tools/`.
-2. **E idempotent.** La a doua rulare sare peste ce există deja cu dimensiunea corectă.
-   Dacă s-a întrerupt, **rulează-l din nou** — nu șterge nimic manual.
-3. **`.so`-urile urmărite de git nu se ating.** `libptts_ffi.so` și `libptts_exec.so`
-   vin din repo, nu din APK (altfel s-ar suprascrie cu o versiune veche).
+1. **It runs from any directory.** The script computes its own root
+   (`$(dirname $0)/..`). Do not move it out of `tools/`.
+2. **It is idempotent.** On a second run it skips what already exists with the correct
+   size. If it was interrupted, **run it again** — do not delete anything by hand.
+3. **`.so` files tracked by git are not touched.** `libptts_ffi.so` and
+   `libptts_exec.so` come from the repo, not from the APK (otherwise they would be
+   overwritten with an older version).
 
-### Dacă eșuează
+### If it fails
 
-**`nu gasesc niciun APK in .../dist/`**
-→ APK-ul nu e în `dist/`. Verifică `ls dist/*.apk`. Numele nu contează, extensia da.
+**`nu gasesc niciun APK in .../dist/` (no APK found)**
+→ the APK is not in `dist/`. Check `ls dist/*.apk`. The name does not matter, the
+extension does.
 
-**`unzip lipseste`**
+**`unzip lipseste` (unzip missing)**
 ```bash
 sudo apt install unzip        # Debian/Ubuntu
 brew install unzip            # macOS
 ```
-Pe Windows: folosește **Git Bash** (vine cu unzip) sau WSL.
+On Windows: use **Git Bash** (ships with unzip) or WSL.
 
-**`ATENTIE: assets/android_build lipseste din APK`**
-→ APK-ul e dintr-un build fără build-tools. Aplicația va porni, dar `build_apk`
-(compilare de APK pe telefon) nu va funcționa.
+**`ATENTIE: assets/android_build lipseste din APK` (missing from APK)**
+→ the APK comes from a build without build-tools. The app will start, but `build_apk`
+(building APKs on the phone) will not work.
 
-**Se oprește la jumătate, fără mesaj**
-→ Spațiu pe disc. `df -h .` — ai nevoie de ~4 GB liberi în timpul extragerii.
+**It stops halfway, with no message**
+→ disk space. `df -h .` — you need ~4 GB free during extraction.
 
 ---
 
-## Pasul 3 — Mediul de build pe laptop
+## Step 3 — Build environment on the laptop
 
-Aici construiești un APK **nou**, din sursele tale. Ai nevoie de patru componente.
+Here you build a **new** APK from your own sources. You need four components.
 
 ### 3.1 JDK 21
 
-**Obligatoriu JDK 17 sau 21.** Gradle 8.11.1 nu merge cu JDK 8/11.
+**JDK 17 or 21 required.** Gradle 8.11.1 does not work with JDK 8/11.
 
 ```bash
 # Debian / Ubuntu
@@ -359,89 +369,89 @@ sudo apt install openjdk-21-jdk
 # macOS
 brew install openjdk@21
 
-# Windows: descarcă de la https://adoptium.net (Temurin 21)
+# Windows: download from https://adoptium.net (Temurin 21)
 ```
 
-Verificare:
+Verify:
 ```bash
 java -version      # -> openjdk version "21.x"
 ```
 
-> Pe Debian trixie **nu există openjdk-17** — folosește 21. AGP 8.7.3 merge cu el.
+> On Debian trixie **there is no openjdk-17** — use 21. AGP 8.7.3 works with it.
 
-### 3.2 Android SDK (cu build-tools și platform 36)
+### 3.2 Android SDK (with build-tools and platform 36)
 
-Cea mai simplă cale — **Android Studio** (instalează SDK-ul automat):
+The simplest route — **Android Studio** (installs the SDK for you):
 <https://developer.android.com/studio>
 
-Sau doar command-line tools:
+Or command-line tools only:
 <https://developer.android.com/studio#command-tools>
 
-Ai nevoie de:
+You need:
 - **platforms;android-36** (`compileSdk = 36`)
-- **build-tools;35.0.1** (sau 36.0.0)
-- **platform-tools** (conține `adb`)
+- **build-tools;35.0.1** (or 36.0.0)
+- **platform-tools** (contains `adb`)
 
 ```bash
 sdkmanager "platforms;android-36" "build-tools;35.0.1" "platform-tools"
 ```
 
-> Pe Windows SDK-ul ajunge implicit în `%LOCALAPPDATA%\Android\Sdk`.
+> On Windows the SDK usually goes to `%LOCALAPPDATA%\Android\Sdk`.
 
 ### 3.3 NDK 29.0.14206865
 
-Proiectul fixează `ndkVersion = "29.0.14206865"`.
+The project pins `ndkVersion = "29.0.14206865"`.
 
 ```bash
 sdkmanager "ndk;29.0.14206865"
 ```
 
-> **Capcană reală, măsurată:** **NDK 27 dă SIGSEGV** la link pe acest proiect.
-> Nu improviza cu altă versiune — pune exact 29.0.14206865.
+> **Real trap, measured:** **NDK 27 gives SIGSEGV** when linking this project.
+> Do not improvise with another version — install exactly 29.0.14206865.
 
-### 3.4 Gradle — vine cu proiectul
+### 3.4 Gradle — ships with the project
 
-**Nu instala Gradle.** Proiectul are wrapper: `./gradlew` (Gradle 8.11.1).
-Prima rulare îl descarcă singur (~130 MB).
+**Do not install Gradle.** The project has a wrapper: `./gradlew` (Gradle 8.11.1).
+The first run downloads it automatically (~130 MB).
 
-### 3.5 Spune-i lui Gradle unde e SDK-ul
+### 3.5 Tell Gradle where the SDK is
 
-Fișierul `local.properties` (în `workspace/app/net.sys32.agent/`) — nu se comite,
-fiecare are calea lui:
+The file `local.properties` (in `workspace/app/net.sys32.agent/`) — it is not
+committed, everyone has their own path:
 
 ```properties
 sdk.dir=/home/USER/Android/Sdk
 ```
 
 ```properties
-# Windows (notează backslash-urile dublate)
+# Windows (note the double backslashes)
 sdk.dir=C\:\\Users\\USER\\AppData\\Local\\Android\\Sdk
 ```
 
-> `bootstrap_binaries.sh` îl scrie automat dacă găsește SDK-ul. Dacă nu l-a găsit,
-> scrie-l manual — altfel Gradle dă **`SDK location not found`**.
+> `bootstrap_binaries.sh` writes it automatically if it finds the SDK. If it did not,
+> write it by hand — otherwise Gradle reports **`SDK location not found`**.
 
-### Verificare completă a mediului
+### Full environment verification
 
 ```bash
 cd android_agent/workspace/app/net.sys32.agent
 
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64    # ajustează la tine
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64    # adjust to yours
 export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_SDK_ROOT=$ANDROID_HOME
 
 java -version                 # openjdk 21
 ./gradlew --version           # Gradle 8.11.1 + JVM 21
-echo $ANDROID_HOME            # calea SDK-ului
-ls $ANDROID_HOME/platforms    # trebuie să conțină android-36
-ls $ANDROID_HOME/ndk          # trebuie să conțină 29.0.14206865
+echo $ANDROID_HOME            # the SDK path
+ls $ANDROID_HOME/platforms    # must contain android-36
+ls $ANDROID_HOME/ndk          # must contain 29.0.14206865
 ```
 
-Dacă toate patru răspund corect, ești gata de build.
+If all four answer correctly, you are ready to build.
 
 ---
 
-## Pasul 4 — Build APK
+## Step 4 — Build the APK
 
 ```bash
 cd android_agent/workspace/app/net.sys32.agent
@@ -453,163 +463,164 @@ export ANDROID_SDK_ROOT=$ANDROID_HOME
 ./gradlew assembleDebug
 ```
 
-**Rezultat:** `app/build/outputs/apk/debug/app-debug.apk` (~2,4 GB)
+**Result:** `app/build/outputs/apk/debug/app-debug.apk` (~2.4 GB)
 
-### Timpi reali, măsurați pe acest proiect
+### Real timings, measured on this project
 
-- **prima build** (descarcă deps, compilează tot): **10-20 min**
-- **incremental**, după un `.py` sau `.kt`: **20-40 s**
-- **nimic schimbat** (`--offline`): **~14 s**
-- **`clean assembleDebug`**: minute bune (re-ambalează 1,9 GB de assets)
+- **first build** (downloads deps, compiles everything): **10-20 min**
+- **incremental**, after a `.py` or `.kt` change: **20-40 s**
+- **nothing changed** (`--offline`): **~14 s**
+- **`clean assembleDebug`**: several minutes (re-packs 1.9 GB of assets)
 
-### Comenzi utile
+### Useful commands
 
 ```bash
-./gradlew --offline assembleDebug      # fără rețea (deps în cache)
-./gradlew clean assembleDebug          # rebuild de la zero
-./gradlew assembleDebug --stacktrace   # când ceva crapă și vrei detalii
+./gradlew --offline assembleDebug      # no network (deps in cache)
+./gradlew clean assembleDebug          # rebuild from scratch
+./gradlew assembleDebug --stacktrace   # when something breaks and you want details
 ```
 
-### Configurare relevantă (`app/build.gradle.kts`)
+### Relevant configuration (`app/build.gradle.kts`)
 
 - `compileSdk 36`, `minSdk 26`, `targetSdk 36`
-- `abiFilters arm64-v8a` (+ `x86_64` pentru emulator)
+- `abiFilters arm64-v8a` (+ `x86_64` for the emulator)
 - `packaging.jniLibs.useLegacyPackaging = true`
-  → **obligatoriu**: altfel `.so`-urile nu se pot executa pe API 29+
+  → **mandatory**: otherwise the `.so` files cannot be executed on API 29+
 
-### Verifică APK-ul înainte de instalare
+### Verify the APK before installing
 
 ```bash
 APK=app/build/outputs/apk/debug/app-debug.apk
 
 ls -lh $APK                                             # 2675243215 bytes
-unzip -l $APK | grep -c 'assets/python/'                # ~1400 fișiere
-unzip -l $APK | grep 'assets/python/agent.py'           # agentul e prezent
-unzip -l $APK | grep 'assets/toolchain/bin/clang'       # toolchain-ul e prezent
+unzip -l $APK | grep -c 'assets/python/'                # ~1400 files
+unzip -l $APK | grep 'assets/python/agent.py'           # the agent is present
+unzip -l $APK | grep 'assets/toolchain/bin/clang'       # the toolchain is present
 ```
 
-Dacă `assets/toolchain/` lipsește din APK → bootstrap-ul n-a rulat sau a eșuat parțial.
-**Rulează `bash tools/bootstrap_binaries.sh` din nou** și rebuild.
+If `assets/toolchain/` is missing from the APK → bootstrap did not run or failed
+partially. **Run `bash tools/bootstrap_binaries.sh` again** and rebuild.
 
-### Dacă eșuează
+### If it fails
 
 **`SDK location not found`**
-→ lipsește `local.properties` sau `sdk.dir` e greșit. Vezi 3.5.
+→ `local.properties` is missing or `sdk.dir` is wrong. See 3.5.
 
-**`NDK not configured` / `SIGSEGV` la link**
-→ NDK greșit. Trebuie exact `29.0.14206865` (3.3).
+**`NDK not configured` / `SIGSEGV` at link time**
+→ wrong NDK. It must be exactly `29.0.14206865` (3.3).
 
 **`Unsupported class file major version`**
-→ JDK prea vechi. Trebuie 17 sau 21.
+→ JDK too old. Needs 17 or 21.
 
 **`OutOfMemoryError: Java heap space`**
-→ în `gradle.properties`: `org.gradle.jvmargs=-Xmx3072m` (sau mai mult).
+→ in `gradle.properties`: `org.gradle.jvmargs=-Xmx3072m` (or more).
 
-**Build-ul ia peste 40 min**
-→ normal prima dată dacă rețeaua e lentă; următoarele sunt de ordinul secundelor.
+**The build takes over 40 min**
+→ normal the first time if the network is slow; subsequent ones are in the order of
+seconds.
 
 ---
 
-## Pasul 5 — Telefonul: developer mode + USB debugging
+## Step 5 — The phone: developer mode + USB debugging
 
-Fără asta, laptopul nu poate vorbi cu telefonul.
+Without this, the laptop cannot talk to the phone.
 
-### 5.1 Activează Developer options
+### 5.1 Enable Developer options
 
 1. **Settings → About phone**
-2. Găsește **Build number**
+2. Find **Build number**
    - Samsung: *Settings → About phone → Software information → Build number*
-   - Xiaomi/Redmi: *Settings → About phone → MIUI version* (apasă de 7 ori)
+   - Xiaomi/Redmi: *Settings → About phone → MIUI version* (tap 7 times)
    - Pixel/stock: *Settings → About phone → Build number*
-3. **Apasă pe Build number de 7 ori**
-4. Apare: *"You are now a developer!"*
-5. Dacă cere PIN/parolă, introdu-l
+3. **Tap Build number 7 times**
+4. You see: *"You are now a developer!"*
+5. If it asks for a PIN/password, enter it
 
-### 5.2 Activează USB debugging
+### 5.2 Enable USB debugging
 
 1. **Settings → System → Developer options**
-   (Samsung: *Settings → Developer options*, direct în Settings)
-2. Găsește **USB debugging** și pornește-l
-3. Confirmă dialogul
+   (Samsung: *Settings → Developer options*, directly in Settings)
+2. Find **USB debugging** and turn it on
+3. Confirm the dialog
 
-### 5.3 Setări care ajută (recomandate)
+### 5.3 Settings that help (recommended)
 
-- **Stay awake** → ON. Ecranul nu se stinge în timpul transferului de 2,4 GB.
-- **Verify apps over USB** → OFF (opțional; poate încetini instalarea)
+- **Stay awake** → ON. The screen will not sleep during the 2.4 GB transfer.
+- **Verify apps over USB** → OFF (optional; can slow down installation)
 - **Default USB configuration** → *File Transfer (MTP)*
 
-> **Samsung:** *USB debugging* e destul. **Nu** e nevoie de „OEM unlocking"
-> (ăla e pentru bootloader, nu pentru adb).
+> **Samsung:** *USB debugging* is enough. You do **not** need "OEM unlocking"
+> (that one is for the bootloader, not for adb).
 
 ---
 
-## Pasul 6 — Conexiunea: adb + tcpip 5555
+## Step 6 — Connection: adb + tcpip 5555
 
-### 6.1 Verifică adb pe laptop
+### 6.1 Verify adb on the laptop
 
-`adb` vine cu platform-tools (instalat la 3.2).
+`adb` ships with platform-tools (installed at 3.2).
 
 ```bash
 adb version
 ```
 
-Dacă nu e în `PATH`, folosește calea absolută:
+If it is not in `PATH`, use the absolute path:
 `$ANDROID_HOME/platform-tools/adb`
 
-### 6.2 Conectează prin USB și autorizează
+### 6.2 Connect over USB and authorize
 
-1. Cablu USB **de date** (nu doar de încărcare — capcană frecventă)
-2. Pe telefon apare: **"Allow USB debugging?"**
-3. Bifează **"Always allow from this computer"**
+1. **Data** USB cable (not charge-only — a frequent trap)
+2. The phone shows: **"Allow USB debugging?"**
+3. Tick **"Always allow from this computer"**
 4. **Allow**
 
 ```bash
 adb devices -l
-# așteptat:
+# expected:
 # RZGL102X5AT   device usb:1-1 product:a36xxx model:SM_A366B device:a36xxx
 ```
 
-**`device`** = OK. **`unauthorized`** = nu ai apăsat Allow. **`offline`** = replug.
+**`device`** = OK. **`unauthorized`** = you did not press Allow. **`offline`** = replug.
 
-### 6.3 Deschide portul TCP 5555
+### 6.3 Open TCP port 5555
 
-Acesta e pasul care îți permite să lucrezi **fără cablu** după aceea:
+This is the step that lets you work **without the cable** afterwards:
 
 ```bash
 adb tcpip 5555
 # -> restarting in TCP mode port: 5555
 ```
 
-Telefonul se restartează în modul TCP. Găsește-i IP-ul în rețea:
+The phone restarts in TCP mode. Find its IP on the network:
 
 ```bash
 adb shell ip -f inet addr show wlan0 | grep inet
 # -> inet 192.168.1.100/24 brd ... scope global wlan0
 ```
 
-Sau: *Settings → Connections → Wi-Fi → rețeaua curentă → IP address*
+Or: *Settings → Connections → Wi-Fi → current network → IP address*
 
-Conectează-te prin rețea și **scoate cablul**:
+Connect over the network and **unplug the cable**:
 
 ```bash
 adb connect 192.168.1.100:5555
 # -> connected to 192.168.1.100:5555
 
-adb devices          # acum apare și intrarea IP
+adb devices          # the IP entry now appears too
 ```
 
-Acum transferul merge prin Wi-Fi. Pentru 2,4 GB, Wi-Fi 5 GHz e vizibil mai rapid
-decât USB 2.0.
+The transfer now goes over Wi-Fi. For 2.4 GB, Wi-Fi 5 GHz is noticeably faster than
+USB 2.0.
 
-### 6.4 (Opțional) Înapoi la USB
+### 6.4 (Optional) Back to USB
 
-TCP mode se pierde la reboot. Pentru a reveni la USB:
+TCP mode is lost on reboot. To return to USB:
 
 ```bash
 adb usb
 ```
 
-### Verificare rapidă
+### Quick verification
 
 ```bash
 adb shell getprop ro.product.model     # SM-A366B
@@ -617,32 +628,31 @@ adb shell getprop ro.build.version.sdk # 36
 adb shell whoami                       # shell
 ```
 
-> **Notă:** în TCP mode, dacă rețeaua se schimbă (alt router, VPN, hotspot),
-> reconectează. Telefonul revine la USB după fiecare reboot — rulează din nou
-> `adb tcpip 5555`.
+> **Note:** in TCP mode, if the network changes (different router, VPN, hotspot),
+> reconnect. The phone reverts to USB after every reboot — run `adb tcpip 5555` again.
 
 ---
 
-## Pasul 7 — Instalare
+## Step 7 — Installation
 
-### Instalarea se face EXCLUSIV prin ADB
+### Installation happens EXCLUSIVELY through ADB
 
-**Nu poți instala acest APK atingându-l pe ecran. Nu e o preferință, e o limită tehnică.**
+**You cannot install this APK by tapping it on the screen. This is not a preference,
+it is a hard technical limit.**
 
-Două motive independente, ambele de netrecut:
+Two independent reasons, both insurmountable:
 
-**1. Mărimea — 2,4 GB (2 675 243 215 bytes).**
+**1. Size — 2.4 GB (2,675,243,215 bytes).**
 
-Instalatorul de sistem din Android deschide APK-ul, citește manifestul și îl copiază
-în stocarea internă. Pentru un fișier de 2,4 GB, procesul depășește memoria și timpul
-alocate și se oprește cu **„App not installed."** fără alt detaliu. Pe Android modern,
-instalarea din interfață e proiectată pentru aplicații de zeci sau sute de MB, nu pentru
-gigabaiți.
+The Android system installer opens the APK, reads the manifest and copies it into
+internal storage. For a 2.4 GB file, that process exceeds its memory and time budget
+and stops with **"App not installed."** with no further detail. On modern Android, the
+UI installer is designed for apps of tens or hundreds of MB, not for gigabytes.
 
-**2. Locația — Android 16 nu permite instalarea din `/sdcard`.**
+**2. Location — Android 16 does not allow installing from `/sdcard`.**
 
-Chiar dacă fișierul ar fi mic, tot ar eșua. Copiezi APK-ul în `Downloads`, apeși pe el,
-dai *Install* → același mesaj generic. Motivul real, ascuns de interfață:
+Even if the file were small, it would still fail. Copy the APK into `Downloads`, tap
+it, hit *Install* → the same generic message. The real reason, hidden by the UI:
 
 ```
 System server has no access to read file context u:object_r:fuse:s0
@@ -650,65 +660,65 @@ Error: Can't open file: /sdcard/Download/app-debug.apk
 Consider using a file under /data/local/tmp/
 ```
 
-Android 16 blochează instalarea unui APK din stocarea partajată (context SELinux
-`u:object_r:fuse:s0`). `/data/local/tmp` e citibil de `system_server`, deci merge.
+Android 16 blocks installing an APK from shared storage (SELinux context
+`u:object_r:fuse:s0`). `/data/local/tmp` is readable by `system_server`, so it works.
 
-**Concluzia:** `adb` nu e o comoditate pentru developeri. E **singura cale** prin care
-APK-ul ajunge instalat pe telefon.
+**Conclusion:** `adb` is not a developer convenience. It is **the only way** the APK
+gets installed on the phone.
 
 ---
 
-### Varianta A — instalare prin USB (cea mai simplă)
+### Option A — install over USB (the simplest)
 
 ```bash
-# 1. trimite APK-ul pe telefon
+# 1. send the APK to the phone
 adb push app/build/outputs/apk/debug/app-debug.apk /data/local/tmp/agent.apk
 
-# 2. instalează
+# 2. install
 adb shell pm install -r -g /data/local/tmp/agent.apk
 # -> Success
 ```
 
-Flag-uri:
-- `-r` — reinstalează păstrând datele
-- `-g` — acordă toate permisiunile runtime dintr-un foc
+Flags:
+- `-r` — reinstall keeping data
+- `-g` — grant all runtime permissions at once
 
-**Durează 2-5 minute** pentru 2,4 GB. Nu întrerupe transferul.
+**It takes 2-5 minutes** for 2.4 GB. Do not interrupt the transfer.
 
-### Varianta B — instalare prin Wi-Fi (fără cablu)
+### Option B — install over Wi-Fi (no cable)
 
-Dacă ai făcut deja [Pasul 6](#pasul-6--conexiunea-adb--tcpip-5555), `adb` merge prin rețea
-și nu mai ai nevoie de cablu:
+If you already did [Step 6](#step-6--connection-adb--tcpip-5555), `adb` works over the
+network and you no longer need the cable:
 
 ```bash
 adb connect 192.168.1.100:5555
-adb devices                          # verifică: apare intrarea IP, stare "device"
+adb devices                          # check: the IP entry appears, state "device"
 
 adb push app/build/outputs/apk/debug/app-debug.apk /data/local/tmp/agent.apk
 adb shell pm install -r -g /data/local/tmp/agent.apk
 ```
 
-**Recomandat pe Wi-Fi 5 GHz** — pentru 2,4 GB, diferența față de USB 2.0 e vizibilă.
-Dezavantaj: dacă rețeaua cade la mijlocul transferului, o iei de la capăt.
+**Recommended on Wi-Fi 5 GHz** — for 2.4 GB the difference versus USB 2.0 is visible.
+Downside: if the network drops mid-transfer, you start over.
 
-### Varianta C — descărcare direct pe telefon (fără laptop)
+### Option C — download directly on the phone (no laptop)
 
-Dacă nu vrei să transferi 2,4 GB prin adb, poți descărca APK-ul **direct pe telefon**.
-`curl` există pe device, în `/system/bin/curl`.
+If you would rather not transfer 2.4 GB through adb, you can download the APK
+**directly on the phone**. `curl` exists on the device, in `/system/bin/curl`.
 
 ```bash
-# pe telefon, în terminalul aplicației sau din Termux:
+# on the phone, in the app's terminal or from Termux:
 curl -L -o /data/local/tmp/agent.apk https://sys32.net/dist/net.sys32.agent.apk
 
-# aceeași verificare de integritate ca pe laptop:
+# the same integrity check as on the laptop:
 sha256sum /data/local/tmp/agent.apk
-# asteptat: d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
+# expected: d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
 
-# apoi instalează:
+# then install:
 pm install -r -g /data/local/tmp/agent.apk
 ```
 
-Din interiorul aplicației, același lucru prin canalul ADB:
+From inside the app, the same thing through the ADB channel:
 
 ```python
 import adb_client
@@ -716,240 +726,244 @@ adb_client.shared().shell('curl -L -o /data/local/tmp/agent.apk https://sys32.ne
 adb_client.shared().shell('pm install -r -g /data/local/tmp/agent.apk')
 ```
 
-> **De ce nu direct în `Downloads`:** două motive, ambele măsurate.
-> (1) `pm install` refuză orice cale din `/sdcard` (context SELinux `fuse:s0`).
-> (2) Stocarea proprie a aplicației (`/data/data/net.sys32.agent/`) **nu e citibilă nici
-> măcar din shell** — `ls` dă `Permission denied`, deci `system_server` nu poate deschide
-> un APK de acolo.
+> **Why not directly into `Downloads`:** two reasons, both measured.
+> (1) `pm install` refuses any path under `/sdcard` (SELinux context `fuse:s0`).
+> (2) The app's own storage (`/data/data/net.sys32.agent/`) **is not readable even from
+> a shell** — `ls` returns `Permission denied`, so `system_server` cannot open an APK
+> from there.
 >
-> `/data/local/tmp` are contextul `u:object_r:shell_data_file:s0` și e **singurul loc**
-> din care `pm install` funcționează. De aceea toate variantele converg acolo.
+> `/data/local/tmp` has the context `u:object_r:shell_data_file:s0` and is **the only
+> place** from which `pm install` works. That is why all variants converge there.
 
-### Varianta D — direct din aplicație (post-instalare)
+### Option D — from inside the app (post-install)
 
-Odată aplicația instalată și ADB funcțional, agentul însuși poate instala APK-uri,
-inclusiv pe el: tool-ul `build_apk` are `action=install`, care duce APK-ul în
-`/data/local/tmp` și rulează `pm install` ca `uid=2000`.
+Once the app is installed and ADB works, the agent itself can install APKs, including
+itself: the `build_apk` tool has `action=install`, which moves the APK to
+`/data/local/tmp` and runs `pm install` as `uid=2000`.
 
 ---
 
-### Ce se întâmplă în timpul instalării
+### What happens during installation
 
-1. `pm install` copiază APK-ul în stocarea internă a aplicației
-2. **La prima lansare**, aplicația extrage din APK ~1,5 GB (toolchain, Debian, modele)
-3. Abia după extracție are loc efectiv ~**4-5 GB** — de aici cerința de 8 GB liberi
+1. `pm install` copies the APK into the app's internal storage
+2. **On first launch**, the app extracts ~1.5 GB from the APK (toolchain, Debian, models)
+3. Only after extraction does the real footprint reach ~**4-5 GB** — hence the 8 GB
+   free space requirement
 
-Nu întrerupe instalarea și nu închide aplicația la prima pornire.
+Do not interrupt the installation and do not close the app on first start.
 
-### Verificare
+### Verification
 
 ```bash
 adb shell dumpsys package net.sys32.agent | grep -E 'firstInstallTime|lastUpdateTime|versionName'
 ```
 
-Instalare curată → `firstInstallTime == lastUpdateTime`.
-Dacă diferă, e un upgrade peste o versiune veche.
+Clean install → `firstInstallTime == lastUpdateTime`.
+If they differ, it is an upgrade over an older version.
 
-### Dacă eșuează
+### If it fails
 
 **`INSTALL_FAILED_INSUFFICIENT_STORAGE`**
-→ chiar nu e spațiu. Ai nevoie de ~8 GB liberi (APK + extracție).
+→ there really is no space. You need ~8 GB free (APK + extraction).
 
 **`INSTALL_FAILED_UPDATE_INCOMPATIBLE`**
-→ semnătură diferită față de versiunea instalată (alt keystore).
+→ different signature than the installed version (other keystore).
 ```bash
-adb uninstall net.sys32.agent     # ATENȚIE: șterge datele aplicației
+adb uninstall net.sys32.agent     # WARNING: deletes app data
 ```
-Apoi reinstalează. Dacă vrei să păstrezi datele, folosește același `debug.keystore`
-cu care a fost semnat APK-ul instalat anterior.
+Then reinstall. If you want to keep data, use the same `debug.keystore` with which the
+previously installed APK was signed.
 
-**`device unauthorized`** după dezinstalare
-→ telefonul revocă cheia. Reapasă **Allow** pe dialogul de pe ecran.
+**`device unauthorized`** after uninstall
+→ the phone revokes the key. Press **Allow** again on the on-screen dialog.
 
-**`adb: failed to read copy response`** la push
-→ cablu/port USB slab. Încearcă alt cablu sau prin TCP (Pasul 6.3).
+**`adb: failed to read copy response`** during push
+→ weak cable/USB port. Try another cable or use TCP (Step 6.3).
 
 ---
 
-## Pasul 8 — Prima lansare în aplicație
+## Step 8 — First launch inside the app
 
 ```bash
 adb shell am start -n net.sys32.agent/.MainActivity
 ```
 
-Sau atinge iconița **AGENT** pe ecran.
+Or tap the **AGENT** icon on screen.
 
-### Ce se întâmplă, în ordine
+### What happens, in order
 
-**1. Panoul de setup** apare peste terminal:
-- titlul `⚡ AGENT`, subtitlul `First-time setup`
-- mesaj: `Please wait, take a coffee and relax...`
-- o bară de progres legată de permisiunile acordate
-- lista `PERMISSIONS` cu bifă live
+**1. The setup panel** appears over the terminal:
+- title `⚡ AGENT`, subtitle `First-time setup`
+- message: `Please wait, take a coffee and relax...`
+- a progress bar tied to granted permissions
+- the `PERMISSIONS` list with live checkmarks
 
-**2. Fereastra de permisiuni (30 s).**
-Aplicația cere: Camera, Microphone, Location, Contacts, Photos & media,
+**2. The permission window (30 s).**
+The app requests: Camera, Microphone, Location, Contacts, Photos & media,
 Notifications, All files access.
-**Acordă toate.** Se închide imediat ce sunt toate date.
+**Grant all of them.** It closes as soon as they are all granted.
 
-Dacă refuzi vreuna:
+If you refuse any:
 ```
 ⚠ WARNING: 2 permission(s) not granted.
 Setup CANNOT start until ALL are granted: Camera, Notifications
 [ GRANT ALL PERMISSIONS ]
 ```
-Setup-ul e **blocat obligatoriu**. Dacă ai dat „Don't ask again", butonul deschide
-direct Setările aplicației.
+Setup is **mandatorily blocked**. If you chose "Don't ask again", the button opens the
+app's Settings directly.
 
-**3. Etapele de setup** apar o singură dată, cu bifă la final:
+**3. The setup stages** appear once each, with a checkmark at the end:
 ```
-✓ Environment     extrage scripturile Python + stdlib complet (~1,5 GB)
-✓ Libraries       verifică stdlib
-✓ Bridge          pornește AndroidBridge
-✓ Agent           lansează procesul Python
+✓ Environment     extracts the Python scripts + complete stdlib (~1.5 GB)
+✓ Libraries       verifies the stdlib
+✓ Bridge          starts AndroidBridge
+✓ Agent           launches the Python process
 ```
 
-**Extragerea durează 3-10 minute** la prima lansare. E normal ca ecranul să pară
-blocat. **Nu închide aplicația.**
+**Extraction takes 3-10 minutes** on first launch. It is normal for the screen to
+appear frozen. **Do not close the app.**
 
-**4. Cheia API DeepSeek — OBLIGATORIE.**
+**4. The DeepSeek API key — MANDATORY.**
 
-Fără cheie, aplicația pornește și își extrage mediul, dar **agentul nu poate gândi**:
-nu primești niciun răspuns la nicio comandă.
+Without a key, the app starts and extracts its environment, but **the agent cannot
+think**: you get no answer to any command.
 
-Dacă lipsește, apare input-ul:
+If it is missing, the input appears:
 ```
 paste DeepSeek key (sk-...) and send
 ```
 
-Lipește cheia și trimite. Se salvează local, în `files/python/key.txt` și
-`files/home/key.txt`. Nu pleacă nicăieri altundeva decât la API-ul DeepSeek.
+Paste the key and send. It is saved locally, in `files/python/key.txt` and
+`files/home/key.txt`. It goes nowhere else except the DeepSeek API.
 
-De unde iei cheia: <https://platform.deepseek.com> → *API keys* → *Create*.
-Arată ca `sk-...` (35 caractere).
+Where to get the key: <https://platform.deepseek.com> → *API keys* → *Create*.
+It looks like `sk-...` (35 characters).
 
-> **Atenție la siguranță:** nu pune cheia în git, în APK sau în `assets/`. Se scrie
-> doar la runtime, în stocarea privată a aplicației. Fișierul `key.txt` e deja în
-> `.gitignore` tocmai din acest motiv.
+> **Security note:** do not put the key in git, in the APK or in `assets/`. It is
+> written only at runtime, into the app's private storage. The `key.txt` file is
+> already in `.gitignore` for exactly this reason.
 
-**5. Terminalul apare** după ce toate etapele sunt bifate.
+**5. The terminal appears** once all stages are checked.
 
-### ADB — obligatoriu, verifică acum
+### ADB — mandatory, verify now
 
-Dacă ADB nu e pornit, aplicația merge, dar tool-urile privilegiate (`android`, `adbsh`,
-`build_apk`, `binder`) nu au cu ce lucra. Verifică imediat după setup:
+If ADB is not running, the app works, but the privileged tools (`android`, `adbsh`,
+`build_apk`, `binder`) have nothing to work with. Check right after setup:
 
 ```bash
-adb shell pm list packages | grep sys32     # de pe laptop -> trebuie sa raspunda
+adb shell pm list packages | grep sys32     # from the laptop -> must answer
 ```
 
-Din terminalul aplicației, primul semn că ADB funcționează:
+From the app's terminal, the first sign that ADB works:
 
 ```python
 import adb_client
 adb_client.shared().shell('id -u')     # -> 2000
 ```
 
-Dacă primești `not authorised` sau timeout, vezi [Pasul 6](#pasul-6--conexiunea-adb--tcpip-5555):
-`adb tcpip 5555` trebuie rulat pe telefon, iar dialogul *Allow USB debugging?* acceptat.
+If you get `not authorised` or a timeout, see
+[Step 6](#step-6--connection-adb--tcpip-5555): `adb tcpip 5555` must be run on the
+phone, and the *Allow USB debugging?* dialog accepted.
 
-### Verificare
+### Verification
 
 ```bash
 adb shell ps -A -o PID,PPID,NAME | grep -E 'sys32|libpyexec'
-# trebuie să vezi procesul Python (libpyexec) printre rezultate
+# you should see the Python process (libpyexec) among the results
 ```
 
 ---
 
-## Verificare finală
+## Final verification
 
-Totul funcționează dacă **toate** răspund corect:
+Everything works if **all** of these answer correctly:
 
 ```bash
-# 1. aplicația e instalată
+# 1. the app is installed
 adb shell pm list packages | grep sys32
 # -> package:net.sys32.agent
 
-# 2. procesul Python rulează
+# 2. the Python process is running
 adb shell ps -A | grep libpyexec
 
-# 3. assets-urile s-au extras
+# 3. the assets were extracted
 adb shell run-as net.sys32.agent ls files/python/agent.py
 adb shell run-as net.sys32.agent ls files/pyhome/.stdlib_ok
 
-# 4. serverele răspund (din terminalul aplicației)
-cat /data/data/net.sys32.agent/files/bridge.port    # portul AndroidBridge (mereu, dupa setup)
-cat /data/data/net.sys32.agent/files/dshell.port    # portul DShell (apare cand porneste agentul)
+# 4. the servers answer (from the app's terminal)
+cat /data/data/net.sys32.agent/files/bridge.port    # AndroidBridge port (always, after setup)
+cat /data/data/net.sys32.agent/files/dshell.port    # DShell port (appears when the agent starts)
 
-# 5. toolchain-ul e funcțional (din terminalul aplicației)
-toolchain selftest        # -> ok pentru C, C++, Python ext
+# 5. the toolchain is functional (from the app's terminal)
+toolchain selftest        # -> ok for C, C++, Python ext
 ```
 
 ---
 
-## Depanare rapidă
+## Quick troubleshooting
 
-**Aplicația pornește și se închide imediat**
-→ Logcat: `adb logcat -d | grep -iE 'sys32|AndroidRuntime|FATAL' | tail -40`
-Cauza cea mai frecventă la instalare curată: stdlib-ul Python nu s-a extras complet.
+**The app starts and closes immediately**
+-> Logcat: `adb logcat -d | grep -iE 'sys32|AndroidRuntime|FATAL' | tail -40`
+The most common cause on a clean install: the Python stdlib did not extract fully.
 
-**Setup-ul se blochează la „Environment"**
-→ `adb shell run-as net.sys32.agent du -sh files/pyhome`
-Dacă e sub ~400 MB, extracția e în curs sau a eșuat (spațiu). Verifică `df /data`.
+**Setup hangs at "Environment"**
+-> `adb shell run-as net.sys32.agent du -sh files/pyhome`
+If it is under ~400 MB, extraction is still running or failed (space). Check `df /data`.
 
-**Terminalul nu se deschide / Debian nu pornește**
-→ Normal la prima apăsare: rootfs-ul se extrage pas cu pas, cu progres.
-Durează câteva minute. Mesajul final e `READY !`.
+**The terminal does not open / Debian does not start**
+-> Normal on first tap: the rootfs is extracted step by step, with progress.
+It takes a few minutes. The final message is `READY !`.
 
-**`adb` nu vede telefonul deloc**
-→ `adb devices` gol: încarcă doar (fără date)? Alt cablu. Alt port USB (preferă
-porturile din spate pe desktop). Pe Windows: instalează driverul USB al producătorului.
-Pe Linux: `sudo usermod -aG plugdev $USER` apoi re-login.
+**`adb` does not see the phone at all**
+-> `adb devices` empty: charge-only cable? Another cable. Another USB port (prefer the
+rear ports on a desktop). On Windows: install the manufacturer's USB driver.
+On Linux: `sudo usermod -aG plugdev $USER` then re-login.
 
-**`adb connect` dă `Connection refused`**
-→ TCP mode se pierde la reboot. Reconectează USB și rulează din nou `adb tcpip 5555`.
-Verifică și că laptopul și telefonul sunt în **aceeași** rețea (nu VPN, nu hotspot separat).
+**`adb connect` returns `Connection refused`**
+-> TCP mode is lost on reboot. Reconnect USB and run `adb tcpip 5555` again.
+Also check that laptop and phone are on the **same** network (no VPN, no separate
+hotspot).
 
-**Build-ul reușește, dar aplicația nu are toolchain (build_apk eșuează)**
-→ `assets/toolchain/` lipsește din APK. `bash tools/bootstrap_binaries.sh` din nou,
-apoi rebuild. Verifică: `unzip -l app-debug.apk | grep -c 'assets/toolchain/'`.
+**The build succeeds, but the app has no toolchain (`build_apk` fails)**
+-> `assets/toolchain/` is missing from the APK. Run `bash tools/bootstrap_binaries.sh`
+again, then rebuild. Verify: `unzip -l app-debug.apk | grep -c 'assets/toolchain/'`.
 
 ---
 
-## Recapitulare într-o singură fereastră
+## Recap in a single window
 
 ```bash
-# --- pe laptop ---
+# --- on the laptop ---
 git clone https://github.com/fetidness/android_agent.git && cd android_agent
 mkdir -p dist
 curl -L -C - -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
 sha256sum dist/net.sys32.agent.apk                    # d9e4bd32...bfe44c
-bash tools/bootstrap_binaries.sh                      # extrage binarele din APK
+bash tools/bootstrap_binaries.sh                      # extracts the binaries from the APK
 
 cd workspace/app/net.sys32.agent
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export ANDROID_HOME=$HOME/Android/Sdk
-./gradlew assembleDebug                               # ~10-20 min prima dată
+./gradlew assembleDebug                               # ~10-20 min the first time
 
-# --- pe telefon ---
+# --- on the phone ---
 # Settings > About phone > Build number x7 > Developer options > USB debugging ON
-# conectează USB, apasă Allow pe telefon
+# connect USB, press Allow on the phone
 
-adb tcpip 5555                                        # deschide portul
-adb connect 192.168.1.100:5555                        # opțional: fără cablu
+adb tcpip 5555                                        # open the port
+adb connect 192.168.1.100:5555                        # optional: no cable
 
-# --- instalare ---
+# --- installation ---
 adb push app/build/outputs/apk/debug/app-debug.apk /data/local/tmp/agent.apk
 adb shell pm install -r -g /data/local/tmp/agent.apk  # -> Success
 adb shell am start -n net.sys32.agent/.MainActivity
 
-# --- în aplicație ---
-# acordă TOATE permisiunile -> așteaptă extracția (3-10 min) -> lipește cheia API
+# --- inside the app ---
+# grant ALL permissions -> wait for extraction (3-10 min) -> paste the API key
 ```
 
 ---
 
-*Document întocmit pe baza comenzilor și a valorilor reale din repo: `tools/bootstrap_binaries.sh`,
-`app/build.gradle.kts` (AGP 8.7.3, Gradle 8.11.1, compileSdk 36, NDK 29.0.14206865),
-`AndroidManifest.xml` și comportamentul măsurat pe Samsung SM-A366B / Android 16.*
+*Document compiled from the commands and values found in the repo:
+`tools/bootstrap_binaries.sh`, `app/build.gradle.kts` (AGP 8.7.3, Gradle 8.11.1,
+compileSdk 36, NDK 29.0.14206865), `AndroidManifest.xml`, and behaviour measured on a
+Samsung SM-A366B running Android 16.*
