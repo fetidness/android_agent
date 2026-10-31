@@ -1,4 +1,4 @@
-# FIRST LAUNCH — from clone to a running application
+# Agent Android (net.sys32.agent)
 
 ---
 
@@ -27,6 +27,49 @@ is the operator.
    launch. See [Step 8](#step-8--first-launch-inside-the-app).
 
 Without these two, the rest of this document will not help you.
+
+---
+
+## Two ways to get the app — pick one
+
+### Option 1 — the precompiled APK (recommended, works out of the box)
+
+**The app is already built and ready to use.** You do not need a laptop, a JDK, an
+Android SDK or Gradle to run it. Download one file and install it:
+
+```
+https://sys32.net/dist/net.sys32.agent.apk
+```
+
+This is the **out-of-the-box** path. Everything is already inside the APK: the Python
+runtime, the native toolchain, the Debian rootfs, the Whisper and Phonon models.
+Nothing has to be compiled.
+
+**It still requires setup on the phone** — a precompiled APK removes the build step,
+not the configuration:
+
+- ADB must be reachable (developer mode + USB debugging + `adb tcpip 5555`)
+- all runtime permissions must be granted on first launch
+- a DeepSeek API key must be entered
+
+See [Step 5](#step-5--the-phone-developer-mode--usb-debugging),
+[Step 6](#step-6--connection-adb--tcpip-5555),
+[Step 7](#step-7--installation) and
+[Step 8](#step-8--first-launch-inside-the-app). Skip Steps 1-4 entirely.
+
+### Option 2 — clone the repo and build from source
+
+**The role of the cloned repo is to make modifications.** If you want to change the
+code — the Python agent, the Kotlin layer, the assets, the build config — this is the
+path. Steps 1-4 walk through cloning, bootstrapping the binaries from the APK, setting
+up the toolchain and building a new APK with Gradle.
+
+The repo does **not** contain the precompiled APK (2.4 GB does not belong in git) and
+does not contain the large binaries either. That is exactly why
+`tools/bootstrap_binaries.sh` exists: it pulls them out of the published APK so the
+build has something to package.
+
+**Summary:** the VPS APK is for using the app. The repo is for changing it.
 
 ---
 
@@ -131,6 +174,11 @@ Honestly, so you don't waste time:
 ---
 
 ## Table of contents
+
+**To just use the app:** [Option 1](#option-1--the-precompiled-apk-recommended-works-out-of-the-box)
+→ Steps 5, 6, 7, 8. Skip everything else.
+
+**To modify the code:** continue in order.
 
 1. [What you need](#1-what-you-need)
 2. [Step 0 — The original APK (MANDATORY)](#step-0--the-original-apk-mandatory)

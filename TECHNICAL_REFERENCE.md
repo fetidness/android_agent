@@ -1,4 +1,18 @@
-# Agent Android (net.sys32.agent)
+# Agent Android — Technical Reference
+
+> **This is the internal technical document.** It records architecture decisions,
+> measurements, the CHANGELOG rationale and the full history of how the agent was
+> built. It was formerly named `readme.md`.
+>
+> **Looking to install or use the app?** Start with **[README.md](README.md)** — it has
+> the download link, the setup steps (ADB, permissions, API key) and the build
+> instructions. You do not need this document for that.
+>
+> Read this one if you want to understand **why** things are the way they are, or if
+> you are modifying the code and need the deeper context.
+
+---
+
 
 ## ⚠ INSTALARE — nu instala din Downloads (dovedit pe SM-A366B / Android 16)
 
@@ -1500,7 +1514,7 @@ files/.debian_ready                             flag: setup complet
 
 DE CE: aplicatia (uid 10xxx) nu poate execve din app_data_file (W^X SELinux) si
 nu poate scrie in /data/local/tmp -> setup-ul se face de adbd (uid 2000) la prima
-deschidere a terminalului. Detalii in readme.md -> "SETUP AUTOMAT".
+deschidere a terminalului. Detalii in TECHNICAL_REFERENCE.md -> "SETUP AUTOMAT".
 ```
 
 ===============================================================================
@@ -2284,7 +2298,7 @@ Exista **o singura sursa de cod**: `workspace/app/net.sys32.agent/`.
 
 > **6 oct 2026:** a doua aplicatie (`net.sys32.odc_agent`, generata cu
 > `tools/make_agent_variant.sh`) a fost **eliminata** — duplica ~49% din fisiere si crea confuzie.
-> Detalii in `readme.md` -> **OP.9**.
+> Detalii in `TECHNICAL_REFERENCE.md` -> **OP.9**.
 
 #### 9.2 APK-ul are payload-ul complet (inclusiv Rust)
 
