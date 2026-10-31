@@ -54,6 +54,22 @@ APK rezultat: 2,67 GB (original 2,68 GB); whisper, libc++, ptts, proot, phonon,
               android_build si 6077 fisiere de toolchain toate prezente
 ```
 
+#### Capcana de instalare (dovedita pe device, 2026-10-31)
+
+- Operatorul a copiat APK-ul in `Downloads` si a apasat Install: **"App not installed."**
+  fara niciun motiv vizibil. APK-ul era perfect valid (semnat `CN=Android Debug`, ZIP integru,
+  8512 fisiere, 162 GB liberi pe disc).
+- Cauza reala, obtinuta cu `pm install` (interfata ascunde mesajul):
+  `System server has no access to read file context u:object_r:fuse:s0` /
+  `Error: Can't open file: /sdcard/Download/app-debug.apk` /
+  `Consider using a file under /data/local/tmp/`
+  -> Android 16 **nu permite instalarea din `/sdcard`** (stocare partajata, context SELinux).
+- Fix: `cp` in `/data/local/tmp` + `pm install -r -g` -> `Success` in 29 s
+  (`firstInstallTime == lastUpdateTime`, instalare curata).
+- Scris in `readme.md` **chiar la inceput**, ca prima sectiune dupa titlu.
+- Capcana secundara: dupa dezinstalare adb da `device unauthorized` (telefonul revoca cheia);
+  se rezolva cu "Allow" pe dialogul de pe ecran.
+
 #### Raman deschise
 
 - `build_toolchain.sh` exista in git, dar regenerarea de la zero a toolchain-ului (1 GB) nu a

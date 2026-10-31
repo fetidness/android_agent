@@ -1,5 +1,57 @@
 # Agent Android (net.sys32.agent)
 
+## ⚠ INSTALARE — nu instala din Downloads (dovedit pe SM-A366B / Android 16)
+
+**Simptom:** copiezi APK-ul în `Downloads`, apeși pe el, dai *Install* și primești
+**„App not installed."** — fără niciun motiv. Nu e APK-ul stricat și nu e spațiul pe disc.
+
+**Cauza reală** (mesajul de la `pm install`, care spune adevărul):
+
+```
+System server has no access to read file context u:object_r:fuse:s0
+Error: Can't open file: /sdcard/Download/app-debug.apk
+Consider using a file under /data/local/tmp/
+```
+
+Android 16 **nu permite instalarea unui APK din `/sdcard`** (stocare partajată, context SELinux
+`u:object_r:fuse:s0`). Instalatorul din interfață primește aceeași eroare și o ascunde sub mesajul
+generic. Regula se aplică indiferent de mărimea APK-ului.
+
+**Cum se instalează corect** (30 s pentru 2,68 GB):
+
+```bash
+# varianta 1 - scriptul din temp/ (face tot: push + install + permisiuni)
+bash /home/gab/android_agent/temp/scripts/install_agent.sh
+
+# varianta 2 - manual
+adb push app-debug.apk /data/local/tmp/
+adb shell pm install -r -g /data/local/tmp/agent.apk
+#   -r  reinstalează păstrând datele        -g  acordă toate permisiunile runtime
+```
+
+**De ce funcționează așa:** `/data/local/tmp` e citibil de `system_server` (eticheta `shell_data_file`),
+deci PackageManager poate deschide fișierul. `/sdcard` nu.
+
+**Verificare după instalare:**
+
+```bash
+adb shell dumpsys package net.sys32.agent | grep -E 'firstInstallTime|lastUpdateTime'
+# instalare curată: firstInstallTime == lastUpdateTime
+```
+
+### Alte capcane la instalare (fiecare a costat o rundă)
+
+- **`device unauthorized`** după dezinstalare: telefonul revocă cheia adb. Apasă **Allow** pe dialogul
+  „Allow USB debugging?" (bifează *Always allow*). Până atunci `adb shell` nu răspunde.
+- **`firstInstallTime == lastUpdateTime`** distinge o instalare curată de un update; `-r` păstrează
+  `firstInstallTime` vechi.
+- **Spațiul nu e de obicei vinovatul**: pe acest device erau 162 GB liberi, iar instalarea tot
+  eșua din cauza contextului SELinux.
+- **Instalarea prin interfață (tap pe APK) e fragilă la fișiere de ordinul GB** chiar și când
+  sursa e corectă; `pm install` dă mesajul real de eroare, interfața nu.
+
+---
+
 > **Stare 2026-10-15 (b):** peste optimizarile Hermes s-a adaugat **modul SAFE** - zavor nou de scriere in `agent.py` pentru partitiile de sistem (`/system`,`/vendor`,`/etc`,`/proc`,`/sys`,`/dev/block`,`/data/system`,`/data/misc`,`/data/adb`,`/apex`,`/product`,`/odm`,`/boot`) si anti-evaziune pe cai CONSTRUITE din variabile (`_WRITE_VAR_RX` + `_SENSITIVE_HINT`). Comportament nou: **SAFE = REFUZ (galben)**, operatorul poate debloca cu `/unsafe`; in `/unsafe` comanda hardline e executata cu linie de audit rosie `[UNSAFE]`. Cod mort sters (`_compact_history_DISABLED`, 32 linii) + `agent.py` marcat executabil (755). Detalii: `CHANGELOG.md` 2026-10-15 (b) si Etapa 94 mai jos.
 
 > **Stare 2026-10-20:** aplicatia are acum un **TERMINAL LINUX REAL in UI** (Debian 13.7 arm64
