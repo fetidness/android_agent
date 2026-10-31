@@ -124,6 +124,88 @@ file you download.
 
 ---
 
+## Do not update your phone's OS
+
+This is the section to read before anything else if you are about to accept a system
+update.
+
+### The app was built and tested on one specific version
+
+```
+Android 16  ·  SDK 36  ·  security patch 2025-11-01
+samsung/a36xqnaeea/a36xq:16/BP2A.250605.031.A3/A366BXXU5BYK5_OXM5BYK5:user/release-keys
+Samsung SM-A366B
+```
+
+Every measurement in this project — 467 binder services, 29 sensors, the `uid=2000`
+shell, the Debian rootfs, the native toolchain — was taken on **that** build. It is not
+an estimate of what might work elsewhere; it is what was actually verified.
+
+**We do not recommend upgrading to a newer Android version.** The app may break, and
+there is no fallback: you cannot downgrade Android on a locked bootloader.
+
+### Google has already moved against autonomous agents on Play Store
+
+This is not speculation — it is published policy. From the Play Console Help page on
+`AccessibilityService` use:
+
+> Any use of the Accessibility API that enables an app to **autonomously initiate, plan,
+> and execute actions or decisions is strictly prohibited.** This does not prohibit
+> deterministic, rule-based automation, where behavior follows a static, human-defined
+> script.
+
+Read that carefully: it does not ban automation. It bans exactly what an autonomous
+agent does — planning and deciding by itself. A script that follows a fixed sequence is
+fine. An agent that reads the screen, decides what to do next and executes is not.
+
+Note also the exemption clause: apps flagged `isAccessibilityTool="true"` escape the
+prohibition *"provided this functionality is for the app's core purpose"*. That is a
+narrow door, and it exists to protect screen readers, not agents.
+
+**This app is distributed outside Play Store for that reason.** Not because it was
+rejected — because the policy it would be judged by is directly at odds with what the
+app is.
+
+### The direction of travel is clear
+
+Google is openly building "agents in Android" as a first-party feature — you can see it
+on developer.android.com today: *"Turn prompts into real Android experiences using your
+favorite agents."*
+
+When a platform ships its own agent, the natural next step is to **constrain what
+third-party agents can do**, so that the first-party one is the sanctioned path. That
+pattern has repeated on every platform: a capability is open, then it becomes gated,
+then it becomes privileged.
+
+Expect the following to tighten in upcoming OS versions:
+
+- **AccessibilityService** — already restricted by policy, technically auditable
+- **`adb tcpip` / wireless debugging** — increasingly gated behind per-session pairing
+- **`MANAGE_EXTERNAL_STORAGE`** — repeatedly narrowed
+- **Background execution and foreground services** — the most aggressively restricted
+  area of the last four Android releases
+- **Side-loading** — the direction is toward friction, verification and consent walls
+
+Any one of these breaking removes a whole group of capabilities from the app. `adb`
+alone carries half of them.
+
+### Practical recommendation
+
+1. **Do not accept system updates** on the phone that runs this agent. Turn off
+   automatic updates: *Settings → Software update → disable auto-download/install*.
+2. **Keep the build that was tested.** `A366BXXU5BYK5` with security patch 2025-11-01.
+3. **If you must update**, do it on a device you can afford to lose this app on — and
+   verify afterwards that ADB still authorises, `binder` still lists ~467 services, and
+   `toolchain selftest` still passes.
+4. **A dedicated phone is the sane setup.** A cheap spare device, kept on a known OS
+   version, used only for this.
+
+> Security patches do matter. The trade-off here is explicit: you are choosing a working
+> autonomous agent on a slightly older build over a patched build on which it may stop
+> working. Decide with open eyes, not by accident during a routine update prompt.
+
+---
+
 ## Two ways to get the app — pick one
 
 ### Option 1 — the precompiled APK (recommended, works out of the box)
