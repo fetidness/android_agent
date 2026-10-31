@@ -159,6 +159,7 @@ class MainActivity : AppCompatActivity() {
     private fun audioStatus(msg: String) {
         if (!audioMode) return
         runOnUiThread { audioState.text = msg }
+        ptt.progress(msg)
     }
 
     /** Opreste vocea agentului (barge-in): operatorul vrea sa vorbeasca din nou. */
@@ -1086,17 +1087,21 @@ class MainActivity : AppCompatActivity() {
             inTask = false; inAgent = false
             android.util.Log.i("PhononTts", "audio finish: " + say.length + " car. -> speak")
             if (say.isNotEmpty()) {
-                if (userTalking) { audioStatus("Ready - just type."); audioText.setLength(0); return }
+                if (userTalking) { audioStatus("Ready - hold the button and speak."); audioText.setLength(0); return }
+                // linia de stare urmeaza REALITATEA: "Speaking" doar cat se aude ceva
+                runOnUiThread { audioState.text = "Preparing the voice..." }
+                ptt.progress("")
                 PhononTts.speak(this, say) { st ->
                     android.util.Log.i("PhononTts", st)
                     if (audioMode) {
                         // afisez doar mesaje scurte si utile, nu detalii tehnice
                         val show = when {
-                            st.startsWith("preparing") -> "Loading voice..."
+                            st.startsWith("preparing") -> "Speaking..."
                             st.startsWith("playing")   -> "Speaking..."
-                            st.startsWith("done")      -> "Ready - just type."
+                            st.startsWith("done")      -> "Ready - hold the button and speak."
+                            st.startsWith("cancelled") -> "Stopped."
                             st.startsWith("error")     -> st
-                            st.startsWith("nothing")   -> "Ready - just type."
+                            st.startsWith("nothing")   -> "Ready - hold the button and speak."
                             else -> null
                         }
                         if (show != null) audioStatus(show)
@@ -1123,7 +1128,7 @@ class MainActivity : AppCompatActivity() {
             inTask = false; inAgent = false
         } else if (inTask && Regex("^\\s*AGENT\\s*>\\s*$").containsMatchIn(t)) {
             inAgent = true
-            audioWork("reply ready - preparing the voice")
+            audioWork("writing the reply")
         } else if (inTask && inAgent && t.isNotEmpty()) {
             // modul audio: adunam DOAR textul raspunsului (dupa "AGENT >"), nu tool-urile
             if (audioNext) audioText.append(t).append(' ')

@@ -171,7 +171,11 @@ object PhononTts {
                 // Asteptam sa se goleasca bufferul inainte de stop().
                 run {
                     val totalFrames = saved.size() / 2
-                    val deadline = System.currentTimeMillis() + 30_000
+                    // pe acest device playbackHeadPosition NU creste (masurat: playhead=0/36480),
+                    // deci asteptarea de 30 s scurgea TOT: coada ramanea blocata si vocea nu se auzea.
+                    // Asteptam cel mult durata audio + 1.5 s, apoi facem stop() oricum.
+                    val budgetMs = totalFrames / 24.0 + 1500
+                    val deadline = System.currentTimeMillis() + budgetMs.toLong()
                     while (track != null && System.currentTimeMillis() < deadline) {
                         val t2 = track ?: break
                         val played = try { t2.playbackHeadPosition } catch (_: Exception) { totalFrames }
