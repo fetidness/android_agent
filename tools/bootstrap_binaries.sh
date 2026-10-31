@@ -5,8 +5,11 @@
 # modelele vocale/STT) sunt ignorate de .gitignore pentru ca nu au ce cauta in git. Acest
 # script le extrage din APK-ul existent, ca build-ul sa functioneze fara pasi manuali.
 #
-#   bash bootstrap_binaries.sh <cale-catre-APK>
-#   bash bootstrap_binaries.sh --from-device      # ia APK-ul instalat de pe telefon (adb)
+#   bash tools/bootstrap_binaries.sh                 # ia automat cel mai nou APK din dist/
+#   bash tools/bootstrap_binaries.sh <cale-catre-APK> # un APK anume
+#   bash tools/bootstrap_binaries.sh --from-device    # AVARIE: de pe telefon, prin adb
+#
+# Locul fix al APK-ului este dist/ (ignorat de git). Fara telefon, fara adb.
 #
 # Idempotent: sare peste fisierele care exista deja cu dimensiunea corecta.
 # Verificare: la final ruleaza `gradle assembleDebug` daca --check e dat.
@@ -38,15 +41,27 @@ TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
 
 if [ "$FROM_DEVICE" = "1" ]; then
+  # optiune de AVARIE: ia APK-ul de pe telefon. Modul normal e din dist/ (fara telefon).
   command -v adb >/dev/null || die "adb lipseste din PATH"
   PKG=$(adb shell pm path net.sys32.agent 2>/dev/null | head -1 | tr -d '\r' | cut -d: -f2)
-  [ -n "$PKG" ] || die "net.sys32.agent nu e instalat pe device (sau adb nu e autorizat)"
+  [ -n "$PKG" ] || die "net.sys32.agent nu e instalat pe device (sau adb nu e autorizat).\n         Modul normal NU cere telefon: pune APK-ul in dist/ si ruleaza fara argument."
   say "extrag APK-ul de pe device: $PKG"
   adb pull "$PKG" "$TMPD/base.apk" >/dev/null || die "nu pot trage APK-ul"
   APK="$TMPD/base.apk"
 fi
 
-[ -n "$APK" ] || die "da calea catre APK: bash bootstrap_binaries.sh <apk> | --from-device"
+# fara argument: caut automat in dist/ (locul fix, independent de telefon)
+if [ -z "$APK" ]; then
+  say "caut APK-ul in $REPO/dist/ ..."
+  NEWEST=$(ls -t "$REPO"/dist/*.apk 2>/dev/null | head -1 || true)
+  if [ -n "$NEWEST" ]; then
+    APK="$NEWEST"
+    say "folosesc: ${APK#$REPO/} ($(( $(stat -c%s "$APK") / 1024 / 1024 )) MB)"
+  else
+    die "nu gasesc niciun APK in $REPO/dist/\n         Pune APK-ul complet acolo (ex: dist/net.sys32.agent.apk) si ruleaza din nou:\n           cp /cale/app-debug.apk $REPO/dist/\n           bash tools/bootstrap_binaries.sh"
+  fi
+fi
+
 [ -f "$APK" ] || die "APK inexistent: $APK"
 say "APK: $APK ($(( $(stat -c%s "$APK") / 1024 / 1024 )) MB)"
 
