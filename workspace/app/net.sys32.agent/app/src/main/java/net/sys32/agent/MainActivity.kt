@@ -1,6 +1,7 @@
 package net.sys32.agent
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -44,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnSpeak: Button
     private lateinit var audioPanel: LinearLayout
     private lateinit var ptt: PushToTalk
+    private lateinit var inputRow: LinearLayout
     private lateinit var audioTitle: TextView
     private lateinit var audioSub: TextView
     private lateinit var audioState: TextView
@@ -78,16 +80,53 @@ class MainActivity : AppCompatActivity() {
     /** Comuta interfata intre terminal si panoul curat de mod audio. */
     private fun setAudioUi(on: Boolean) {
         runOnUiThread {
-            audioPanel.visibility = if (on) View.VISIBLE else View.GONE
+            audioPanel.visibility = View.GONE          // un singur ecran: panoul de voce
+            inputRow.visibility = if (on) View.GONE else View.VISIBLE
             scroll.visibility = if (on) View.GONE else View.VISIBLE
             if (on) audioState.text = "Ready - just type."
             if (on) ptt.show() else ptt.hide()
+            hideKeyboard(on)
         }
+    }
+
+    /** In modul audio tastatura nu are ce cauta: nu se poate tasta nimic acolo. */
+    private fun hideKeyboard(lock: Boolean) {
+        try {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            if (lock) {
+                // scoate focusul din camp si blocheaza tastatura pana la EXIT
+                input.clearFocus()
+                scroll.requestFocus()
+                imm.hideSoftInputFromWindow(input.windowToken, 0)
+                input.showSoftInputOnFocus = false       // nici un tap pe camp nu mai deschide IME
+                window.setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN or
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            } else {
+                input.showSoftInputOnFocus = true
+                window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                        WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED)
+            }
+        } catch (e: Exception) { android.util.Log.w("audio", "keyboard: $e") }
+    }
+
+    /** Ieșire din modul audio din UI (chat-ul e ascuns, deci comanda /audio off nu se poate tasta). */
+    private fun exitAudioMode() {
+        audioMode = false; audioNext = false; audioText.setLength(0)
+        userTalking = false
+        PhononTts.cancel()
+        setAudioUi(false)
+        appendAnsi("\u001b[38;5;114m[audio] OFF: replies are shown as text again.\u001b[0m\n")
+        toast("audio mode OFF")
+        followTail = true; scrollToBottom()
     }
 
     /** Push-to-talk (Whisper offline) in modul /audio on - vezi PushToTalk.kt. */
     private fun buildPushToTalk(frame: android.widget.FrameLayout) {
-        ptt = PushToTalk(this, onPress = {
+        ptt = PushToTalk(this,
+            onExit = { exitAudioMode() },
+            onStopVoice = { stopAgentVoice("Stopped."); toast("voice stopped") },
+            onPress = {
             // barge-in imediat in UI: operatorul vrea sa vorbeasca peste agent
             userTalking = true
             stopAgentVoice("Listening...")
@@ -102,6 +141,12 @@ class MainActivity : AppCompatActivity() {
             sendLine()
         }
         ptt.build(frame)
+    }
+
+    /** Ce face agentul chiar acum: "Working - <pasul real>", in ambele ecrane. */
+    fun audioWork(msg: String) {
+        audioPanelStatus("Working - " + msg)
+        ptt.progress("Working - " + msg)
     }
 
     /** Starea aratata in panoul principal al modului audio (apelata si de push-to-talk). */
@@ -250,7 +295,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(26), 0, 0)
         }
         audioHint = TextView(this).apply {
-            text = "Type /audio off to return to text."
+            text = "Tap EXIT AUDIO MODE to go back to text (or type /audio off)."
             textSize = 13f
             setTextColor(Color.parseColor("#5C6370"))
             gravity = Gravity.CENTER
@@ -401,6 +446,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#11151C"))
             setPadding(16, 12, 12, 12)
         }
+        inputRow = row
         input = EditText(this).apply {
             hint = "message the agent..."
             setHintTextColor(Color.parseColor("#5C6370"))
@@ -1061,14 +1107,23 @@ class MainActivity : AppCompatActivity() {
             }
             audioText.setLength(0)   // urmatorul raspuns porneste curat
         }
+        // ce face agentul ACUM: linia lui de pas "+-- step 02 [bash] lists files  ⏱3s"
+        // (in modul audio nu vede terminalul, deci ii aratam pasul pe ecranul de voce)
+        if (audioMode && audioNext) {
+            val sm = Regex("""step\s+(\d+)\s+\[(\w+)]\s*(.*?)\s*(?:\u23f1.*)?$""").find(t)
+            if (sm != null) {
+                val what = sm.groupValues[3].trim().take(90)
+                audioWork("step ${sm.groupValues[1]}  ${sm.groupValues[2]}" + if (what.isEmpty()) "" else " - $what")
+            }
+        }
         if (t.contains("TASK #") || (t.contains("\u256D") && !inTask)) {
             inTask = true; newTurn = false; inAgent = false; lastAnswer.setLength(0)
-            if (audioNext) { audioText.setLength(0); audioStatus("Working...") }
+            if (audioNext) { audioText.setLength(0); audioWork("working - thinking about your request") }
         } else if (inTask && Regex("#\\d+\\s+(done|interrupted)").containsMatchIn(t)) {
             inTask = false; inAgent = false
         } else if (inTask && Regex("^\\s*AGENT\\s*>\\s*$").containsMatchIn(t)) {
             inAgent = true
-            audioStatus("Preparing the reply...")
+            audioWork("reply ready - preparing the voice")
         } else if (inTask && inAgent && t.isNotEmpty()) {
             // modul audio: adunam DOAR textul raspunsului (dupa "AGENT >"), nu tool-urile
             if (audioNext) audioText.append(t).append(' ')
@@ -1955,7 +2010,7 @@ class MainActivity : AppCompatActivity() {
                 appendAnsi(OF + "Paste the key (sk-...) in the field below and press send." + NRM + "\n")
                 appendAnsi(OF + "I write it automatically to files/python/key.txt and start the agent." + NRM + "\n\n")
                 input.hint = "paste DeepSeek key (sk-...) and send"
-                input.requestFocus()
+                if (!audioMode) input.requestFocus()
             }
             return
         }
@@ -2227,10 +2282,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (low == "/audio off" || low == "/text") {
-            audioMode = false; audioNext = false; audioText.setLength(0)
-            appendAnsi("\u001b[38;5;114m[audio] OFF: replies are shown as text again.\u001b[0m\n")
-            setAudioUi(false)
-            toast("audio mode OFF")
+            exitAudioMode()
             return
         }
         if (low.startsWith("/audio ")) {

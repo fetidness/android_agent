@@ -26,6 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class PushToTalk(
     private val act: MainActivity,
+    private val onExit: () -> Unit,        // iese din modul audio (inapoi la chat)
+    private val onStopVoice: () -> Unit,   // opreste vocea agentului, ramane in modul audio
     private val onPress: () -> Unit,       // degetul a atins butonul: opreste vocea ACUM
     private val onRelease: () -> Unit,     // degetul s-a ridicat: microfonul nu mai asculta
     private val onText: (String) -> Unit
@@ -95,38 +97,70 @@ class PushToTalk(
     }
 
     // ---------------------------------------------------------------- UI
+    private lateinit var step: TextView
+    private lateinit var dotLabel: TextView
+    private lateinit var ring1: android.widget.FrameLayout
+    private lateinit var ring2: android.widget.FrameLayout
+
+    /** Fundal circular cu inel, desenat (nu imagine) - arata bine la orice densitate. */
+    private fun circleBg(fill: String, ringColor: String, ringDp: Int) =
+        android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(Color.parseColor(fill))
+            setStroke(dp(ringDp), Color.parseColor(ringColor))
+        }
+
     fun build(frame: FrameLayout) {
         container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#0D1117"))
+            setBackgroundColor(Color.parseColor("#0B0E14"))
             visibility = View.GONE
-            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setPadding(dp(24), dp(24), dp(24), dp(24))
         }
         val title = TextView(ctx).apply {
-            text = "PUSH TO TALK"
-            textSize = 20f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#98C379"))
+            text = ""
+            textSize = 13f
+            letterSpacing = 0.35f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(Color.parseColor("#5C6370"))
             gravity = Gravity.CENTER
         }
         status = TextView(ctx).apply {
             text = "Ready - hold the button and speak."
-            textSize = 15f
-            setTextColor(Color.parseColor("#61AFEF"))
+            textSize = 19f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(Color.parseColor("#E5E9F0"))
             gravity = Gravity.CENTER
-            setPadding(0, dp(14), 0, dp(14))
+            setPadding(dp(8), dp(10), dp(8), dp(6))
             setMinLines(2)
         }
-        // doc 5.1: use a Button for anything that must be reliably readable (styled
-        // TextView did not rasterise its glyphs on this device).
+        // ce face agentul ACUM (pasul real, din linia lui "+-- step NN [tool] ...")
+        step = TextView(ctx).apply {
+            text = ""
+            textSize = 13f
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.parseColor("#61AFEF"))
+            gravity = Gravity.CENTER
+            setPadding(dp(6), 0, dp(6), dp(8))
+            setMinLines(2)
+        }
+
+        // ---- butonul: cerc mare cu doua inele in jur (aspect "hardware", nu dreptunghi) ----
+        ring2 = android.widget.FrameLayout(ctx).apply { setBackground(circleBg("#131A24", "#1F6F43", 1)) }
+        ring1 = android.widget.FrameLayout(ctx).apply { setBackground(circleBg("#16202B", "#2E7D32", 2)) }
         btn = Button(ctx).apply {
             text = "HOLD\nTO TALK"
-            textSize = 22f
+            textSize = 23f
             isAllCaps = false
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#2E7D32"))
+            letterSpacing = 0.12f
+            background = circleBg("#2E7D32", "#43A047", 2)
+            stateListAnimator = null
             minWidth = 0; minimumWidth = 0
+            minimumHeight = 0; minHeight = 0
+            setPadding(0, 0, 0, 0)
             setOnTouchListener { _, ev ->
                 when (ev.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
@@ -134,45 +168,95 @@ class PushToTalk(
                         // altfel inregistrarea prinde propria voce a agentului
                         onPress()
                         PhononTts.cancel()
+                        pressing(true)
                         startRecording(); true
                     }
                     android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
                         onRelease()
+                        pressing(false)
                         stopRecordingAndTranscribe(); true
                     }
                     else -> true
                 }
             }
         }
+        ring1.addView(btn, android.widget.FrameLayout.LayoutParams(dp(190), dp(190), Gravity.CENTER))
+        ring2.addView(ring1, android.widget.FrameLayout.LayoutParams(dp(224), dp(224), Gravity.CENTER))
+
+        // controalele de iesire stau IN acest ecran: in modul audio nu se poate tasta nimic
+        val exitBtn = Button(ctx).apply {
+            text = "EXIT TO TEXT"
+            textSize = 15f
+            isAllCaps = false
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(Color.parseColor("#E5E9F0"))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat(); setColor(Color.parseColor("#1B2028"))
+                setStroke(dp(1), Color.parseColor("#2C3440"))
+            }
+            stateListAnimator = null
+            minWidth = 0; minimumWidth = 0
+            setOnClickListener { onExit() }
+        }
+        val stopBtn = Button(ctx).apply {
+            text = "STOP VOICE"
+            textSize = 13f
+            isAllCaps = false
+            setTextColor(Color.parseColor("#8B93A1"))
+            setBackgroundColor(Color.TRANSPARENT)
+            stateListAnimator = null
+            minWidth = 0; minimumWidth = 0
+            setOnClickListener { onStopVoice() }
+        }
+        container.addView(exitBtn, LinearLayout.LayoutParams(dp(190), dp(50)).apply { topMargin = dp(16) })
+        container.addView(stopBtn, LinearLayout.LayoutParams(dp(190), dp(40)).apply { topMargin = dp(4) })
+        dotLabel = TextView(ctx).apply {
+            text = "release to send"
+            textSize = 12f
+            setTextColor(Color.parseColor("#7F8C8D"))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+        }
         langBtn = Button(ctx).apply {
-            text = "language: ro  (tap to change)"
+            text = "\u25C9  ro"
             textSize = 13f
             typeface = Typeface.MONOSPACE
             isAllCaps = false
             setTextColor(Color.parseColor("#ABB2BF"))
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackgroundColor(Color.parseColor("#0B0E14"))
+            stateListAnimator = null
             minWidth = 0; minimumWidth = 0
             setOnClickListener {
                 if (recording) return@setOnClickListener
                 lang = langs[(langs.indexOf(lang) + 1) % langs.size]
-                text = "language: $lang  (tap to change)"
+                text = "\u25C9  $lang"
             }
         }
-        val hint = TextView(ctx).apply {
-            text = "Release to transcribe. Type /audio off for text mode."
-            textSize = 12f
-            setTextColor(Color.parseColor("#5C6370"))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, 0)
-        }
-        container.addView(title)
+        title.visibility = View.GONE
         container.addView(status)
-        container.addView(btn, LinearLayout.LayoutParams(dp(220), dp(220)))
-        container.addView(langBtn)
-        container.addView(hint)
-        frame.addView(container, FrameLayout.LayoutParams(-1, -1))
-        container.elevation = dp(20).toFloat()
+        container.addView(step)
+        container.addView(ring2, LinearLayout.LayoutParams(dp(224), dp(224)).apply { topMargin = dp(18) })
+        container.addView(dotLabel)
+        container.addView(langBtn, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        val lp = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        lp.bottomMargin = dp(4)
+        frame.addView(container, lp)
         container.bringToFront()
+    }
+
+    /** Aspectul butonului: apasat = rosu (asculta), liber = verde. */
+    private fun pressing(on: Boolean) {
+        act.runOnUiThread {
+            btn.background = if (on) circleBg("#C0392B", "#E06C75", 3) else circleBg("#2E7D32", "#43A047", 2)
+            btn.text = if (on) "LISTENING" else "HOLD\nTO TALK"
+            ring1.setBackground(circleBg("#16202B", if (on) "#C0392B" else "#2E7D32", 2))
+            dotLabel.text = if (on) "release to send" else "hold to speak"
+        }
+    }
+
+    /** Linia de progres: ce face agentul chiar acum (apelata din MainActivity). */
+    fun progress(msg: String) {
+        act.runOnUiThread { if (container.visibility == View.VISIBLE) step.text = msg.take(150) }
     }
 
     fun show() {
