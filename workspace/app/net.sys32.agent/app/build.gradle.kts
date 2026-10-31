@@ -44,7 +44,14 @@ val fetchModel = tasks.register<Exec>("fetchModel") {
     commandLine("bash", "fetch_model.sh")
 }
 
-tasks.named("preBuild") { dependsOn(fetchModel) }
+// Modelul Whisper de recunoastere (1.5 GB) NU e in git: se descarca automat inainte de
+// build daca lipseste, exact ca modelul vocal (ca o clona noua sa functioneze out of the box).
+val fetchWhisper = tasks.register<Exec>("fetchWhisper") {
+    workingDir = rootProject.projectDir
+    commandLine("bash", "fetch_whisper.sh")
+}
+
+tasks.named("preBuild") { dependsOn(fetchModel, fetchWhisper) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")

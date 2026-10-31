@@ -108,3 +108,6 @@ insights.json
 !workspace/app/net.sys32.agent/app/src/main/jniLibs/arm64-v8a/libptts_exec.so
 workspace/app/net.sys32.agent/app/src/main/assets/models/
 workspace/app/net.sys32.agent/app/.cxx/
+
+# ---- modele whisper (1.5 GB, se descarca la build cu fetch_whisper.sh) ----
+workspace/app/net.sys32.agent/app/src/main/assets/whisper/models/
