@@ -231,8 +231,30 @@ command costs zero tokens unless noted.
   `/spin` turns it back on.
 - **`/watch [sec]`** — one status line every N seconds, **only while a job runs**. Costs
   0 tokens (it writes to the screen, not into the model context).
-- **`/audio [text]`** — the reply is spoken as clean prose, not printed. Pairs with
-  `/audio on` for hands-free voice mode.
+- **`/audio`** — **turn audio mode ON**. The next reply is spoken aloud, with no
+  formatting: clean prose, no markdown, no lists, no code blocks, no emoji. The answer is
+  also **not printed on screen** — you listen to it instead of reading it.
+  The model is instructed to answer in **English only** in audio mode, regardless of the
+  language you wrote in, because that is what the voice engine pronounces cleanly.
+
+  ```
+  /audio              ->  [audio] ON: the next reply is spoken, without formatting
+  <your question>     ->  the reply is spoken aloud
+  ```
+
+- **`/audio <text>`** — a one-off: ask that question and speak the answer, without
+  leaving audio mode on for the next turn.
+
+  ```
+  /audio what is my battery level
+  ```
+
+> **This is the command that makes the phone hands-free.** With a headset or just the
+> speaker, you can work without looking at the screen. Paired with push-to-talk (the
+> voice button, Whisper local STT), the whole loop stays on the device: you speak, it
+> transcribes locally, the agent acts, the answer is spoken back by Phonon. Nothing is
+> uploaded — no audio, no text.
+
 - **`/todo`** — show the current task list.
 - **`/help`**, **`/?`** — the command list.
 - **`/exit`**, **`/quit`** — leave (an empty line does nothing, it does not quit).
