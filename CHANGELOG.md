@@ -31,7 +31,8 @@
   `assets/android_build` (build PE TELEFON: JDK/Gradle/build-tools)
 - sta in `tools/` (langa `wipe_device.sh`, `backup_device_tools.sh`), nu in proiect: isi
   gaseste singur proiectul din orice director (`REPO/workspace/app/net.sys32.agent`)
-- `--from-device` ia APK-ul instalat prin adb; altfel primeste calea catre APK ca argument
+- fara argument: ia automat cel mai nou `dist/*.apk` - loc fix, IGNORAT de git, **independent de telefon**
+- `--from-device` (adb) a rămas doar ca AVARIE: operatorul a cerut explicit independenta de telefon
 - genereaza `local.properties` cu `sdk.dir` (fara el Gradle da "SDK location not found")
 - idempotent: sare peste ce exista deja cu dimensiunea corecta
 - daca modelul Whisper nu e in APK, il descarca cu `fetch_whisper.sh`

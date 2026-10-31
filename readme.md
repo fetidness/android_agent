@@ -165,16 +165,21 @@ Repo-ul conține **doar sursele** (~95 MB). Binarele sunt ignorate de `.gitignor
 | `assets/proot/` | 122 MB | APK | `tools/bootstrap_binaries.sh` |
 | `local.properties` (`sdk.dir`) | — | generat | `tools/bootstrap_binaries.sh` |
 
+**Unde sta APK-ul:** in **`dist/`** — loc fix, ignorat de git. Nu depinde de telefon si nu
+cere adb.
+
 ```bash
-# din RADACINA repo-ului clonat (scriptul isi gaseste singur proiectul)
+# 1. pune APK-ul complet in dist/ (o singura data)
+cp /cale/catre/app-debug.apk dist/net.sys32.agent.apk
 
-# varianta 1: din APK-ul existent (cel mai simplu, daca il ai)
-bash tools/bootstrap_binaries.sh /cale/catre/app-debug.apk
+# 2. din RADACINA repo-ului clonat (scriptul isi gaseste singur proiectul)
+#    fara argument: ia automat cel mai nou APK din dist/
+bash tools/bootstrap_binaries.sh
 
-# varianta 2: direct de pe telefon, prin adb (APK-ul instalat)
-bash tools/bootstrap_binaries.sh --from-device
+# sau un APK anume:
+bash tools/bootstrap_binaries.sh /alta/cale/app.apk
 
-# apoi build-ul normal
+# 3. build-ul normal
 cd workspace/app/net.sys32.agent
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
   /home/gab/Work/Android/gradle-8.11.1/bin/gradle --offline assembleDebug
@@ -185,6 +190,9 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
 > si `fetch_model.sh` raman in proiect, langa `build.gradle.kts`, pentru ca sunt legate de task-ul
 > Gradle `preBuild`.
 
+> `--from-device` exista doar ca **avarie** (ia APK-ul instalat prin adb) si cere telefonul
+> conectat. Modul normal este din `dist/`, complet independent de device.
+
 `tools/bootstrap_binaries.sh` este **idempotent** (sare peste ce există deja) și, dacă în APK nu găsește
 modelul Whisper, îl descarcă singur cu `fetch_whisper.sh`.
 
@@ -192,7 +200,7 @@ modelul Whisper, îl descarcă singur cu `fetch_whisper.sh`.
 
 ```
 git clone --depth 1  -> 95 MB (doar surse)
-bash tools/bootstrap_binaries.sh <apk>  -> jniLibs 148, toolchain 6077, voce 63M,
+bash tools/bootstrap_binaries.sh  (APK din dist/)  -> jniLibs 148, toolchain 6077, voce 63M,
                                     whisper din APK (fără descărcare), proot, android_build 7,
                                     local.properties generat
 gradle --offline clean assembleDebug -> BUILD SUCCESSFUL
