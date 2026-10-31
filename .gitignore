@@ -111,3 +111,6 @@ workspace/app/net.sys32.agent/app/.cxx/
 
 # ---- modele whisper (1.5 GB, se descarca la build cu fetch_whisper.sh) ----
 workspace/app/net.sys32.agent/app/src/main/assets/whisper/models/
+
+# APK original pentru bootstrap (2.7 GB, se descarca separat)
+dist/
