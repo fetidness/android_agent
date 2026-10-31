@@ -24,11 +24,13 @@
 | `assets/proot/` | 122 MB | **1** |
 | `local.properties` (sdk.dir) | prezent | **lipseste** (e in .gitignore) |
 
-#### `bootstrap_binaries.sh`
+#### `tools/bootstrap_binaries.sh`
 
 - extrage din APK toate cele 6 categorii: `jniLibs` (148 binare), `assets/toolchain` (6077
   fisiere), `assets/models` (voce), `assets/whisper` (model STT), `assets/proot`,
   `assets/android_build` (build PE TELEFON: JDK/Gradle/build-tools)
+- sta in `tools/` (langa `wipe_device.sh`, `backup_device_tools.sh`), nu in proiect: isi
+  gaseste singur proiectul din orice director (`REPO/workspace/app/net.sys32.agent`)
 - `--from-device` ia APK-ul instalat prin adb; altfel primeste calea catre APK ca argument
 - genereaza `local.properties` cu `sdk.dir` (fara el Gradle da "SDK location not found")
 - idempotent: sare peste ce exista deja cu dimensiunea corecta
@@ -45,7 +47,7 @@
 
 ```
 git clone --depth 1 git@github.com:fetidness/android_agent.git   -> 95 MB
-bash bootstrap_binaries.sh <apk>  -> toate cele 6 categorii extrase
+bash tools/bootstrap_binaries.sh <apk>  -> toate cele 6 categorii extrase
 gradle --offline clean assembleDebug -> BUILD SUCCESSFUL in 50s
 APK rezultat: 2,67 GB (original 2,68 GB); whisper, libc++, ptts, proot, phonon,
               android_build si 6077 fisiere de toolchain toate prezente

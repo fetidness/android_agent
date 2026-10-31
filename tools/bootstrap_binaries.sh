@@ -11,7 +11,11 @@
 # Idempotent: sare peste fisierele care exista deja cu dimensiunea corecta.
 # Verificare: la final ruleaza `gradle assembleDebug` daca --check e dat.
 set -euo pipefail
-cd "$(dirname "$(readlink -f "$0")")"
+# ruleaza din ORICE director: scriptul sta in tools/, proiectul in workspace/app/net.sys32.agent
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+PROJ="$REPO/workspace/app/net.sys32.agent"
+[ -d "$PROJ" ] || { echo "[bootstrap] EROARE: nu gasesc proiectul in $PROJ" >&2; exit 1; }
+cd "$PROJ"
 APP=app/src/main
 
 say() { echo "[bootstrap] $*"; }
@@ -109,7 +113,7 @@ else
     rm -rf "$APP/assets/tmp_wh"
   else
     say "assets/whisper (STT): nu e in APK - il descarc (1.5 GB)"
-    bash fetch_whisper.sh
+    bash "$PROJ/fetch_whisper.sh"
   fi
 fi
 
