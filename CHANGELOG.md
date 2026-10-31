@@ -3,8 +3,76 @@
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
 > sesiune de dezvoltare majora; regula in `readme.md` -> OP.7). Format: zile
 > descrescatoare, in fiecare zi commiturile grupate pe categorii.
-> Ultimul commit inclus: voce offline Phonon + `/audio` (2026-10-29).
+> Ultimul commit inclus: push-to-talk Whisper offline + fix redare voce (2026-10-31).
 
+
+### 2026-10-31 - PUSH-TO-TALK (Whisper offline) in `/audio on`
+
+> **Context:** operatorul a cerut sa poata VORBI in loc sa tasta, cu transcriere locala, iar apoi
+> a raportat ca vocea agentului nu se aude si ca nu poate iesi din modul audio. Sesiunea a trecut
+> prin 4 ipoteze gresite inainte de cauza reala; toate sunt notate mai jos.
+
+#### Ce s-a adaugat
+
+- **`PushToTalk.kt`** - modul push-to-talk: `AudioRecord` 16 kHz `VOICE_RECOGNITION`, WAV scris
+  manual (44 B), apel `whisper-cli` prin `ProcessBuilder`, panou de voce in locul chat-ului.
+- **Model A (binare in `jniLibs`)** - `libwhispercli_exec.so` (2.570.664 B) si `libc++_shared.so`
+  (1.794.776 B, varianta cu 224 simboluri `__fs` din toolchain-ul Rust) sunt impachetate ca
+  `lib*.so` si rulate din `nativeLibraryDir`. **Fara** `/data/local/tmp`, fara bridge shell, fara
+  autorizare adb - elimina intreaga clasa de erori `couldn't map ... segment 3` si
+  `adbd is WAITING FOR the app key`.
+- **Model STT unic: `medium`** (1.533.763.059 B) in `assets/whisper/models/`, extras in `filesDir`
+  la prima folosire, cu progres: `Preparing voice input: N / M MB (P%) - one time only`.
+  `small` a fost eliminat (pe romana strica cuvinte: "Testa de microfonul" in loc de
+  "Testare microfonul").
+- **Textul recunoscut intra in agent ca un mesaj tastat** (`input.setText` + `sendLine()`), deci
+  apare in conversatie si costa la fel; zero modificari in `agent.py`.
+- **Comutator de limba `◉ ro / en / auto`** - fortat `ro` pe un clip englez dadea text romanizat
+  ("Nu este problema... aluatul de la aluatul" pentru un clip EN; cu `en` acelasi clip iese corect).
+- **Ecran unic de voce** cu `EXIT TO TEXT` si `STOP VOICE`. Inainte panoul de voce era desenat
+  PESTE panoul audio vechi, deci butoanele de iesire erau acoperite si operatorul rămânea blocat
+  in `/audio on` (chat-ul e ascuns, deci `/audio off` nu se putea tasta).
+- **Tastatura complet ascunsa si blocata in modul audio**: focus scos din camp,
+  `showSoftInputOnFocus=false`, `SOFT_INPUT_STATE_ALWAYS_HIDDEN`, randul de input dispare.
+- **Barge-in**: apasarea butonului opreste INSTANT vocea - `queue.clear()` + `destroyForcibly()`
+  pe procesul TTS + `pause/flush/stop` pe `AudioTrack`, inainte de a deschide microfonul
+  (altfel inregistrarea prindea propria voce a agentului).
+- **Progres live in timpul lucrului**: `Working - step NN <tool> - <ce face>`, parsat din linia
+  reala a agentului (`+-- step NN [tool] ...`), plus `Preparing the voice...` -> `Speaking...` ->
+  `Ready - hold the button and speak.`
+- **`noCompress += ["bin","gguf"]`** in `build.gradle.kts`, ca modelul sa nu fie comprimat.
+
+#### Cauza reala a vocii mute (a 4-a ipoteza, singura dovedita)
+
+- Bufferul `AudioTrack` era **prea MARE**: `sr*2*8` = 192.000 frames (~8 s). AudioFlinger nu apuca
+  sa-l umple: `prepareTracks_l BUFFER TIMEOUT: remove track ... underrun`, track-ul era scos din
+  lista activa si `playhead` rămânea **0** - nu se auzea absolut nimic.
+- Fix: `getMinBufferSize(sr, MONO, PCM16) * 2` (11.544 frames). Dovada dupa fix:
+  `playhead final=121920/122880` (self-test) si **`832320/833280` pe calea vocala** (17,4 s de
+  voce redate integral, primul sunet in 570 ms).
+- Ipotezele gresite, ca sa nu fie reluate: barge-in (se intampla si pe self-test fara microfon),
+  microfonul (acelasi rezultat fara inregistrare), modelul (PCM-ul generat era corect: 4,16 s,
+  peak 0,42), volumul media (era 4/15, ridicat la 12 - nu era cauza).
+- `play()` mutat DUPA primul `write()` (pe stream gol intra imediat in underrun) si
+  `WRITE_NON_BLOCKING` cu pacing in loc de `WRITE_BLOCKING`.
+
+#### Verificat pe device (instalare CURATA)
+
+`pm uninstall` + `pm install` (datele sterse complet, `firstInstallTime == lastUpdateTime`),
+whisper mutat din `/data/local/tmp` ca testul sa nu poata trișa:
+
+- aplicatia isi extrage singura modelul (1.533.763.059 B, dimensiune exacta) in ~3 s
+- push-to-talk a transcris o inregistrare reala si a trimis-o agentului
+- vocea s-a redat integral: `playhead final=832320/833280`, 17,4 s
+- APK: **2,68 GB** (peste limita Play; e pentru sideload)
+
+#### Raman deschise
+
+- **Push in git: nefacut** la momentul scrierii. Atentie: `libwhispercli_exec.so` si
+  `libc++_shared.so` sunt **ignorate** de `.gitignore` (`lib*_exec.so`, `*.so`) - o clona noua ar
+  construi un APK **fara whisper**. Necesita `git add -f` sau un `fetch_whisper.sh` ca la Phonon.
+- Timpul de transcriere cu `medium` (20-23 s pentru 4-7 s de voce) face butonul indisponibil in
+  acest interval.
 
 #### (b) Out of the box: descarcare automata a modelului + buffer drain
 

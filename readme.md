@@ -53,6 +53,121 @@
 > doar tool-uri native). DShell e superset. `dshell.py` si `android_full.py` sunt corecte
 > si **nu trebuie "reparate"**. Detalii: `CHANGELOG.md` 2026-10-24 (c).
 
+## 🎤 PUSH-TO-TALK (Whisper offline) în `/audio on` (2026-10-31)
+
+În modul audio poți vorbi în loc să tastezi. Totul rulează local: nu se trimite audio nicăieri
+și nu depinde de rețea.
+
+### Cum se folosește
+
+```
+/audio on          -> apare ecranul de voce cu butonul HOLD TO TALK
+```
+
+1. ții apăsat butonul (devine roșu, scrie `LISTENING`) și vorbești
+2. eliberezi → scrie `Transcribing N s with whisper medium ...`
+3. textul recunoscut apare pe ecran și pleacă la agent ca un mesaj normal
+4. agentul răspunde și vocea lui se aude; pe ecran scrie `Working - step NN tool - ce face`,
+   apoi `Preparing the voice...` și `Speaking...`
+5. **dacă apeși din nou butonul cât timp vorbește, vocea se oprește instant** și poți înregistra
+   imediat alt mesaj (barge-in)
+
+Butoane pe ecranul de voce: **EXIT TO TEXT** (revine la chat) și **STOP VOICE** (oprește vocea,
+rămâi în mod audio). Comutatorul `◉ ro` schimbă limba recunoașterii: `ro` / `en` / `auto`.
+
+> Chat-ul (rândul de tastare) este ascuns în modul audio și **tastatura este blocată** — de aceea
+> ieșirea se face din butonul EXIT, nu prin comanda `/audio off` (care rămâne valabilă când
+> rândul de tastare e vizibil).
+
+### Ce rulează efectiv (Model A: binare în `jniLibs`)
+
+Aplicația **nu** are nevoie de `/data/local/tmp`, de bridge shell sau de autorizare adb.
+Binarele sunt împachetate ca `lib*.so` în `jniLibs/arm64-v8a/`, iar Android le extrage cu bit de
+execuție în `nativeLibraryDir` (etichetă `apk_data_file`), de unde aplicația le poate rula:
+
+| Fișier | Rol | Mărime |
+|---|---|---|
+| `libwhispercli_exec.so` | `whisper.cpp` 1.9.5-dev (CLI) | 2.570.664 B |
+| `libc++_shared.so` | libc++ cu simbolurile `__fs` (varianta din toolchain Rust, **nu** cea din sysroot) | 1.794.776 B |
+| `libptts_ffi.so` | motorul TTS Phonon | 7,7 MB |
+| `libptts_exec.so` | CLI minim care scrie PCM pe stdout | 7 KB |
+
+Modelul de recunoaștere și vocea stau în assets și se copiază în `filesDir` la prima folosire:
+
+| Asset | Destinație | Mărime |
+|---|---|---|
+| `assets/whisper/models/ggml-medium.bin` | `files/models/whisper/ggml-medium.bin` | 1.533.763.059 B |
+| `assets/models/phonon-31m-en/` | `files/models/phonon-31m-en/` | 66 MB |
+
+### Out of the box (instalare curată, fără niciun pas manual)
+
+Verificat pe SM-A366B cu `pm uninstall` + `pm install` (datele șterse complet):
+
+- la intrarea în `/audio on` aplicația extrage singură modelul de 1,53 GB din APK (~3 s pe acest
+  device) și afișează progres: `Preparing voice input: 1346 / 1462 MB (92%) - one time only`
+- modelul extras are dimensiunea exactă așteptată; dacă nu corespunde, fișierul e șters și se
+  raportează eroare (nu se pornește cu un model trunchiat)
+- APK-ul rezultat are **2,68 GB** (model STT 1,53 GB + Phonon 66 MB + toolchain + restul).
+  Peste limita Play (150 MB / 4 GB cu asset packs) — e pentru sideload, nu pentru magazin.
+
+### Cifre măsurate pe device
+
+| Ce | Rezultat |
+|---|---|
+| Transcriere, 4–7 s de voce, `medium` | ~20–23 s |
+| Transcriere, 12 s EN, `medium` | ~29 s (`small` ar fi ~9 s, dar strică cuvinte românești) |
+| Memorie în rulare, `medium` | ~1,5 GB |
+| Primul sunet TTS după cerere | 350–570 ms |
+| Redare voce lungă, integral | 17,4 s audio, `playhead 832320/833280` |
+| Extragere model din APK | ~3 s (1462 MB) |
+
+### Capcane dovedite (fiecare a costat o sesiune)
+
+1. **`playbackHeadPosition` rămâne 0 dacă bufferul AudioTrack e prea MARE.** Cu `sr*2*8` (~8 s,
+   192.000 frames) AudioFlinger nu apuca să-l umple: `BUFFER TIMEOUT ... underrun`, track-ul era
+   scos din lista activă și **nu se auzea nimic**. Fix: `getMinBufferSize(...) * 2` (11.544
+   frames). Simptomul era identic pe ambele căi (chat și voce), deci nu barge-in / microfon / model.
+2. **`play()` înainte de a exista date** intră imediat în underrun. Fix: primul `write()`, apoi
+   `play()`.
+3. **Așteptarea „până se golește bufferul" cu deadline 30 s** bloca worker-ul de rostire 30 s pe
+   fiecare replică. Fix: buget = durata audio + 1,5 s.
+4. **`libc++_shared.so` din sysroot NU are simboluri `std::__ndk1::__fs`** → link-ul eșua cu
+   `undefined symbol: ...directory_iterator`. Fix: varianta din toolchain-ul Rust (224 simboluri
+   `__fs`, verificabil cu `strings ... | grep -c __fs`).
+5. **Forțarea limbii `ro` pe audio englez** produce text romanizat (clip EN → „aluatul de la
+   aluatul"). Limba trebuie să corespundă vocii; de aceea există comutatorul `◉ ro/en/auto`.
+6. **`/sdcard` nu poate fi sursă de instalare**: `pm install` dă
+   `System server has no access to read file context u:object_r:fuse:s0`. Se copiază întâi în
+   `/data/local/tmp` și se instalează de acolo.
+
+### Fișiere
+
+- `app/src/main/java/net/sys32/agent/PushToTalk.kt` — captură `AudioRecord` 16 kHz
+  `VOICE_RECOGNITION`, WAV scris manual, apel `whisper-cli` prin `ProcessBuilder`, panoul de voce
+- `app/src/main/java/net/sys32/agent/PhononTts.kt` — redare `AudioTrack` (48 kHz), coadă de
+  rostire, `cancel()` instant pentru barge-in
+- `app/src/main/java/net/sys32/agent/MainActivity.kt` — legătura voce → chat (`input.setText` +
+  `sendLine()`), stările afișate, blocarea tastaturii în modul audio
+- `app/src/main/assets/whisper/models/ggml-medium.bin` — modelul STT (unicul livrat)
+
+### Rebuild
+
+```bash
+cd workspace/app/net.sys32.agent
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+  /home/gab/Work/Android/gradle-8.11.1/bin/gradle --offline clean assembleDebug
+# APK: app/build/outputs/apk/debug/app-debug.apk  (~2,68 GB)
+```
+
+---
+> **Stare 2026-10-31 (PUSH-TO-TALK + WHISPER OFFLINE):** modul audio accepta acum si **voce**:
+> in `/audio on` apare un ecran de voce cu buton **HOLD TO TALK**; ti apasat, vorbesti, eliberezi,
+> iar Whisper (medium, 1.53 GB, ruleaza local) transcrie si trimite textul agentului exact ca un
+> mesaj tastat. Raspunsul e rostit de Phonon, iar apasarea butonului **opreste instant** vocea
+> (barge-in) ca sa poti vorbi imediat. Tot ce trebuie sta **in APK** (model STT + model TTS +
+> binare): o instalare curata functioneaza fara niciun pas manual. Detalii: secțiunea
+> „PUSH-TO-TALK" mai jos si `CHANGELOG.md` 2026-10-31.
+
 ## 🔊 VOCE OFFLINE (Phonon 31m) + `/audio` (2026-10-29)
 
 Raspunsurile agentului pot fi **ascultate**, cu un model TTS care ruleaza integral
