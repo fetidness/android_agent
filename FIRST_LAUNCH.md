@@ -1,56 +1,162 @@
 # FIRST LAUNCH — de la clona la aplicația care rulează
 
-> **Pentru cine e documentul:** cineva care clonează repo-ul pentru prima dată și vrea
-> aplicația instalată și funcțională pe telefonul lui.
->
-> **Timp estimat:** 40-70 min (dominant: descărcarea a ~2,5 GB).
->
-> **Dacă ceva nu merge:** fiecare pas are o secțiune „dacă eșuează" cu eroarea exactă.
+---
+
+## Ce este acest agent
+
+`net.sys32.agent` **nu este un chatbot în browser și nu este un client subțire**. Este un
+agent AI autonom care rulează **efectiv pe telefon** și care are acces la telefonul tău la
+un nivel pe care aproape nicio aplicație normală nu îl are.
+
+Când îi ceri ceva, nu trimite cererea undeva ca să îți dea un text înapoi — **execută**.
+Citește senzori, ia un fix GPS real, deschide camera, compilează cod, instalează aplicații,
+scrie pe ecran, citește notificările altor aplicații, intră în terminal Linux și rulează
+comenzi acolo. Aplicația e terminalul; agentul e operatorul.
+
+**Cerințe obligatorii, înainte de orice:**
+
+1. **ADB pornit pe telefon** — aplicația comunică cu sistemul Android prin `adbd` pe
+   `127.0.0.1:5555`. Fără ADB, jumătate din capabilități nu există: fără `pm install`,
+   fără `dumpsys`, fără `settings put`, fără instalare de APK-uri, fără instrumentarea
+   interfeței. Vezi [Pasul 5](#pasul-5--telefonul-developer-mode--usb-debugging) și
+   [Pasul 6](#pasul-6--conexiunea-adb--tcpip-5555).
+2. **Cheie API DeepSeek** — agentul este condus de un model de limbaj. Fără cheie,
+   aplicația pornește, își extrage mediul, dar **nu poate gândi**: nu primești niciun
+   răspuns. Cheia se obține de la <https://platform.deepseek.com> și se introduce la
+   prima lansare. Vezi [Pasul 8](#pasul-8--prima-lansare-în-aplicație).
+
+Fără aceste două lucruri, restul documentului nu te ajută la nimic.
+
+---
+
+## Ce poate face
+
+### Android complet, prin ADB (uid 2000)
+
+Agentul are un client ADB scris în Python, care intră în `adbd` pe loopback. Rezultatul
+este **shell privilegiat** (`uid=2000(shell)`) în interiorul aplicației:
+
+- `pm install` / `uninstall` / `grant` / `revoke` / `clear`
+- `settings put global` — modifică setările sistemului și citește înapoi
+- `dumpsys` complet — activity, battery, wifi, sensorservice, package
+- `input tap` / `swipe` / `keyevent` — controlează orice aplicație, fără accessibility
+- `screencap`, `uiautomator dump`, `logcat`, `am start` / `force-stop`
+- `service call` — apeluri directe în serviciile de sistem
+
+Pe deasupra, un al doilea canal: **reflection**. Evaluatorul din `Reflection.kt` dă
+acces la **orice clasă și metodă din SDK-ul Android** — `getSystemService`, apeluri pe
+obiecte, instanțiere de clase, listeners. Nu ești limitat la ce are un API pregătit.
+
+### Binder nativ — fără adb, fără bridge
+
+Aplicația deschide `/dev/binder` direct și vorbește cu serviciile Android la nivel de
+protocol. **466 servicii** enumerate, descriptori AIDL rezolvați, apeluri reale verificate
+(`display`, `input`, `batteryproperties`). Nu e o listă cosmetică: sunt apeluri IPC.
+
+### Debian 13 complet funcțional, cu acces TOTAL la Android
+
+În aplicație există un **terminal Linux real** — Debian 13 arm64, prin proot. Nu o
+emulare, nu un sandbox gol: `apt`, `gcc`, `python3`, `git`, `nano`, `htop` funcționale.
+
+Lucrul important, și cel care surprinde: **Debian-ul nu este orb la Android.** Are acces
+la hardware și la SDK prin bridge-ul intern (AndroidBridge, TCP loopback):
+
+- `eval call ctx.getSystemService(wifi)` → `android.net.wifi.WifiManager` real
+- senzori cu valori **live**, baterie, cameră, clipboard, interfață
+- reflexie arbitrară — aceleași capabilități ca agentul, din interiorul Linux-ului
+
+Deci poți scrie un script Python în Debian care citește senzori și controlează telefonul.
+Ce **nu** poate Debian: să citească `/data/data/<alt pachet>` (SELinux) și să obțină root
+(nu există `su` pe device). În rest, accesul e complet.
+
+### Mod audio — vorbești, nu tastezi
+
+`/audio on` deschide ecranul vocal. Ții apăsat butonul, vorbești, eliberezi.
+
+**Speech-to-text: Whisper, local.** Modelul `medium` (1,5 GB) rulează **pe telefon**,
+prin `whisper.cpp` compilat nativ. Nimic nu pleacă în cloud. Ales `medium` și nu `small`
+dintr-un motiv măsurat: `small` strică cuvintele românești.
+
+**Text-to-speech: Phonon, local.** Model 31m (61 MB), voce offline. Răspunsul e rostit,
+nu afișat.
+
+Ambele sunt **offline și private**. Nu depind de rețea după setup.
+
+### Toolchain de compilare nativ
+
+Pe telefon există un toolchain complet, în interiorul aplicației:
+
+- **clang 21**, lld, sysroot Android, NDK
+- **Rust** (`rustc` 1.98.1, `cargo`), **maturin**
+- **CMake 3.31.6**, **ninja**, **make**, **perl**
+- **FLANG** (Fortran) — funcțional prin wrapper-ul din `files/tmp`
+
+Consecința: aplicația **compilează cod pe telefon**, inclusiv extensii C/C++ pentru
+Python (`pip_install` cu compilare nativă) și **APK-uri întregi** (`build_apk` — Gradle +
+AGP + JDK + aapt2, toate pe device, fără PC).
+
+### 22 de tool-uri, un agent
+
+Agentul are la dispoziție: `python`, `bash`, `smart`, `read`, `multi`, `run_code`,
+`todo`, `skill`, `scraper`, `android`, `androidapi`, `adbsh`, `binder`, `bridge`,
+`terminal`, `build_apk`, `toolchain`, `bg`, `delegate`, `moa`, `look`, `help`.
+
+Relevante pentru putere: **`delegate`** (subagenți izolați, în paralel), **`moa`**
+(mai multe încercări independente pe o întrebare grea), **`bg`** (job-uri lungi în
+fundal), **`run_code`** (un singur script care cheamă celelalte tool-uri).
+
+### Web, memorie, auto-învățare
+
+- **`scraper`** — lxml, parsel, trafilatura, quickjs, feedparser, toate native pe device
+- **Skills** — proceduri salvate care se încarcă automat când sunt relevante
+- **Memory** — lecții persistente, scrise la `/learn`
+- **Auto-heal** — repară singur mediul la fiecare pornire (symlink-uri moarte, pachete
+  trunchiate, CA bundle, identitate git)
+
+### Ce NU poate face
+
+Onest, ca să nu pierzi timp:
+
+- **Nu are root.** Nu există `su` pe device; build `user`, `ro.secure=1`
+- **Nu citește `/data/data/<alt pachet>`** — SELinux `untrusted_app` / `shell:s0`
+- **Nu face ARP sau SYN scan** — CapEff=0, capabilitățile sunt zero în orice context
+- **Nu rulează cod Java propriu din shell** — ART face `chown` la pornire, blocat structural
 
 ---
 
 ## Cuprins
 
-1. [Ce obții](#1-ce-obții)
-2. [De ce ai nevoie](#2-de-ce-ai-nevoie)
-3. [Pasul 0 — APK-ul original (OBLIGATORIU)](#pasul-0--apk-ul-original-obligatoriu)
-4. [Pasul 1 — Clonare](#pasul-1--clonare)
-5. [Pasul 2 — Bootstrap (scriptul .sh)](#pasul-2--bootstrap-scriptul-sh)
-6. [Pasul 3 — Mediul de build pe laptop](#pasul-3--mediul-de-build-pe-laptop)
-7. [Pasul 4 — Build APK](#pasul-4--build-apk)
-8. [Pasul 5 — Telefonul: developer mode + USB debugging](#pasul-5--telefonul-developer-mode--usb-debugging)
-9. [Pasul 6 — Conexiunea: adb + tcpip 5555](#pasul-6--conexiunea-adb--tcpip-5555)
-10. [Pasul 7 — Instalare](#pasul-7--instalare)
-11. [Pasul 8 — Prima lansare în aplicație](#pasul-8--prima-lansare-în-aplicație)
-12. [Verificare finală](#verificare-finală)
-13. [Depanare rapidă](#depanare-rapidă)
+1. [De ce ai nevoie](#2-de-ce-ai-nevoie)
+2. [Pasul 0 — APK-ul original (OBLIGATORIU)](#pasul-0--apk-ul-original-obligatoriu)
+3. [Pasul 1 — Clonare](#pasul-1--clonare)
+4. [Pasul 2 — Bootstrap (scriptul .sh)](#pasul-2--bootstrap-scriptul-sh)
+5. [Pasul 3 — Mediul de build pe laptop](#pasul-3--mediul-de-build-pe-laptop)
+6. [Pasul 4 — Build APK](#pasul-4--build-apk)
+7. [Pasul 5 — Telefonul: developer mode + USB debugging](#pasul-5--telefonul-developer-mode--usb-debugging)
+8. [Pasul 6 — Conexiunea: adb + tcpip 5555](#pasul-6--conexiunea-adb--tcpip-5555)
+9. [Pasul 7 — Instalare](#pasul-7--instalare)
+10. [Pasul 8 — Prima lansare în aplicație](#pasul-8--prima-lansare-în-aplicație)
+11. [Verificare finală](#verificare-finală)
+12. [Depanare rapidă](#depanare-rapidă)
 
 ---
 
-## 1. Ce obții
+## 1. De ce ai nevoie
 
-`net.sys32.agent` este un agent AI autonom care rulează **pe telefon**. Nu e un client
-subțire care vorbește cu un server — pe telefon există:
+### Două lucruri fără care nu funcționează nimic
 
-- **CPython 3.14** nativ (arm64), cu stdlib complet
-- **Toolchain de compilare nativ** (clang 21, lld, sysroot Android, Rust, cargo, CMake)
-- **Debian 13 rootfs** prin proot (terminal Linux real în UI)
-- **Două servere** care expun telefonul către scripturi: DShell (`dshell.port`) și
-  AndroidBridge (`bridge.port`)
-- **Binder nativ** — apel direct în serviciile Android, fără adb
+| Cerință | De ce e obligatorie | Unde se rezolvă |
+|---|---|---|
+| **ADB pornit** | jumătate din capabilități trec prin `adbd` | Pasul 5 + 6 |
+| **Cheie DeepSeek** | fără model, agentul nu poate gândi | Pasul 8 |
 
-Consecința practică: aplicația **compilează cod pe telefon**, inclusiv APK-uri
-(`build_apk`), fără PC.
-
----
-
-## 2. De ce ai nevoie
+Restul sunt condiții tehnice normale, enumerate mai jos.
 
 ### Pe telefon
 
 - **Android 8.0+** (`minSdk 26`); teste făcute pe Android 16 (`targetSdk 36`)
 - **arm64-v8a** (orice telefon modern). Există și x86_64 pentru emulator
-- **~8 GB spațiu liber** — APK-ul are ~2,7 GB, iar la prima lansare se mai extrage
+- **~8 GB spațiu liber** — APK-ul are 2,4 GB, iar la prima lansare se mai extrage
   încă ~1,5 GB în stocarea internă a aplicației
 - **~4 GB RAM** recomandat
 
@@ -342,7 +448,7 @@ export ANDROID_SDK_ROOT=$ANDROID_HOME
 ./gradlew assembleDebug
 ```
 
-**Rezultat:** `app/build/outputs/apk/debug/app-debug.apk` (~2,7 GB)
+**Rezultat:** `app/build/outputs/apk/debug/app-debug.apk` (~2,4 GB)
 
 ### Timpi reali, măsurați pe acest proiect
 
@@ -371,7 +477,7 @@ export ANDROID_SDK_ROOT=$ANDROID_HOME
 ```bash
 APK=app/build/outputs/apk/debug/app-debug.apk
 
-ls -lh $APK                                             # ~2,7 GB
+ls -lh $APK                                             # 2675243215 bytes
 unzip -l $APK | grep -c 'assets/python/'                # ~1400 fișiere
 unzip -l $APK | grep 'assets/python/agent.py'           # agentul e prezent
 unzip -l $APK | grep 'assets/toolchain/bin/clang'       # toolchain-ul e prezent
@@ -423,7 +529,7 @@ Fără asta, laptopul nu poate vorbi cu telefonul.
 
 ### 5.3 Setări care ajută (recomandate)
 
-- **Stay awake** → ON. Ecranul nu se stinge în timpul transferului de 2,7 GB.
+- **Stay awake** → ON. Ecranul nu se stinge în timpul transferului de 2,4 GB.
 - **Verify apps over USB** → OFF (opțional; poate încetini instalarea)
 - **Default USB configuration** → *File Transfer (MTP)*
 
@@ -487,7 +593,7 @@ adb connect 192.168.1.100:5555
 adb devices          # acum apare și intrarea IP
 ```
 
-Acum transferul merge prin Wi-Fi. Pentru 2,7 GB, Wi-Fi 5 GHz e vizibil mai rapid
+Acum transferul merge prin Wi-Fi. Pentru 2,4 GB, Wi-Fi 5 GHz e vizibil mai rapid
 decât USB 2.0.
 
 ### 6.4 (Opțional) Înapoi la USB
@@ -545,7 +651,7 @@ Flag-uri:
 - `-r` — reinstalează păstrând datele
 - `-g` — acordă toate permisiunile runtime dintr-un foc
 
-**Durează 2-5 minute** pentru 2,7 GB. Nu întrerupe.
+**Durează 2-5 minute** pentru 2,4 GB. Nu întrerupe.
 
 ### Verificare
 
@@ -618,11 +724,46 @@ direct Setările aplicației.
 **Extragerea durează 3-10 minute** la prima lansare. E normal ca ecranul să pară
 blocat. **Nu închide aplicația.**
 
-**4. Cheia API.** Dacă lipsește, apare input-ul:
-`paste DeepSeek key (sk-...) and send`
-Lipește cheia și trimite. Se salvează local în `files/python/key.txt`.
+**4. Cheia API DeepSeek — OBLIGATORIE.**
+
+Fără cheie, aplicația pornește și își extrage mediul, dar **agentul nu poate gândi**:
+nu primești niciun răspuns la nicio comandă.
+
+Dacă lipsește, apare input-ul:
+```
+paste DeepSeek key (sk-...) and send
+```
+
+Lipește cheia și trimite. Se salvează local, în `files/python/key.txt` și
+`files/home/key.txt`. Nu pleacă nicăieri altundeva decât la API-ul DeepSeek.
+
+De unde iei cheia: <https://platform.deepseek.com> → *API keys* → *Create*.
+Arată ca `sk-...` (35 caractere).
+
+> **Atenție la siguranță:** nu pune cheia în git, în APK sau în `assets/`. Se scrie
+> doar la runtime, în stocarea privată a aplicației. Fișierul `key.txt` e deja în
+> `.gitignore` tocmai din acest motiv.
 
 **5. Terminalul apare** după ce toate etapele sunt bifate.
+
+### ADB — obligatoriu, verifică acum
+
+Dacă ADB nu e pornit, aplicația merge, dar tool-urile privilegiate (`android`, `adbsh`,
+`build_apk`, `binder`) nu au cu ce lucra. Verifică imediat după setup:
+
+```bash
+adb shell pm list packages | grep sys32     # de pe laptop -> trebuie sa raspunda
+```
+
+Din terminalul aplicației, primul semn că ADB funcționează:
+
+```python
+import adb_client
+adb_client.shared().shell('id -u')     # -> 2000
+```
+
+Dacă primești `not authorised` sau timeout, vezi [Pasul 6](#pasul-6--conexiunea-adb--tcpip-5555):
+`adb tcpip 5555` trebuie rulat pe telefon, iar dialogul *Allow USB debugging?* acceptat.
 
 ### Verificare
 
