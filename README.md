@@ -689,7 +689,12 @@ corrupted and bootstrap will fail in ways that are hard to diagnose:
 ```bash
 sha256sum dist/net.sys32.agent.apk
 # expected:
-# d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
+# f0872546b9d56c23d9478ec2222c7ec8f460f2543ddb28cc021d3fb197246a35
+
+# and confirm this build really carries the automatic Linux installer:
+unzip -l dist/net.sys32.agent.apk | grep -E 'proot_tool_xiaomi|libagentroot_exec'
+#   assets/python/proot_tool_xiaomi.py            <- no-root installer
+#   lib/arm64-v8a/libagentroot_exec.so            <- the 187 MB Debian image
 ```
 
 ```bash
@@ -953,7 +958,7 @@ export ANDROID_SDK_ROOT=$ANDROID_HOME
 ```bash
 APK=app/build/outputs/apk/debug/app-debug.apk
 
-ls -lh $APK                                             # 2675243215 bytes
+ls -lh $APK                                             # 2863029937 bytes (2.86 GB, build 2026-11-02)
 unzip -l $APK | grep -c 'assets/python/'                # ~1400 files
 unzip -l $APK | grep 'assets/python/agent.py'           # the agent is present
 unzip -l $APK | grep 'assets/toolchain/bin/clang'       # the toolchain is present
@@ -1173,7 +1178,7 @@ curl -L -o /data/local/tmp/agent.apk https://sys32.net/dist/net.sys32.agent.apk
 
 # the same integrity check as on the laptop:
 sha256sum /data/local/tmp/agent.apk
-# expected: d9e4bd32ff5e99faf42fc3f6980ce2c682ae890e84373f10e71932e654bfe44c
+# expected: f0872546b9d56c23d9478ec2222c7ec8f460f2543ddb28cc021d3fb197246a35
 
 # then install:
 pm install -r -g /data/local/tmp/agent.apk
@@ -1398,7 +1403,7 @@ again, then rebuild. Verify: `unzip -l app-debug.apk | grep -c 'assets/toolchain
 git clone https://github.com/fetidness/android_agent.git && cd android_agent
 mkdir -p dist
 curl -L -C - -o dist/net.sys32.agent.apk https://sys32.net/dist/net.sys32.agent.apk
-sha256sum dist/net.sys32.agent.apk                    # d9e4bd32...bfe44c
+sha256sum dist/net.sys32.agent.apk                    # f0872546...246a35
 bash tools/bootstrap_binaries.sh                      # extracts the binaries from the APK
 
 cd workspace/app/net.sys32.agent
