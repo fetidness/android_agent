@@ -34,6 +34,11 @@ android {
     packaging {
         jniLibs { useLegacyPackaging = true }
         // .so livrat precompilat + wrapper-ul JNI compilat din surse
+        // ★ imaginea rootfs-ului Debian (assets/proot/agentroot.tar.gz, ~230 MB) ajunge in APK
+        // ca lib/arm64-v8a/libagentroot_exec.so: DECOMPRIMATA si cu insigne de biblioteca. Doar
+        // asa o poate citi adbd (uid 2000 NU are voie in app_data_file, SELinux) si doar asa
+        // instalarea Debianului merge FARA nicio descarcare de pe telefon.
+        jniLibs { keepDebugSymbols += "**/libagentroot_exec.so" }
     }
 }
 
@@ -51,7 +56,15 @@ val fetchWhisper = tasks.register<Exec>("fetchWhisper") {
     commandLine("bash", "fetch_whisper.sh")
 }
 
-tasks.named("preBuild") { dependsOn(fetchModel, fetchWhisper) }
+// Rootfs-ul Debian (python3 + gcc, fara apt la runtime) se construieste daca lipseste:
+// tools/build_rootfs.sh (debootstrap, o singura data pe host) -> assets/proot/agentroot.tar.gz.
+// La ambalare e redenumit libagentroot_exec.so in lib/arm64-v8a (vezi build_apk.sh).
+val fetchRootfs = tasks.register<Exec>("fetchRootfs") {
+    workingDir = rootProject.projectDir
+    commandLine("bash", "fetch_rootfs.sh")
+}
+
+tasks.named("preBuild") { dependsOn(fetchModel, fetchWhisper, fetchRootfs) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")

@@ -4433,7 +4433,19 @@ def _run_terminal_setup_locked(emit, files):
             _emitted.add(lb)
             emit("  [done] " + lb)
         _pt._LIVE_CB[0] = _live
-        r = _pt.ensure_ready_via_adb(progress=False)
+        # ★ Cale noua pentru telefoane FARA root (Xiaomi), DOAR daca APK-ul contine imaginea
+        #   completa (libagentroot_exec.so). Pe Samsung / instalari vechi modulul nu se aplica
+        #   si se foloseste EXACT functia originala - zero risc pentru ce functioneaza deja.
+        _used_new = False
+        try:
+            import proot_tool_xiaomi as _ptx
+            if _ptx.available():
+                r = _ptx.ensure(progress=False)
+                _used_new = True
+        except Exception:
+            _used_new = False
+        if not _used_new:
+            r = _pt.ensure_ready_via_adb(progress=False)
         ok = isinstance(r, dict) and bool(r.get("ok") or r.get("skipped"))
         _pt._LIVE_CB[0] = None
     except Exception:
@@ -4633,6 +4645,19 @@ def _ensure_terminal_worker():
     try:
         if not _TERM_WORKER_STARTED[0]:
             _start_terminal_worker()
+            # ★ PORNIRE AUTOMATA A MEDIULUI LINUX (Xiaomi/fara root): nu mai asteptam ca
+            #   operatorul sa deschida terminalul. Daca adbd e autorizat, instalarea porneste
+            #   in fundal la prima lansare a aplicatiei; daca nu e, modulul xiaomi scrie in
+            #   terminal ce trebuie acceptat si reincearca singur dupa autorizare.
+            try:
+                import proot_tool_xiaomi as _ptx
+                if _ptx.available() and not os.path.exists(os.path.join(
+                        "/data/data/net.sys32.agent/files", ".debian_ready")):
+                    import threading as _th2
+                    _th2.Thread(target=_run_terminal_setup, daemon=True,
+                                name="linux_setup_auto").start()
+            except Exception:
+                pass
         # ★ WATCHDOG: daca flag-ul zice pornit dar firul a murit, il relansam.
         import threading as _th
         alive = any("term" in (t.name or "").lower() for t in _th.enumerate())

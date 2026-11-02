@@ -174,6 +174,60 @@ file you download.
 
 ---
 
+## Linux (Debian) that installs itself — no root, no PC
+
+The first time you launch the app, it provisions a complete Debian 13 environment **by itself**
+and shows the progress in the terminal. Measured end to end on **Xiaomi 2409FPCC4G (Android 16,
+no root)** and **Samsung SM-A366B**: **48 s / 108 s**, one time only.
+
+```
+[done] Linux filesystem - Debian 13.7
+[done] Linux runtime - proot ready
+[done] Linux runtime - Debian 13.7, Python 3.13.5
+[done] Android service access - CONCLUZIE: binder-ul FUNCTIONEAZA ... 236 servicii accesibile
+READY !
+```
+
+Inside you get a real shell with **Python 3.13.5, gcc 14.2, make, git, curl** and a precompiled
+native Binder client — no downloads on the phone, everything comes from the APK (187 MB image).
+
+### What you have to do once
+
+**Turn on USB debugging and accept the "Allow USB debugging" dialog.** That is all. If it is not
+authorised yet, the app writes exactly what is missing in the terminal and **retries by itself**
+for up to 3 minutes — you do not have to type `setup` again.
+
+### Why that one dialog cannot be skipped
+
+Measured on the phone, not assumed:
+
+| Attempt | Result |
+|---|---|
+| app process runs `proot` on a rootfs in its own files | `avc: denied { setattr } proc/fd` + `execve: Permission denied` |
+| app process runs `proot` on a rootfs in `/data/local/tmp` | `avc: denied { search } shell_test_data_file` |
+| app writes into `/data/local/tmp` | `Permission denied` (owned by `shell`) |
+| adbd reads the app's private files | `Permission denied` (SELinux) |
+| adbd reads the APK's native library dir | **yes** (that is why the image ships in `lib/arm64`) |
+| adbd runs `proot` from `/data/local/tmp` | **yes** (the only path that works) |
+
+Android's SELinux policy forbids an app from executing a Linux userland. The Android shell (adbd)
+is the only bridge — on every phone, rooted or not. That is a kernel policy, not something an app
+can work around.
+
+### Compatibility
+
+| | Xiaomi (no root) | Samsung | any Android 26+ |
+|---|---|---|---|
+| one-time USB debugging dialog | needed | needed | needed |
+| everything else (download, extract, proot, binder) | automatic | automatic | automatic |
+| speed | internal f2fs, same as Samsung | internal f2fs | identical |
+
+The old code path (`proot_tool.py`) is **untouched**: the new installer lives in
+`proot_tool_xiaomi.py` and is only used when the APK actually contains the image, so existing
+installations cannot regress.
+
+---
+
 ## Command reference
 
 Type `/help` (or `/?`) in the app for this list. Everything below runs locally — a slash

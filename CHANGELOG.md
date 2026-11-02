@@ -6,6 +6,56 @@
 > Ultimul commit inclus: push-to-talk Whisper offline + fix redare voce (2026-10-31).
 
 
+### 2026-11-02 - Linux (Debian) automat pe telefoane fara root (Xiaomi + Samsung)
+
+> **Context:** operatorul a instalat agentul pe **Xiaomi 2409FPCC4G (Android 16)** si a raportat
+> „dupa ce pornesc terminalul si incepe instalarea Debian, imi zice ca setarea nu s-a terminat si
+> sunt warninguri". Pe **Samsung SM-A366B** acelasi build functiona. Cerinta: reparat persistent,
+> „totul out of the box", fara regresie pe Samsung.
+
+#### Cauzele reale (fiecare dovedita pe device)
+
+1. verificarea „e gata?" cerea `usr/local/bin/android-binder`, binar compilat abia la pasul 5 →
+   setup-ul repornea de la zero la fiecare deschidere a terminalului;
+2. `os.path.exists("usr/bin/python3")` pe un **symlink** creat de root intoarce `False` pe Android
+   → rootfs complet raportat ca lipsa;
+3. toybox `tar` nu pastreaza modurile (extrage `0700`) → proot nu putea intra in `usr/bin`
+   (`fatal error: see libproot_exec.so --help`);
+4. `apt-get install gcc` la runtime depindea de DNS-ul guest-ului si atarna minute;
+5. aplicatia nu poate scrie in `/data/local/tmp` (uid 10xxx) → sursele se scriu prin adbd;
+6. procese Python **orfane** de la versiuni anterioare citeau comenzile terminalului (ecran gol),
+   iar `killOrphanAgents` le rata pentru ca cerea „agent.py" in cmdline;
+7. `android-binder selftest` atarna pe servicii mute (Xiaomi: 472/509) — acum marginit din Python.
+
+#### Arhitectura finala (masurata)
+
+- imaginea rootfs (**187 MB**: Debian 13.7 + gcc 14.2 + Python 3.13.5 + `android-binder`
+  precompilat) e livrata in APK ca `lib/arm64-v8a/libagentroot_exec.so` — **singurul** loc din care
+  adbd poate citi (SELinux nu lasa adbd in `app_data_file`);
+- `cp` in `/data/local/tmp` = **0,4 s**, `tar -x` = **4,8 s**, boot guest = **0,3 s**;
+- setup complet automat la prima lansare: **48 s pe Xiaomi**, **108 s pe Samsung**;
+- Linux **nu poate** rula din procesul aplicatiei: `avc: denied` pe `proc/fd` si pe
+  `shell_test_data_file`; singura cale este adbd (uid 2000) — pe orice telefon.
+
+#### Fisiere
+
+- **nou** `assets/python/proot_tool_xiaomi.py` — instalarea offline, cu reparatiile de mai sus;
+- **nou** `tools/build_rootfs.sh`, `tools/generate_adbkey.sh`, `tools/adbkey_pub.py`,
+  `fetch_rootfs.sh`, `assets/adb/adbkey[.pub]`;
+- `agent.py` — comutator: modulul nou doar daca `available()`, altfel **exact** vechea cale;
+- `adb_setup.py` — cheia per device din assets, inaintea cheii persistente;
+- `build.gradle.kts` — task `fetchRootfs` + `keepDebugSymbols` pentru imaginea rootfs;
+- `MainActivity.kt` — copiaza `assets/adb` in `files/python/adb`, **nu** copiaza imaginea de
+  187 MB in `files/`; `killOrphanAgents` prinde orice `libpyexec.so` al pachetului;
+- **`proot_tool.py` a ramas NEATINS** — zero risc de regresie pentru instalari existente.
+
+#### Verificat end-to-end
+
+- **Xiaomi 2409FPCC4G**: instalare curata (`firstInstallTime == lastUpdateTime`) → `READY !`
+  automat → `python3 -V` = 3.13.5, `gcc` = 14.2.0, binder 236 servicii;
+- **Samsung SM-A366B**: instalare curata (dupa stergerea rootfs-ului vechi de 10 GB) → `READY !`
+  in 108 s → `Python 3.13.5`, binder 214 servicii.
+
 ### 2026-10-31 (b) - o clona noua nu putea construi: `bootstrap_binaries.sh`
 
 > **Context:** intrebarea operatorului "daca o persoana face clone, ii lipsesc multe din toolchain,

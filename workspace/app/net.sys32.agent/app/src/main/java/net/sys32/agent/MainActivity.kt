@@ -1382,15 +1382,26 @@ class MainActivity : AppCompatActivity() {
     /** ★ P1: verificare REALA, uid-independenta: /proc/<pid> exista? */
     private fun pidAlive(pid: Long): Boolean = pid > 0 && File("/proc/$pid").exists()
 
-    /** Omara procese agent.py orfane (identificate prin cmdline), in afara de PID-ul dat. */
+    /** Omara procese Python ORFANE ale acestei aplicatii, in afara de PID-ul dat.
+
+     * FIX 2026-11-02 (cauza reala a "setup nu se termina si nu apare nimic"): conditia veche
+     * cerea ca cmdline-ul sa contina "agent.py". Un proces ramas de la o versiune anterioara
+     * (ex. libpyexec.so files/tmp/<script>.py, de la un setup intrerupt) NU era prins, traia
+     * mai departe si citea comenzile terminalului, in timp ce procesul nou scria progresul in
+     * alt loc -> ecran gol. Acum orice proces care ruleaza libpyexec.so al acestui pachet este
+     * considerat al nostru (calea de instalare curenta sau orice /net.sys32.agent- vechi).
+     */
     private fun killOrphanAgents(keep: Long) {
+        val myDir = applicationInfo.nativeLibraryDir
+        val myVer = File(myDir).parentFile?.parentFile?.name ?: ""
         try {
             for (d in File("/proc").listFiles() ?: return) {
                 val pid = d.name.toLongOrNull() ?: continue
                 if (pid == keep) continue
                 val cl = try { File(d, "cmdline").readBytes() } catch (_: Exception) { continue }
                 val s = String(cl, Charsets.ISO_8859_1)
-                if (s.contains("libpyexec.so") && s.contains("agent.py")) {
+                if (!s.contains("libpyexec.so")) continue
+                if (s.contains(myVer) || s.contains("/net.sys32.agent-")) {
                     try { android.os.Process.sendSignal(pid.toInt(), android.os.Process.SIGNAL_KILL) } catch (_: Exception) {}
                 }
             }
@@ -1742,6 +1753,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
         copyDir("python", dest)
+        // ★ CHEIA ADB PRE-AUTORIZATA (assets/adb): un telefon fara root nu isi poate adauga
+        //   singur cheia in user_keys ale adbd, iar dialogul "Allow USB debugging" nu poate fi
+        //   acceptat din cod -> setup-ul Debianului statea la infinit. Cheia e copiata ca
+        //   files/python/adb/adbkey si adb_setup.py o foloseste ca sa poata vorbi cu adbd
+        //   fara dialog (vezi tools/generate_adbkey.sh, care o si autorizeaza pe device).
+        try {
+            val kdir = File(dest, "adb").apply { mkdirs() }
+            for (nm in listOf("adbkey", "adbkey.pub")) {
+                try {
+                    assets.open("adb/" + nm).use { i ->
+                        File(kdir, nm).outputStream().use { o -> i.copyTo(o) }
+                    }
+                    File(kdir, nm).setReadable(true, false)
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
         // ★ BUG reparat ("dupa cheie, ecranele sunt bifate dar nu se intampla nimic"):
         //   pyhome (stdlib-ul Python) se construia DOAR in startPythonProcess(), care la randul
         //   lui era gate-uit de pythonLaunching. Daca prima incercare esua, pyhome nu exista
@@ -1902,13 +1929,18 @@ class MainActivity : AppCompatActivity() {
         val want = assetsStampValue()
         try {
             if (stamp.exists() && stamp.readText() == want &&
-                File(dest, "trixie-arm64.tar.zst").exists()) return
+                File(dest, "debian_x.sh").exists()) return
         } catch (_: Exception) {}
         runCatching { if (dest.isDirectory) dest.deleteRecursively() }
         dest.mkdirs()
         fun copyDir(path: String, out: File) {
             val list = assets.list(path) ?: return
             if (list.isEmpty()) {
+                // ★ imaginea rootfs-ului (agentroot.tar.gz, ~230 MB) NU se copiaza in files/:
+                // ar dubla spatiul si, oricum, adbd nu poate citi din app_data_file. Ea e
+                // livrata in APK ca lib/arm64-v8a/libagentroot_exec.so si citita de acolo
+                // (vezi proot_tool._native_to_guest_readable). Copiem doar scripturile mici.
+                if (out.name == "agentroot.tar.gz" || out.name.startsWith("trixie-arm64.tar")) return
                 out.parentFile?.mkdirs()
                 assets.open(path).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
             } else {

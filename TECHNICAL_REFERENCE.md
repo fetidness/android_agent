@@ -14,6 +14,81 @@
 ---
 
 
+## Linux (Debian) automat pe telefoane fara root — Xiaomi + Samsung (2026-11-02)
+
+> **Context:** pe **Xiaomi 2409FPCC4G (Android 16, fara root)** setup-ul Debianului se termina cu
+> „Setup did not finish / DONE with warnings"; pe **Samsung SM-A366B** acelasi build functiona.
+> Scop: reparat persistent, fara pasi manuali, fara regresie pe Samsung.
+
+### Cauzele reale (fiecare dovedita pe device)
+
+| # | Cauza | Dovada | Reparare |
+|---|---|---|---|
+| 1 | verificarea „e gata?" cerea `usr/local/bin/android-binder`, binar compilat abia la pasul 5 | setup-ul repornea de la zero la fiecare deschidere a terminalului | marker `.agent_rootfs_v2` + verificare pe toolchain-ul real |
+| 2 | `os.path.exists("usr/bin/python3")` pe un **symlink** creat de root → `False` pe Android | rootfs complet raportat ca lipsa | verificare pe `python3.13` / `gcc-14` (fisiere reale) |
+| 3 | toybox `tar` nu pastreaza modurile (extragea `0700`) | `drwx------ usr/bin` → `proot: fatal error` | normalizare 0755/0644 dupa extractie |
+| 4 | `apt-get install gcc` la runtime depindea de DNS-ul guest-ului | `apt` statea minute; `resolv.conf` mostenit de la host | imaginea are deja gcc+python3 (zero descarcari) |
+| 5 | aplicatia nu poate scrie in `/data/local/tmp` (uid 10xxx) | `Permission denied` la `touch` | sursele se scriu prin adbd (uid 2000) |
+| 6 | procese Python **orfane** de la versiuni anterioare citeau comenzile terminalului | `libpyexec.so files/tmp/<script>.py` viu 15+ min, cu `agent.py` nou scriind in alt loc | `killOrphanAgents` prinde orice `libpyexec.so` al pachetului |
+| 7 | `android-binder selftest` atarna pe servicii mute (Xiaomi: 472/509) | proces blocat >120 s, setup aparent inghetat | marginit din Python (`timeout 120` inainte de apel) |
+
+### De ce NU se poate rula Linux din procesul aplicatiei (masurat)
+
+| Ce am incercat | Rezultat |
+|---|---|
+| proot din `untrusted_app`, rootfs in `files/` | `avc: denied { setattr } proc/fd`, `execve: Permission denied` |
+| proot din `untrusted_app`, rootfs in `/data/local/tmp` | `avc: denied { search } shell_test_data_file` |
+| aplicatia scrie in `/data/local/tmp` | `Permission denied` (radacina e `shell shell`) |
+| adbd citeste din `files/` aplicatiei | `Permission denied` (SELinux) |
+| adbd citeste din `nativeLibraryDir` | **da** → de aici imaginea in `lib/arm64-v8a` |
+| adbd executa proot din `/data/local/tmp` | **da** → singura cale care functioneaza |
+
+Concluzie: rootfs-ul **trebuie** sa fie in `/data/local/tmp`, iar proot **trebuie** lansat prin
+adbd — pe orice telefon. Un telefon fara root nu poate ocoli politica SELinux a kernel-ului.
+
+### Cifre masurate
+
+| Operatie | Timp |
+|---|---|
+| `cp` imagine 187 MB (adbd→adbd) | **0,4 s** |
+| `tar -xzf` in `/data/local/tmp/debian` | **4,8 s** |
+| boot guest (`proot ... /bin/sh -c`) | **0,3 s** |
+| setup complet, Xiaomi | **48 s** |
+| setup complet, Samsung | **108 s** |
+| rootfs pe disc | **539 MB** (vs. 10 GB varianta veche, cu pachete adaugate) |
+
+### Capcane de transfer
+
+- **Limita adbd la comenzi: 16 KB date merge, 64 KB nu** (comanda goala / `Broken pipe`). Orice
+  transfer prin `echo <base64> | ...` trebuie facut in bucati mici — de aceea imaginea **nu** se
+  trimite prin shell, ci se copiaza cu `cp` (adbd → `/data/local/tmp`).
+- `proot` are nevoie de `PROOT_TMP_DIR` setat si de `--bind=/proc`; fara ele se plange de
+  „temp directory for f2fs bug probe" si moare.
+
+### Fisiere
+
+| Fisier | Rol |
+|---|---|
+| `app/src/main/assets/python/proot_tool_xiaomi.py` | **nou**: instalarea offline, cu toate reparatiile |
+| `app/src/main/assets/python/proot_tool.py` | **neatins** (calea veche) |
+| `app/src/main/assets/python/agent.py` | comutator: modul nou doar daca `available()`, altfel exact vechea cale |
+| `app/src/main/assets/adb/adbkey[.pub]` | cheie adb pre-autorizata (per device) |
+| `tools/build_rootfs.sh` | construieste imaginea (debootstrap + binder precompilat) |
+| `tools/generate_adbkey.sh`, `tools/adbkey_pub.py` | genereaza + autorizeaza cheia in `adb_keys` |
+| `fetch_rootfs.sh` | task Gradle `fetchRootfs` (aduce/buildeste imaginea la build) |
+| `app/build.gradle.kts` | `fetchRootfs` + `keepDebugSymbols` pentru imaginea rootfs |
+| `MainActivity.kt` | copiaza `assets/adb` → `files/python/adb`; NU copiaza imaginea in `files/` |
+
+### Verificare rapida pe device
+
+```bash
+adb shell ls -d /data/local/tmp/debian                      # rootfs instalat
+adb shell run-as net.sys32.agent cat files/.debian_ready    # "ok" = setup terminat
+adb shell run-as net.sys32.agent cat files/tmp/setup.log    # pasii, cu detalii
+```
+
+---
+
 ## ⚠ INSTALARE — nu instala din Downloads (dovedit pe SM-A366B / Android 16)
 
 **Simptom:** copiezi APK-ul în `Downloads`, apeși pe el, dai *Install* și primești

@@ -4,7 +4,7 @@ Cheia se salveaza in /sdcard/Download/<folder aplicatiei>/ (supravietuieste rein
 Folderul vine din AGENT_HOME (setat de aplicatie); fiecare agent are folderul lui, ca sa nu
 imparta adbkey-ul cu celalalt.
 La pornire: load din sdcard SAU genereaza + salveaza acolo."""
-import ctypes, os, sys, struct, base64, shutil, socket, time
+import ctypes, os, sys, struct, base64, shutil, socket, time, subprocess, re
 
 F = "/data/data/net.sys32.agent/files"
 LIB = F + "/libs"
@@ -39,7 +39,63 @@ def ensure_libs():
     return os.path.exists(LIB + "/libcrypto.so")
 
 # ---------------- 2. CHEIE (persistenta!) ----------------
+DEVICES_FILE = F + "/adbkey.device"
+# ★ asset-urile se extrage ca `assets/python/*` -> files/python/*, deci cheia ajunge in
+#   files/python/adb/adbkey (nu in files/adb): calea e RELATIVA la acest script.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ASSET_KEY = next((c for c in (os.path.join(_HERE, "adb", "adbkey"),
+                              os.path.join(_HERE, "..", "adb", "adbkey"),
+                              F + "/adb/adbkey") if os.path.exists(c)),
+                 os.path.join(_HERE, "adb", "adbkey"))
+
+
+def _device_serial():
+    """Serie de device fara adb (getprop), ca fisierul de chei sa fie per telefon."""
+    for k in ("ro.serialno", "ro.boot.serialno"):
+        try:
+            p = subprocess.run(["getprop", k], capture_output=True, text=True, timeout=10)
+            v = (p.stdout or "").strip()
+            if v:
+                return re.sub(r"[^A-Za-z0-9]", "", v)[:24]
+        except Exception:
+            pass
+    return "default"
+
+
+def ensure_device_key():
+    """★ CHEIE PRE-AUTORIZATA PENTRU ACEST TELEFON (out of the box, si dupa reboot).
+
+    Un telefon fara root nu lasa aplicatia sa isi adauge singura cheia in user_keys ale
+    adbd; singura cale verificata e fisierul `adb_keys` al acestui device (gasit prin
+    `adb shell getprop persist.adb.allowed_keys_file`), care supravietuieste reboot-ului.
+    Cheia e livrata ca asset (assets/adb/adbkey, generata de `generate_adbkey.sh`) si e
+    LEGATA de o singura serie: la instalarea pe alt telefon se genereaza alta (scriptul
+    rescrie fisierul daca seria difera).
+    """
+    if os.path.exists(DEVICES_FILE):
+        try:
+            if open(DEVICES_FILE).read().strip() == _device_serial():
+                return True
+        except Exception:
+            pass
+    src = os.path.normpath(ASSET_KEY)
+    if not (os.path.exists(src) and os.path.exists(src + ".pub")):
+        return False
+    try:
+        shutil.copy2(src, LKEY)
+        shutil.copy2(src + ".pub", LPUBC)
+        open(DEVICES_FILE, "w").write(_device_serial())
+        log("device key installed (assets/adb/adbkey)")
+        return True
+    except Exception as e:
+        log("device key: " + str(e)[:80])
+        return False
+
+
 def ensure_key():
+    # ★ 0. cheia PRE-AUTORIZATA a acestui telefon are prioritate (nu cere dialog)
+    if ensure_device_key():
+        return True
     # ★ 1. daca exista in /sdcard -> o folosesc (persistenta!)
     if os.path.exists(KEY) and os.path.exists(PUBC):
         log("PERSISTENT key found in /sdcard")
