@@ -91,12 +91,17 @@ say "jniLibs: $NB fisiere extrase ($(ls "$APP/jniLibs/arm64-v8a" | wc -l) in tot
 
 # ---------------------------------------------------------------- 2. assets/toolchain
 # 1 GB: clang, lld, sysroot, rust, cargo, cmake, perl, deps
-if [ -d "$APP/assets/toolchain/bin" ]; then
+# ★ FIX (6 nov 2026): guard-ul vechi verifica `toolchain/bin`, care NU EXISTA in structura
+# livrata (toolchain are cmake/ deps/ lib/ perl/ pyinc/ rust-libs.tar sysroot/). Conditia era
+# mereu falsa -> re-extragea 1 GB la FIECARE rulare si apoi `mv` cadea cu
+# "cannot overwrite '.../toolchain/toolchain': Directory not empty" (rm -rf nu se facea).
+if [ -d "$APP/assets/toolchain/deps" ] && [ -d "$APP/assets/toolchain/sysroot" ]; then
   say "assets/toolchain: deja prezent - sar"
 else
   say "assets/toolchain: extrag (~1056 MB, dureaza)"
   mkdir -p "$APP/assets"
   unzip -o -q "$APK" 'assets/toolchain/*' -d "$APP/assets/tmp_tc"
+  rm -rf "$APP/assets/toolchain"
   mv "$APP/assets/tmp_tc/assets/toolchain" "$APP/assets/toolchain"
   rm -rf "$APP/assets/tmp_tc"
   say "assets/toolchain: $(find "$APP/assets/toolchain" -type f | wc -l) fisiere"
@@ -158,6 +163,28 @@ else
   say "assets/proot: $(ls "$APP/assets/proot" | wc -l) fisiere ($(du -sh "$APP/assets/proot" | cut -f1))"
 fi
 
+# ---------------------------------------------------------------- 5a. assets/python/Lib (STDLIB CPython)
+# ★ CRITIC (descoperit 6 nov 2026): `assets/python/Lib/` = stdlib-ul CPython (190 entries,
+# ~110 MB, 3822 fisiere in APK). E in .gitignore, deci NU vine cu clona. Fara el aplicatia
+# porneste, arata "First-time setup", ajunge la "Libraries" si ACOLO SE BLOCHEAZA DEFINITIV:
+# libpyexec nu poate porni (ModuleNotFoundError: threading) si nu exista nici markerul
+# .stdlib_ok, deci setup-ul asteapta la infinit fara nicio eroare pe ecran.
+# Verificat: APK-ul construit fara Lib/ avea 3264 fisiere in Lib/ (doar site-packages),
+# cel corect are 3822 (stdlib complet + site-packages).
+if [ -f "$APP/assets/python/Lib/threading.py" ]; then
+  say "assets/python/Lib: deja prezent - sar"
+elif grep -q '^assets/python/Lib/' "$LIST"; then
+  say "assets/python/Lib: extrag stdlib CPython din APK (~110 MB)"
+  rm -rf "$APP/assets/tmp_py"
+  unzip -o -q "$APK" 'assets/python/Lib/*' -d "$APP/assets/tmp_py"
+  mkdir -p "$APP/assets/python"
+  cp -rf "$APP/assets/tmp_py/assets/python/Lib" "$APP/assets/python/"
+  rm -rf "$APP/assets/tmp_py"
+  say "assets/python/Lib: $(find "$APP/assets/python/Lib" -type f | wc -l) fisiere"
+else
+  say "EROARE: assets/python/Lib lipseste din APK - stdlib-ul CPython nu poate fi adus"
+fi
+
 # ---------------------------------------------------------------- 5b. assets/android_build
 # 399 MB: JDK + Gradle + build-tools + platform, folosite de build_apk (build PE TELEFON).
 # Fara ele aplicatia porneste, dar tool-ul `build_apk` nu poate compila nimic.
@@ -191,6 +218,28 @@ if [ ! -f "local.properties" ] || ! grep -q '^sdk.dir=' local.properties 2>/dev/
     say "ATENTIE: nu am gasit SDK-ul Android. Scrie manual: sdk.dir=<cale> in local.properties"
   fi
 fi
+
+# ---------------------------------------------------------------- 7. VERIFICARE CRITICA
+# Un bootstrap care raporteaza "GATA" dar lasa proiectul fara stdlib produce un APK care se
+# instaleaza si apoi se blocheaza la "Libraries" pe telefon - fara nicio eroare vizibila.
+# De aceea verificam EFECTIV fisierele de care depinde pornirea Python, nu doar exit code-ul.
+MISSING=""
+check_file() { [ -e "$1" ] || MISSING="$MISSING\n  - $1"; }
+check_file "$APP/assets/python/agent.py"
+check_file "$APP/assets/python/Lib/threading.py"
+check_file "$APP/assets/python/Lib/os.py"
+check_file "$APP/assets/python/Lib/encodings/__init__.py"
+check_file "$APP/assets/python/Lib/site-packages/_brotli.cpython-314-aarch64-linux-android.so"
+check_file "$APP/assets/python/Lib/site-packages/_quickjs.so"
+check_file "$APP/assets/proot/agentroot.tar.gz"
+check_file "$APP/assets/toolchain/deps"
+[ -d "$APP/jniLibs/arm64-v8a" ] || MISSING="$MISSING\n  - $APP/jniLibs/arm64-v8a"
+if [ -n "$MISSING" ]; then
+  echo "[bootstrap] EROARE: lipsesc componente critice:$MISSING" >&2
+  echo "[bootstrap] APK-ul construit ar parea OK, dar aplicatia s-ar bloca la 'Libraries'." >&2
+  exit 1
+fi
+say "verificare: toate componentele critice prezente (stdlib, brotli, quickjs, rootfs, toolchain)"
 
 say "GATA. Acum: JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 gradle --offline assembleDebug"
 

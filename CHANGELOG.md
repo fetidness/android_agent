@@ -1,3 +1,35 @@
+## 2026-11-06 - bootstrap complet: o clona din git + APK de debug produce un APK FUNCTIONAL
+
+Test suprem: am pierdut tot local, am pastrat doar repo-ul git si APK-ul de debug, si am
+reconstruit aplicatia pana la "AGENT FULLY CONFIGURED AND OPERATIONAL" pe SM-A366B.
+
+Trei bug-uri in `tools/bootstrap_binaries.sh`, toate gasite prin test pe device:
+
+1. NU aducea `assets/python/Lib/` (stdlib CPython, 3822 fisiere, ~110 MB, ignorat de git).
+   Fara el aplicatia porneste, arata "First-time setup", ajunge la "Libraries" si se
+   BLOCHEAZA DEFINITIV - fara nicio eroare pe ecran: `libpyexec` nu poate importa
+   `threading` si nu se scrie markerul `.stdlib_ok`. Semn pe disc: `files/pyhome/lib/`
+   contine doar pysitepkg.zip + stdlib_extra.zip (acesta NU are threading/os/encodings),
+   `files/tmp/` e gol. Procesele stau in `State: S (sleeping)`, 0% CPU.
+   `stdlib_extra.zip` verificat cu `unzip -l | grep -cE "threading.py|os.py|encodings"` = 0.
+
+2. Guard-ul de toolchain verifica `assets/toolchain/bin`, care NU EXISTA in structura
+   livrata (cmake/ deps/ lib/ perl/ pyinc/ rust-libs.tar sysroot/). Conditia era mereu
+   falsa -> re-extragea 1 GB la fiecare rulare, apoi `mv` cadea cu
+   "cannot overwrite '.../toolchain/toolchain': Directory not empty" (lipsea `rm -rf`).
+
+3. Nu exista nicio verificare finala: scriptul raporta "GATA" cu proiectul rupt.
+   Acum verifica efectiv threading.py, os.py, encodings/, _brotli.so, _quickjs.so,
+   agentroot.tar.gz, toolchain/deps si IESE CU COD 1 daca lipseste ceva.
+
+Infra: `gradle.properties` -Xmx11g (8 GB nu ajung la compressDebugAssets cu stdlib-ul
+adaugat) + `--no-daemon` pentru build-uri reproductibile.
+
+Verificat: bootstrap idempotent (a doua rulare sare peste tot), BUILD SUCCESSFUL in 3m55s,
+APK 3 808 797 056 B cu 3822 fisiere in assets/python/Lib/, instalare curata, setup complet,
+adb uid 2000 autorizat automat ("AUTH -> trimit RSAPUBLICKEY 701 bytes" -> "AUTORIZAT").
+Documentatie: docs/RECOVERY_FROM_GIT_AND_APK.md (rescrisa cu cele 5 capcane dovedite).
+
 ## 2026-11-06 - adb/uid 2000 OUT OF THE BOX: agentul isi genereaza singur cheia
 
 Trei bug-uri faceau ca `adbsh` / orice acces uid 2000 sa nu functioneze NICIODATA pe un
