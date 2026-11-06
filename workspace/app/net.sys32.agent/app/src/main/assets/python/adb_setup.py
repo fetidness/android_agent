@@ -50,7 +50,15 @@ ASSET_KEY = next((c for c in (os.path.join(_HERE, "adb", "adbkey"),
 
 
 def _device_serial():
-    """Serie de device fara adb (getprop), ca fisierul de chei sa fie per telefon."""
+    """Identificator de device fara adb, ca fisierul de chei sa fie per telefon.
+
+    FIX (6 nov 2026, SM-A366B / Android 16): `ro.serialno` si `ro.boot.serialno` intorc
+    STRING GOL pentru aplicatii (restrictie de privacy Android 12+), deci versiunea veche
+    cadea mereu pe "default" -> `adbkey.device` devenea o constanta si verificarea "e acelasi
+    telefon?" nu detecta niciodata nimic (si, mai rau, `ensure_device_key()` iesea pe
+    `return True` fara sa copieze cheia). Acum, cand serialul lipseste, se compune un
+    identificator stabil din fingerprint+device+model, care SUNT accesibile aplicatiei.
+    """
     for k in ("ro.serialno", "ro.boot.serialno"):
         try:
             p = subprocess.run(["getprop", k], capture_output=True, text=True, timeout=10)
@@ -59,6 +67,17 @@ def _device_serial():
                 return re.sub(r"[^A-Za-z0-9]", "", v)[:24]
         except Exception:
             pass
+    # serial ascuns (Android 12+): compun un ID stabil din proprietati accesibile
+    parts = []
+    for k in ("ro.build.fingerprint", "ro.product.device", "ro.product.model"):
+        try:
+            p2 = subprocess.run(["/system/bin/getprop", k], capture_output=True, text=True, timeout=10)
+            v2 = (p2.stdout or "").strip()
+            if v2: parts.append(v2)
+        except Exception:
+            pass
+    if parts:
+        return re.sub(r"[^A-Za-z0-9]", "", "".join(parts))[:40]
     return "default"
 
 
@@ -72,14 +91,20 @@ def ensure_device_key():
     LEGATA de o singura serie: la instalarea pe alt telefon se genereaza alta (scriptul
     rescrie fisierul daca seria difera).
     """
-    if os.path.exists(DEVICES_FILE):
+    # ★ FIX (6 nov 2026): garda veche returna True doar pe baza markerului, FARA sa verifice
+    # ca files/adbkey exista chiar. Pe Android 16 markerul era constant "default" (serial
+    # ascuns), deci conditia era mereu adevarata si cheia nu se copia NICIODATA -> adbd
+    # respingea orice conexiune. Acum: cheia TREBUIE sa existe pe disc, altfel se copiaza.
+    if (os.path.exists(DEVICES_FILE) and os.path.exists(LKEY) and os.path.exists(LPUBC)):
         try:
             if open(DEVICES_FILE).read().strip() == _device_serial():
+                log("device key: already installed for this device")
                 return True
         except Exception:
             pass
     src = os.path.normpath(ASSET_KEY)
     if not (os.path.exists(src) and os.path.exists(src + ".pub")):
+        log("device key: niciun asset valid -> se va genera cheia local")
         return False
     try:
         shutil.copy2(src, LKEY)
@@ -89,6 +114,21 @@ def ensure_device_key():
         return True
     except Exception as e:
         log("device key: " + str(e)[:80])
+        return False
+
+
+def _pub_blob_ok(pub_path):
+    """True daca fisierul .pub e un blob ANDROID_PUBKEY valid (exact 524 bytes).
+
+    adbd verifica `b64_pton(...) == 524` si respinge TACIT orice altceva (fara dialog
+    "Allow USB debugging"), deci o cheie cu alt blob pare ca "merge scrisa" dar nu
+    autentifica niciodata. Caz real: assets/adb/adbkey din APK avea 291 bytes.
+    """
+    try:
+        raw = open(pub_path, "rb").read().strip()
+        blob = base64.b64decode(raw + b"=" * (-len(raw) % 4))
+        return len(blob) == 524
+    except Exception:
         return False
 
 
@@ -102,6 +142,13 @@ def ensure_key():
         shutil.copy2(KEY, LKEY); shutil.copy2(PUBC, LPUBC)
         return True
     # 2. daca exista local (din sesiune) -> o promovez in /sdcard
+    # ★ FIX (6 nov 2026): o cheie cu blob != 524 bytes e RESPINSA de adbd fara dialog
+    # (cheia veche din assets avea 291 B). Nu o refolosim, o regeneram.
+    if os.path.exists(LKEY) and os.path.exists(LPUBC) and not _pub_blob_ok(LPUBC):
+        log("cheia locala are blob invalid -> o regenerez")
+        for _f in (LKEY, LPUBC):
+            try: os.remove(_f)
+            except Exception: pass
     if os.path.exists(LKEY) and os.path.exists(LPUBC):
         log("promoting local key to /sdcard")
         try:

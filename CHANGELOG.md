@@ -1,3 +1,36 @@
+## 2026-11-06 - adb/uid 2000 OUT OF THE BOX: agentul isi genereaza singur cheia
+
+Trei bug-uri faceau ca `adbsh` / orice acces uid 2000 sa nu functioneze NICIODATA pe un
+telefon proaspat instalat, fara nicio eroare vizibila.
+
+1. `_device_serial()` returna mereu "default": Android 12+ (verificat pe SM-A366B /
+   Android 16) intorc STRING GOL la `getprop ro.serialno` si `ro.boot.serialno` pentru
+   aplicatii. Acum, cand serialul lipseste, se compune un ID stabil din
+   `ro.build.fingerprint` + `ro.product.device` + `ro.product.model` (toate accesibile).
+   Pe acest device: `samsunga36xqnaeeaa36xq16BP2A250605031A3A`.
+
+2. `ensure_device_key()` returna True FARA sa copieze cheia: garda compara markerul
+   `adbkey.device` cu `_device_serial()`; cum ambele erau constanta "default", iesea pe
+   `return True` inainte de `shutil.copy2`, deci `files/adbkey` nu exista niciodata.
+   Acum conditia cere si existenta reala a `files/adbkey` + `files/adbkey.pub`.
+
+3. Cheia livrata in `assets/adb/adbkey` era INVALIDA: blob-ul public avea 291 bytes in loc
+   de 524 (modulus fara zero-padding). adbd o respinge TACIT, fara dialog "Allow USB
+   debugging" - de aceea pe ecran nu aparea nimic. Cheia a fost eliminata din assets:
+   agentul isi genereaza singur cheia la prima pornire (RSA 2048, blob Android corect de
+   524 bytes, scrisa deja cu `BN_bn2binpad`). Adaugata si `_pub_blob_ok()` care valideaza
+   lungimea blob-ului inainte de folosire, ca o cheie trunchiata sa se regenereze.
+
+Verificat pe device (SM-A366B, Android 16), instalare curata de la zero:
+  `adb uninstall` -> Success, `pm install` -> Success, `files/` inexistent la prima pornire
+  cheie generata: blob 524 B -> adbd răspunde
+  `[adb] AUTH -> trimit RSAPUBLICKEY 701 bytes` -> `[adb] ✓ AUTORIZAT`
+  `uid=2000(shell) gid=2000(shell) ... context=u:r:shell:s0` in 2.23 s, dupa un singur
+  "Allow USB debugging".
+
+Infra: `gradle.properties` -Xmx8192m (5 GB nu ajungeau la `compressDebugAssets` pe 3.6 GB
+de assets: "Java heap space").
+
 ## 2026-11-06 - scraper: js/deep/jsdata expuse in agent-linux.py + 3 bug-uri reale
 
 - `scrape` are acum 14 actiuni (adaugate: `js`, `deep`, `jsdata`, `health`); inainte
