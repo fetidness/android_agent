@@ -58,13 +58,43 @@ val fetchWhisper = tasks.register<Exec>("fetchWhisper") {
 
 // Rootfs-ul Debian (python3 + gcc, fara apt la runtime) se construieste daca lipseste:
 // tools/build_rootfs.sh (debootstrap, o singura data pe host) -> assets/proot/agentroot.tar.gz.
-// La ambalare e redenumit libagentroot_exec.so in lib/arm64-v8a (vezi build_apk.sh).
+// La build devine jniLibs/arm64-v8a/libagentroot_exec.so prin task-ul stageRootfs (mai jos).
 val fetchRootfs = tasks.register<Exec>("fetchRootfs") {
     workingDir = rootProject.projectDir
     commandLine("bash", "fetch_rootfs.sh")
 }
 
-tasks.named("preBuild") { dependsOn(fetchModel, fetchWhisper, fetchRootfs) }
+// ★ Rootfs-ul Debian: arhiva din assets NU ajunge automat in APK ca libagentroot_exec.so.
+// Conversia se face aici (inainte de mergeJniLibFolders), altfel APK-ul iese FARA rootfs si
+// instalarea automata a Debianului pe telefoane fara root nu mai exista (regresie 6 nov 2026).
+// Task-ul e idempotent: sare peste copiere daca sursa si tinta au aceeasi marime si mtime.
+val rootfsSrc = layout.projectDirectory.file("src/main/assets/proot/agentroot.tar.gz")
+val rootfsDst = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libagentroot_exec.so")
+val stageRootfs = tasks.register("stageRootfs") {
+    val src = rootfsSrc.asFile
+    val dst = rootfsDst.asFile
+    inputs.file(src)
+    outputs.file(dst)
+    doLast {
+        if (!src.exists()) {
+            logger.lifecycle("[rootfs] LIPSESTE ${src} - se sare peste (ruleaza fetch_rootfs.sh)")
+            return@doLast
+        }
+        if (dst.exists() && dst.length() == src.length() && dst.lastModified() >= src.lastModified()) {
+            logger.lifecycle("[rootfs] deja la loc: ${dst.name} ${dst.length()} B")
+            return@doLast
+        }
+        dst.parentFile.mkdirs()
+        src.copyTo(dst, overwrite = true)
+        dst.setLastModified(src.lastModified())
+        logger.lifecycle("[rootfs] copiat ${src.name} -> jniLibs/${dst.name} ${dst.length()} B")
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
+    .configureEach { dependsOn(stageRootfs) }
+
+tasks.named("preBuild") { dependsOn(fetchModel, fetchWhisper, fetchRootfs, stageRootfs) }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
