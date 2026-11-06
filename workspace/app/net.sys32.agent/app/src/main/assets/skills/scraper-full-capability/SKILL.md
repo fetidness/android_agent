@@ -114,3 +114,31 @@ TRAP: procesul agentului tine modulul VECHI in memorie -> tool-ul `scraper` da r
   200+ chars mai mult -> `method: hybrid`.
 - Randare Chrome doar daca nici JS nu ajuta si `sniff` zice `spa`.
 - `force='scraper'|'hybrid'|'chrome'` sare peste decizia automata (util la diagnostic).
+
+## Capcane dovedite pe HOST (x86_64, agent-linux.py) - 6 nov 2026
+
+TRAP: `brotli` lipseste -> `requests` NU trimite `Accept-Encoding: br`, desi scraper.py il
+cere explicit in headers -> serverul intoarce oricum `Content-Encoding: br` si requests
+intoarce bytes comprimati ca text -> arstechnica.com 43870 B cu `text.count("<a ")==0`
+(la fel react.dev) -> toate extractiile dau 0 linkuri si text-gunoi, FARA nicio eroare.
+Fix: `pip install brotli`; dovada dupa: 364885 B si 207 linkuri pe arstechnica.
+Diagnostic rapid: `scraper.health()` -> cheia `brotli`.
+
+TRAP: `quickjs` lipseste pe host desi exista pe device (in assets) -> `_has_js()` returna
+False si `js_query`/`deep` raspundeau "jsengine.py is missing" -> cele 2 moduri moarte.
+Fix in scraper.py: `_js_context()` incearca `jsengine`, apoi `quickjs` direct (Context +
+stub de browser); `_has_js()` accepta oricare.
+
+TRAP: `xpath('//h1/text()')` intorcea `[]` pe Wikipedia desi `<h1>` exista, pentru ca
+textul sta in `<span>` copil -> `//h1/text()` e legitim gol. Fix: fallback automat pe
+`//h1//text()` cand rezultatul e gol; plus nodurile-text nu mai trec prin `lxml_tostr`.
+
+TRAP: agentul pornit din alt director nu gasea scraper.py -> `[scrape] scraper.py
+indisponibil` -> scraper_tool pune in sys.path DOAR `<dir agent-linux.py>/workspace/tools`
+si `<dir>/tools` -> rulam agentul din radacina repo-ului sau punem tools/ in PYTHONPATH.
+
+OK: toate cele 14 actiuni ale tool-ului `scrape` (head, fetch, sniff, xpath, css, links,
+meta, table, article, supreme, js, deep, jsdata, health) ruleaza prin agent-linux.py
+pe 4 site-uri diferite: 52/52 fara erori (wiki, arstechnica, react.dev, bbc.com, HN).
+
+P: /home/gab/android_agent/requirements-scraper.txt -> dependintele pentru host

@@ -1,0 +1,13 @@
+# dependintele scraperului (workspace/tools/scraper.py)
+# instalare:  python3 -m pip install -r requirements-scraper.txt
+requests
+lxml
+parsel
+trafilatura>=2
+feedparser
+justext
+courlan
+htmldate
+quickjs
+brotli
+charset-normalizer

@@ -9,6 +9,9 @@ Utilizare:
   cmd: fetch | head | xpath | css | rss | article | links | meta | table | crawl
 sau import ca modul.
 """
+# Dependinte: vezi requirements-scraper.txt din radacina repo-ului.
+# Fara `brotli` site-urile care trimit Content-Encoding: br ies ca bytes (0 linkuri, text gunoi).
+# Fara `quickjs` modurile js/deep nu functioneaza. Verifica oricand cu scraper.health().
 import sys, json, re, html
 import requests
 
@@ -34,9 +37,30 @@ def doc(url):
     return lxml.html.fromstring(fetch(url))
 
 def xpath(url, expr):
-    """XPath direct pe lxml (CEL MAI RAPID si puternic)."""
+    """XPath direct pe lxml (CEL MAI RAPID si puternic).
+
+    FIX 6 nov: nodurile-text (`//h1/text()`) si atributele (`//a/@href`) sunt deja
+    stringuri; un text gol nu e 'element'. Elementele primesc fallback pe text_content()
+    cand serializarea HTML iese goala (ex. //h1 al carui text sta in <span>).
+    """
     d = doc(url)
-    return [x if isinstance(x,str) else lxml_tostr(x) for x in d.xpath(expr)]
+    res = d.xpath(expr)
+    # fallback: `//x/text()` gol (textul sta in copii, ex. <h1><span>T</span></h1>)
+    # -> se reincearca pe tot subarborele nodului: `//x//text()`
+    if not res and expr.endswith("/text()") and not expr.endswith("//text()"):
+        res = d.xpath(expr[:-len("/text()")] + "//text()")
+    out = []
+    for x in res:
+        if isinstance(x, str):
+            if x.strip():
+                out.append(x)
+            continue
+        if isinstance(x, (int, float, bool)):
+            out.append(str(x))
+            continue
+        s = lxml_tostr(x)
+        out.append(s if s and s.strip() else (x.text_content() or "").strip())
+    return out
 
 def lxml_tostr(el):
     try:
@@ -178,8 +202,13 @@ _DATA_PATTERNS = [
 ]
 
 def _has_js():
+    """True daca exista un motor JS folosibil: jsengine.py SAU quickjs direct."""
     try:
         import jsengine; return True
+    except Exception:
+        pass
+    try:
+        import quickjs; return True
     except Exception:
         return False
 
@@ -241,6 +270,31 @@ def extract_js_data(html, pattern=None):
             return name, raw
     return None, None
 
+_JS_STUB = r"""
+var window=this, globalThis=this, self=this;
+var console={log:function(){},warn:function(){},error:function(){},info:function(){}};
+var document={getElementById:function(){return null;},querySelector:function(){return null;},
+  querySelectorAll:function(){return [];},createElement:function(t){return {tagName:t,style:{}};},
+  body:{innerHTML:""},documentElement:{innerHTML:""}};
+var localStorage={getItem:function(){return null;},setItem:function(){},removeItem:function(){}};
+var navigator={userAgent:"Mozilla/5.0 (Linux; Android 16) Chrome/126 Mobile Safari/537.36"};
+var location={href:"",hostname:"",pathname:"/"};
+var setTimeout=function(fn,ms){return 0;}; var clearTimeout=function(){};
+var atob=function(s){return s;}; var btoa=function(s){return s;};
+"""
+
+def _js_context():
+    """Context JS cu mediu 'browser' minimal. Incearca jsengine.py, apoi quickjs direct."""
+    try:
+        import jsengine; return jsengine.context()
+    except Exception:
+        pass
+    try:
+        import quickjs
+        c = quickjs.Context(); c.eval(_JS_STUB); return c
+    except Exception:
+        return None
+
 def js_query(url_or_html, expr, pattern=None, is_html=False):
     """SUPREM: ia pagina (sau HTML dat), extrage datele JS si le interogheaza cu JS.
 
@@ -252,10 +306,9 @@ def js_query(url_or_html, expr, pattern=None, is_html=False):
     import json as _json
     html = url_or_html if is_html else fetch(url_or_html)
     name, raw = extract_js_data(html, pattern)
-    if not _has_js():
-        return {"ok": False, "error": "jsengine.py is missing (pip install quickjs)"}
-    import jsengine
-    ctx = jsengine.context()
+    ctx = _js_context()
+    if ctx is None:
+        return {"ok": False, "error": "niciun motor JS: lipsesc jsengine.py si quickjs"}
     # pagina reala: punem titlul si URL-ul in stub-ul document (expr poate sa le ceara)
     try:
         import re as _re, html as _htmlmod
@@ -424,3 +477,27 @@ if __name__ == "__main__":
         d=r.get("data")
         print("date:",(json.dumps(d,ensure_ascii=False)[:2500] if not isinstance(d,str) else d[:2500]))
     else: print("cmd: head|rss|article|xpath|css|links|meta|table|sniff|jsdata|jsquery|deep|supreme")
+
+
+# ==================== SANATATE: ce merge si ce lipseste ====================
+def health():
+    """Raporteaza starea fiecarui modul de care depinde scraperul.
+
+    Intoarce {"ok": n, "missing": [...], "modes": {...}} - ca un apel sa nu mai
+    para ca functioneaza cand de fapt un mod cade din cauza unei dependinte lipsa.
+    """
+    dep = {
+        "requests": "fetch/head/links/...", "lxml": "xpath/doc", "parsel": "css",
+        "trafilatura": "article/supreme", "feedparser": "rss", "justext": "article fallback",
+        "courlan": "trafilatura (obligatoriu)", "htmldate": "trafilatura (data)",
+        "quickjs": "js/deep", "brotli": "site-uri comprimate br (Content-Encoding)",
+        "charset_normalizer": "detectarea codarii",
+    }
+    modes, missing = {}, []
+    for mod, why in dep.items():
+        try:
+            __import__(mod); modes[mod] = "ok"
+        except Exception:
+            modes[mod] = "MISSING"; missing.append(mod + " (" + why + ")")
+    return {"ok": len(dep) - len(missing), "total": len(dep),
+            "missing": missing, "modes": modes}

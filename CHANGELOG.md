@@ -1,3 +1,16 @@
+## 2026-11-06 - scraper: js/deep/jsdata expuse in agent-linux.py + 3 bug-uri reale
+
+- `scrape` are acum 14 actiuni (adaugate: `js`, `deep`, `jsdata`, `health`); inainte
+  js_query/deep existau in scraper.py dar NU erau expuse, deci modurile JS erau moarte.
+- scraper.py: `_js_context()` cu fallback pe `quickjs` direct (nu doar jsengine.py).
+- scraper.py: `xpath()` cu fallback `//x//text()` si noduri-text care nu mai trec prin
+  serializer (inainte `//h1/text()` dadea `[]` cand textul statea intr-un `<span>`).
+- scraper.py: `health()` - raporteaza cele 11 dependinte, ca o dependinta lipsa sa nu
+  mai para functionare normala.
+- Adaugat `requirements-scraper.txt` (brotli e critic: fara el site-urile br ies gunoi).
+- Verificat: 52/52 apeluri fara erori pe en.wikipedia, arstechnica, react.dev, bbc.com,
+  news.ycombinator.
+
 # CHANGELOG - Agent Android (net.sys32.agent)
 
 > Generat automat din istoricul git. Documentul e **actualizat periodic** (la fiecare
