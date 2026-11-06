@@ -143,7 +143,19 @@ else
     cp -rf "$APP/assets/tmp_pr/assets/proot/." "$APP/assets/proot/"
   fi
   rm -rf "$APP/assets/tmp_pr"
-  say "assets/proot: $(ls "$APP/assets/proot" | wc -l) fisiere"
+  # ★ FIX (6 nov 2026): AGP DEZARHIVEAZA asset-urile .gz la impachetare (AGP asset compression),
+  # deci in APK arhiva apare ca `agentroot.tar` (539 MB), NU ca `agentroot.tar.gz`.
+  # `fetch_rootfs.sh` si build.gradle.kts cer insa `agentroot.tar.gz`, deci fara recompresie
+  # build-ul cade cu "[rootfs] LIPSESTE ... ruleaza sudo tools/build_rootfs.sh".
+  # Recomprimem in loc (rapid: gzip -1), ca o clona noua sa construiasca out of the box.
+  for _t in "$APP/assets/proot/"*.tar; do
+    [ -f "$_t" ] || continue
+    if [ ! -f "${_t}.gz" ]; then
+      say "assets/proot: recompresez $(basename "$_t") -> $(basename "$_t").gz"
+      gzip -1 -c "$_t" > "${_t}.gz" && rm -f "$_t"
+    fi
+  done
+  say "assets/proot: $(ls "$APP/assets/proot" | wc -l) fisiere ($(du -sh "$APP/assets/proot" | cut -f1))"
 fi
 
 # ---------------------------------------------------------------- 5b. assets/android_build

@@ -770,6 +770,10 @@ cd android_agent
 bash tools/bootstrap_binaries.sh
 ```
 
+> **Disaster scenario** — you only have the git repo and a debug APK, everything else is
+> gone. See [`docs/RECOVERY_FROM_GIT_AND_APK.md`](docs/RECOVERY_FROM_GIT_AND_APK.md) for the
+> full procedure, verified end-to-end (5 minutes on a clean clone).
+
 The script looks for the most recent `.apk` in `dist/` automatically — **it does not
 need a phone, it does not need adb**. You can run the whole thing on the laptop,
 offline once you have the APK.
