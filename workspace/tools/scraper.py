@@ -12,8 +12,12 @@ sau import ca modul.
 import sys, json, re, html
 import requests
 
-UA = {"User-Agent":"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36",
-      "Accept-Language":"ro,en;q=0.8"}
+UA = {"User-Agent":"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+      "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language":"en-US,en;q=0.9,ro;q=0.8",
+      "Accept-Encoding":"gzip, deflate, br",
+      "Upgrade-Insecure-Requests":"1",
+      "Sec-Fetch-Dest":"document","Sec-Fetch-Mode":"navigate","Sec-Fetch-Site":"none"}
 _S = requests.Session(); _S.headers.update(UA)
 
 def fetch(url, timeout=25):
@@ -42,11 +46,18 @@ def lxml_tostr(el):
         return str(el)
 
 def css(url, sel, attr=None):
-    """Selectori CSS prin parsel (peste lxml)."""
+    """Selectori CSS prin parsel (peste lxml).
+
+    FIX 24 oct: daca selectorul contine deja un pseudo-element (::text, ::attr(x)),
+    getall() direct pe el - vechiul cod aplica xpath("string(.)") peste rezultat
+    si returna mereu lista goala pentru 'h2::text'.
+    """
     from parsel import Selector
     s = Selector(text=fetch(url))
-    if attr: return s.css(sel).xpath("@"+attr).getall()
-    return s.css(sel).xpath("string(.)").getall()
+    if attr: return s.css(sel).xpath("@" + attr).getall()
+    if "::" in sel: return [x.strip() for x in s.css(sel).getall() if x.strip()]
+    out = s.css(sel).xpath("string(.)").getall()
+    return [x.replace("\u200b", "").strip() for x in out]
 
 def rss(url, limit=30):
     import feedparser
@@ -71,14 +82,52 @@ def _clean_meta(d):
             out[k] = str(v)          # include elementele lxml -> reprezentare text
     return out
 
-def article(url):
-    """Extractie articol AUTOMATA cu trafilatura (text+metadate) - elimina nav/ads/footer."""
+def article(url, _html=None):
+    """Extractie articol AUTOMATA cu trafilatura (text+metadate) - elimina nav/ads/footer.
+
+    FALLBACK (6 nov): unele pagini (homepage-uri, site-uri cu CSS ciudat) dau 0
+    caractere la favor_precision=True desi au 20 KB de text real. In acel caz se
+    reincearca fara favor_precision, apoi cu justext (boilerplate removal) si in
+    final cu textul brut al <body>. Asa nu mai raportam 'gol' pe o pagina plina.
+    """
     import trafilatura
-    h = fetch(url)
+    h = _html if _html is not None else fetch(url)
     txt = trafilatura.extract(h, include_comments=False, include_tables=True, favor_precision=True)
     meta = trafilatura.extract_metadata(h)
-    return {"text": txt or "", "meta": _clean_meta(meta.as_dict() if meta else {}),
-            "chars": len(txt or "")}
+    how = "trafilatura"
+    if not txt:
+        try:
+            txt = trafilatura.extract(h, include_comments=False, include_tables=True,
+                                      favor_recall=True)
+            if txt: how = "trafilatura-recall"
+        except Exception:
+            pass
+    if not txt:
+        try:
+            import justext
+            body = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", h)
+            paras = justext.justext(body, justext.get_stoplist("English"))
+            good = [pp.text for pp in paras if not pp.is_boilerplate]
+            cand = "\n".join(good).strip()
+            if len(cand) > 200:
+                txt = cand; how = "justext"
+        except Exception:
+            pass
+    if not txt:
+        try:
+            import lxml.html as _lh
+            d = _lh.fromstring(h)
+            for bad in d.xpath("//script|//style|//nav|//footer|//header"):
+                bad.getparent().remove(bad)
+            cand = " ".join(" ".join(d.xpath("//body//text()")).split())
+            if len(cand) > 200:
+                txt = cand; how = "body-text"
+        except Exception:
+            pass
+    out = {"text": txt or "", "meta": _clean_meta(meta.as_dict() if meta else {}),
+           "chars": len(txt or ""), "how": how}
+    out["_html"] = h          # pentru supreme: refolosim HTML-ul deja descarcat
+    return out
 
 def links(url, pattern=None):
     d = doc(url)
@@ -203,13 +252,32 @@ def js_query(url_or_html, expr, pattern=None, is_html=False):
     import json as _json
     html = url_or_html if is_html else fetch(url_or_html)
     name, raw = extract_js_data(html, pattern)
-    if not raw:
-        return {"ok": False, "error": "nicio structura de date JS gasita",
-                "patterns_incercate": [p for p,_ in _DATA_PATTERNS]}
     if not _has_js():
-        return {"ok": False, "error": "jsengine.py lipseste (pip install quickjs)"}
+        return {"ok": False, "error": "jsengine.py is missing (pip install quickjs)"}
     import jsengine
     ctx = jsengine.context()
+    # pagina reala: punem titlul si URL-ul in stub-ul document (expr poate sa le ceara)
+    try:
+        import re as _re, html as _htmlmod
+        _t = _re.search(r"<title[^>]*>(.*?)</title>", html or "", _re.S | _re.I)
+        if _t:
+            ctx.eval("document.title = " + _json.dumps(_htmlmod.unescape(_t.group(1)).strip()) + ";")
+        if not is_html:
+            ctx.eval("location.href = " + _json.dumps(url_or_html) + ";")
+    except Exception:
+        pass
+    if not raw:
+        # fara blob de date: rulam totusi expresia pe pagina (document.title etc.)
+        try:
+            rez = ctx.eval(expr)
+        except Exception as e:
+            return {"ok": False, "error": "JS: " + str(e)[:150],
+                    "patterns_incercate": [p for p, _ in _DATA_PATTERNS]}
+        if isinstance(rez, (str, int, float, bool, list, dict)) or rez is None:
+            return {"ok": True, "pattern": None, "result": rez,
+                    "js_bytes": 0, "note": "fara date JS in pagina; expresia a rulat pe stub"}
+        return {"ok": False, "error": "nicio structura de date JS gasita",
+                "patterns_incercate": [p for p, _ in _DATA_PATTERNS]}
     # ld+json poate fi un array sau obiect; il incarcam tolerant
     try:
         ctx.eval("var DATE = " + raw + ";")
@@ -241,6 +309,11 @@ def deep(url_or_html, keys=None, pattern=None, is_html=False, limit=200):
             "else w(v);}}w(DATE);return JSON.stringify(out);})()") % (keys_js, limit)
     r = js_query(url_or_html, expr, pattern=pattern, is_html=is_html)
     if not r.get("ok"):
+        err = str(r.get("error", ""))
+        if "DATE" in err and "not defined" in err:
+            return {"ok": False, "pattern": None, "values": [],
+                    "error": "pagina nu are date JS (niciun bloc __NEXT_DATA__/__NUXT__/ld+json)",
+                    "hint": "incearca scraper.article() sau scraper.supreme()"}
         return r
     import json as _json2
     try: r["values"] = _json2.loads(r["result"] or "[]")
@@ -267,43 +340,50 @@ def supreme(url, force=None, scrolls=1):
         out["error"] = "fetch: " + str(e)[:120]; return out
     info = sniff(html)
     out["sniff"] = info
-    met = force
-    if not met:
-        met = {"hybrid": "hybrid", "static": "scraper", "spa": "chrome"}[info["kind"]]
+    met = force or "auto"
     out["method"] = met
-    if met == "hybrid":
-        name, raw = extract_js_data(html)
-        # ★ __NEXT_DATA__ poate fi APROAPE GOL (doar metadata; continutul vine din JS) ->
-        # hibridul e insuficient, trecem automat pe RANDARE COMPLETA (ni se schimba metoda).
-        # ★ DACA pagina are MULT text in HTML (ex. Wikipedia: 215 KB), continutul e in DOM,
-        # nu in JS -> scraper e suficient si mult mai rapid. Doar cand HTML-ul e SARAC
-        # si blocul JS mic avem un SPA care chiar are nevoie de randare.
-        if name and len(raw or "") < 2000:
-            out["hybrid_slab"] = len(raw or "")
-            if info["text_chars"] > 3000:
-                out["method"] = "scraper"; met = "scraper"      # HTML bogat -> scraper
-            else:
-                out["method"] = "chrome"; met = "chrome"        # HTML sarac -> randare
-        elif name and _has_js():
-            q = js_query(html,
-                "(function(){var o=[];function w(x){"
-                "if(!x||typeof x!=='object'||o.length>150)return;"
-                "if(Array.isArray(x)){for(var i=0;i<x.length;i++)w(x[i]);return}"
-                "for(var k in x){var v=x[k];"
-                "if(/^(title|headline)$/i.test(k)&&typeof v==='string'&&v.length>15)o.push(v);"
-                "else w(v)}}w(DATE);return JSON.stringify(o)})()",
-                is_html=True)
-            out["data"] = q.get("result")
-            out["pattern"] = q.get("pattern")
-            out["ok"] = q.get("ok", False)
-            if not out["ok"]:
-                out["method"] = "scraper"; met = "scraper"   # fallback
-        else:
-            out["method"] = "scraper"; met = "scraper"
-    if met == "scraper":
-        a = article(url)
-        out["data"] = a.get("text"); out["chars"] = a.get("chars")
-        out["ok"] = bool(a.get("chars"))
+    # ★ ORDINEA CORECTA (fix 6 nov): textul REAL se extrage INTOTDEAUNA primul.
+    # Blobul de date JS (__NEXT_DATA__) e doar un fallback, pentru ca pe un articol
+    # BBC el contine etichete de meniu, nu continutul. JS/RANDARE se folosesc
+    # DOAR cand textul din HTML e sarac.
+    if met in ("auto", "scraper", "hybrid"):
+        try:
+            a = article(url, _html=html)
+        except Exception as e:
+            a = {}
+            out["article_error"] = str(e)[:150]
+        out["data"] = a.get("text") or ""
+        out["chars"] = a.get("chars") or 0
+        out["how"] = a.get("how")
+        out["ok"] = bool(out["chars"])
+        if met == "auto":
+            out["method"] = "scraper"
+        # JS doar daca textul e sarac si pagina are un bloc de date JS
+        if not out["ok"] or out["chars"] < 400:
+            if _has_js():
+                try:
+                    name2, raw2 = extract_js_data(html)
+                    if name2 and raw2:
+                        q2 = js_query(html,
+                            "(function(){var o=[];function w(x){"
+                            "if(!x||typeof x!=='object'||o.length>300)return;"
+                            "if(Array.isArray(x)){for(var i=0;i<x.length;i++)w(x[i]);return}"
+                            "for(var k in x){var v=x[k];"
+                            "if(/^(title|headline|description|summary)$/i.test(k)&&typeof v==='string'&&v.length>20)o.push(v);"
+                            "else w(v)}}w(DATE);return JSON.stringify(o)})()", is_html=True)
+                        js_txt = q2.get("result") or ""
+                        out["js_chars"] = len(js_txt)
+                        if len(js_txt) > out["chars"] + 200:
+                            out["method"] = "hybrid"; out["data"] = js_txt
+                            out["pattern"] = q2.get("pattern"); out["ok"] = True
+                            out["chars"] = len(js_txt)
+                except Exception:
+                    pass
+            # randare completa doar daca nici JS nu a ajutat
+            if not out["ok"] and met == "auto" and info.get("kind") == "spa":
+                met = "chrome"; out["method"] = "chrome"
+        if not out["ok"] and met != "chrome":
+            out["error"] = "extractia a dat 0 caractere (pagina goala, blocata de site sau doar JS)"
     if met == "chrome":
         try:
             import jsfetch
