@@ -2958,6 +2958,10 @@ def run_scraper_tool(a):
     act = (a.get("action") or "article").strip().lower()
     url = (a.get("url") or "").strip()
     mx = int(a.get("max_chars") or 12000)
+    if act == "health":
+        h = getattr(S, "health", None)
+        if not callable(h): return "[scraper: health indisponibil (scraper.py vechi)]"
+        return _sj.dumps(h(), ensure_ascii=False, indent=1, default=str)
     if not url:
         return "[scraper: lipseste 'url']"
     try:
