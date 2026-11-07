@@ -2354,9 +2354,9 @@ def scrape_tool(action="",url="",arg="",limit=20):
         if act=="head":      r=_sc.head(url)
         elif act=="fetch":   r=_sc.fetch(url)[:20000]
         elif act=="sniff":   r=_sc.sniff(_sc.fetch(url))
-        elif act=="xpath":   r=_sc.xpath(url,arg or "//h1/text()")[:limit]
-        elif act=="css":     r=_sc.css(url,arg or "h1")[:limit]
-        elif act=="links":   r=_sc.links(url,arg or None)[:limit]
+        elif act=="xpath":   r=_sc.xpath(url,arg or "//h1/text()");  r=r[:limit] if isinstance(r,list) else r
+        elif act=="css":     r=_sc.css(url,arg or "h1");             r=r[:limit] if isinstance(r,list) else r
+        elif act=="links":   r=_sc.links(url,arg or None);           r=r[:limit] if isinstance(r,list) else r
         elif act=="meta":    r=_sc.meta(url)
         elif act=="table":   r=_sc.table(url,int(arg or 0))
         elif act=="rss":     r=_sc.rss(url,int(limit or 10))

@@ -28,6 +28,8 @@ def fetch(url, timeout=25):
 
 def head(url, timeout=15):
     r = _S.head(url, timeout=timeout, allow_redirects=True)
+    if r.status_code >= 400:   # ex. news.ycombinator.com -> 405 la HEAD
+        r = _S.get(url, timeout=timeout, allow_redirects=True, stream=True); r.close()
     return {"status": r.status_code, "ctype": r.headers.get("content-type",""),
             "len": r.headers.get("content-length","?")}
 
@@ -45,6 +47,8 @@ def xpath(url, expr):
     """
     d = doc(url)
     res = d.xpath(expr)
+    if isinstance(res, (str, int, float, bool)):   # count()/string()/boolean() -> scalar
+        return [str(res)]
     # fallback: `//x/text()` gol (textul sta in copii, ex. <h1><span>T</span></h1>)
     # -> se reincearca pe tot subarborele nodului: `//x//text()`
     if not res and expr.endswith("/text()") and not expr.endswith("//text()"):
@@ -85,7 +89,15 @@ def css(url, sel, attr=None):
 
 def rss(url, limit=30):
     import feedparser
-    f = feedparser.parse(fetch(url))
+    try:
+        raw = fetch(url)
+    except Exception:
+        # unele site-uri (news.ycombinator.com) blocheaza UA-ul de browser pe feed-uri cu 419
+        # si accepta un UA neutru -> al doilea incercari cu UA de feed-reader
+        r = _S.get(url, timeout=25, headers={"Accept":"application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+                                             "User-Agent":"FeedFetcher/1.0 (+scraper.py)"})
+        r.raise_for_status(); raw = r.content
+    f = feedparser.parse(raw)
     out = [{"title":(e.get("title") or "").strip(), "link":e.get("link") or "",
             "date":(e.get("published") or e.get("updated") or "")[:25],
             "summary":(e.get("summary") or "")[:200]} for e in f.entries[:limit]]
