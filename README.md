@@ -569,6 +569,9 @@ background), **`run_code`** (one script calling the other tools).
 ### Web, memory, self-learning
 
 - **`scraper`** — lxml, parsel, trafilatura, quickjs, feedparser, all native on device
+  Fifteen modes: `article`, `xpath`, `css`, `table`, `links`, `meta`, `sniff`, `rss`, `js`,
+  `deep`, `jsdata`, `supreme`, plus `fetch`/`head`/`health`. Full reference, the silent
+  brotli trap and the 15/15 verification battery: [`docs/SCRAPER.md`](docs/SCRAPER.md)
 - **Skills** — saved procedures that load automatically when relevant
 - **Memory** — persistent lessons, written via `/learn`
 - **Self-heal** — repairs its own environment on every start (dead symlinks, truncated

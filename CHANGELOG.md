@@ -1,3 +1,45 @@
+## 2026-11-07 - scraperul verificat la capacitate maxima: 15/15 moduri, 11/11 dependinte
+
+Verificare completa a scraperului propriu al agentului (`scrape`), nu doar "fisierul exista".
+Rezultat: toate cele 15 moduri functioneaza, toate cele 11 dependinte sunt prezente.
+
+Baterie pe site-uri structural diferite: static (`example.com`), hibrid (`arstechnica`,
+`wikipedia`), SPA (`quotes.toscrape/js`), comprimat br (`cloudflare.com`). Rulare prin
+wrapper, nu prin biblioteca direct.
+
+Doua dependinte lipseau si au fost instalate: `brotli 1.2.1` si `quickjs 1.19.4`.
+Fara ele: `js`/`deep` raspundeau "niciun motor JS: lipsesc jsengine.py si quickjs", iar
+site-urile `Content-Encoding: br` ieseau ca bytes decodati ca text - 0 linkuri, text gunoi,
+ZERO eroare.
+
+Capcana principala, diagnosticata cu timestampuri: `health()` raporta `ok: 11/11` in timp ce
+`fetch` intoarcea in continuare bytes comprimati. Cauza nu era codul - `requests` isi fixeaza
+decodoarele la import, iar procesul uneltei pornise la 07:23, cu 4 ore inainte de
+`pip install brotli` (11:11). `health()` importa module la cerere, deci vedea pachetele noi;
+sesiunea HTTP nu. Dupa restartul procesului, `fetch` a dat HTML real din primul caracter,
+fara nicio modificare de cod. Regula retinuta: dupa orice instalare care schimba un decodor
+de transport, procesul trebuie repornit - `health` verde nu e suficient.
+
+Dovada numerica brotli pe arstechnica: fara ~44 KB si 0 linkuri; cu 364 KB si 207 linkuri.
+Dovada `supreme` pe arstechnica: `ok: false`, `chars: 0` inainte de fix fata de `ok: true`,
+`chars: 210` dupa. Dovada `links` pe acelasi site: `[]` inainte, 111 linkuri dupa.
+
+Distinctie importanta, ca sa nu se confunde defectele cu comportamentul corect:
+- 403 de la npmjs/Product Hunt/G2 = blocare anti-bot a site-ului, nu scraper rupt;
+- `links -> []` pe example.com = pagina chiar nu are elemente `<a>`;
+- `deep -> "pagina nu are date JS"` pe Reddit/HN = chiar nu au `__NEXT_DATA__`/ld+json;
+- `deep(keys=["title"]) -> []` = cheia nu exista in blob, nu un mod defect.
+
+Documentatie noua: `docs/SCRAPER.md` - fisierele si sha256-ul celor doua copii identice, cele
+15 moduri cu ce intoarce fiecare, reparatiile reale din cod (`//h1/text()` gol din cauza
+copilului `<span>`, `css("h2::text")` care intorcea mereu gol, `article()` cu 0 caractere pe
+pagini pline, `json.dumps` care cadea pe elementele lxml din trafilatura), procedura de
+verificare si capcanele de mai sus.
+
+Nicio modificare de cod in `scraper.py` - cele doua copii raman la sha256
+`bfdfb546460396531e273a66719a1d330806a09c1112d0947cbb51f5f98e6455`. Fixul a fost in mediu,
+nu in sursa.
+
 ## 2026-11-06 - bootstrap complet: o clona din git + APK de debug produce un APK FUNCTIONAL
 
 Test suprem: am pierdut tot local, am pastrat doar repo-ul git si APK-ul de debug, si am
